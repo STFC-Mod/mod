@@ -288,6 +288,13 @@ int32_t ListB_get_Count(Il2CppObject*, const MethodInfo*)
 { return 3; }
 Il2CppObject* List_get_Item(Il2CppObject* self, int32_t index, const MethodInfo*)
 { return index == 0 ? self : &other_object.header; }
+void List_set_Item(Il2CppObject* self, int32_t index, Il2CppObject* value, const MethodInfo* method)
+{
+  seen_self                                   = self;
+  seen_int                                    = index;
+  seen_method                                 = method;
+  reinterpret_cast<TestObject*>(self)->target = value;
+}
 Il2CppException thrown{};
 int32_t         Base_Explode(Il2CppObject*, const MethodInfo*)
 { throw Il2CppExceptionWrapper(&thrown); }
@@ -345,8 +352,12 @@ void BuildRuntime()
 
   AddMethod(list_a_class, "get_Count", reinterpret_cast<void*>(&ListA_get_Count), T(int_class), {});
   AddMethod(list_a_class, "get_Item", reinterpret_cast<void*>(&List_get_Item), T(object_class), {T(int_class)});
+  AddMethod(list_a_class, "set_Item", reinterpret_cast<void*>(&List_set_Item), T(void_class),
+            {T(int_class), T(object_class)});
   AddMethod(list_b_class, "get_Count", reinterpret_cast<void*>(&ListB_get_Count), T(int_class), {});
   AddMethod(list_b_class, "get_Item", reinterpret_cast<void*>(&List_get_Item), T(object_class), {T(int_class)});
+  AddMethod(list_b_class, "set_Item", reinterpret_cast<void*>(&List_set_Item), T(void_class),
+            {T(int_class), T(object_class)});
 
   auto& ctor          = AddMethod(action_class, ".ctor", nullptr, T(void_class), {T(object_class), T(intptr_class)});
   ctor.invoker_method = &DelegateInvoker;
@@ -760,6 +771,15 @@ int main()
   Require(first->Method<int32_t()>("get_Count").Pointer() == reinterpret_cast<void*>(&ListA_get_Count),
           "runtime collection method schema");
   Require(!first->Method<int32_t(int32_t)>("get_Item"), "runtime collection schema rejects a value result");
+
+  first->Set(1, &other_object.header);
+  Require(seen_self == &list_a.header && seen_int == 1 && list_a.target == &other_object.header,
+          "list setter passes the receiver, index and value");
+  Require(seen_method && seen_method->klass == &list_a_class.klass, "list setter receives its runtime MethodInfo");
+  second->Set(2, nullptr);
+  Require(seen_self == &list_b.header && seen_int == 2 && list_b.target == nullptr
+              && seen_method->klass == &list_b_class.klass,
+          "list setters resolve per runtime class and accept null");
 
   // Fully shared generic code is marshalled by the runtime.
   Require(base->Call<"Shared", int32_t>() == 41 && boxed_invocations == 1, "shared generic fallback");

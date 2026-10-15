@@ -611,6 +611,8 @@ template <typename T> struct List : Object {
   { return Call<"get_Count", int32_t>(); }
   T operator[](int32_t index)
   { return Call<"get_Item", T>(index); }
+  void Set(int32_t index, T value)
+  { Call<"set_Item">(index, value); }
   void Add(T value)
   { Call<"Add">(value); }
   void RemoveAt(int32_t index)

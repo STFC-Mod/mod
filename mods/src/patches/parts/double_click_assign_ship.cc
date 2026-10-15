@@ -19,7 +19,6 @@
 #include <unity/input.h>
 #include <unity/tracker.h>
 
-#include <algorithm>
 #include <chrono>
 #include <set>
 #include <string>
@@ -85,17 +84,16 @@ void PinShips(il2cpp::List<FleetPlayerData*>* list)
   if (!any)
     return;
 
-  std::ranges::stable_partition(ships, &Ship::pinned);
-  bool unchanged = true;
-  for (int32_t i = 0; i < count && unchanged; ++i)
-    unchanged = ships[i].data == (*list)[i];
-  if (unchanged)
-    return;
-
-  // SortedIdleShips is a List<T>, which always has Clear and Add; the rewrite cannot stop halfway.
-  list->Clear();
-  for (const auto& ship : ships)
-    list->Add(ship.data);
+  // Read from the original snapshot in two passes to preserve both groups' order. Only changed slots cross the
+  // managed boundary; the list keeps its count and needs no partition buffer or second read of its items.
+  int32_t index = 0;
+  for (const bool pinned_group : {true, false})
+    for (const auto& ship : ships)
+      if (ship.pinned == pinned_group) {
+        if (ship.data != ships[index].data)
+          list->Set(index, ship.data);
+        ++index;
+      }
 }
 
 void ShipManagementViewContext_Sort_Hook(auto original, ShipManagementViewContext* _this)
