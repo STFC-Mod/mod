@@ -1,17 +1,21 @@
 // Settings parsing and shortcut matching, run against production code with Unity input replaced by a fake.
+#include "config.h"
 #include "patches/chat_startup.h"
-#include "patches/parts/notification_audio.h"
 #include "patches/parts/toast_text.h"
 #include "patches/ship_shortcut_hint.h"
 #include "patches/shortcuts.h"
 #include "str_utils.h"
 
+#include <spdlog/sinks/callback_sink.h>
+#include <spdlog/spdlog.h>
 #include <toml++/toml.h>
 #include <unity/input.h>
 
 #include <array>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
+#include <set>
 #include <source_location>
 
 namespace
@@ -187,6 +191,60 @@ void Loading()
   Check(Value(parsed, "shortcuts", "show_bookmarks") == "<missing>", "skipped shortcuts are not recorded");
 }
 
+// The English example documents every setting. Each key it sets must be one the mod reads, and none may be
+// rejected: otherwise the example and the reader have drifted apart.
+void ExampleSettings()
+{
+  // TODO(alex): auto_confirm_discovery is documented but has never been read by any release; drop it from the
+  // examples, or implement it.
+  static const std::set<std::string> kDocumentedButUnread{"ui.auto_confirm_discovery"};
+
+  std::vector<std::string> rejected;
+  auto                     logger = std::make_shared<spdlog::logger>(
+      "settings", std::make_shared<spdlog::sinks::callback_sink_mt>([&](const spdlog::details::log_msg& message) {
+        if (message.level >= spdlog::level::warn)
+          rejected.emplace_back(message.payload.data(), message.payload.size());
+      }));
+  const auto previous = spdlog::default_logger();
+  spdlog::set_default_logger(logger);
+
+  auto example = toml::parse_file(STFC_EXAMPLE_SETTINGS);
+  // Experimental settings and shortcuts are only read with this on.
+  example["control"].as_table()->insert_or_assign("enable_experimental", true);
+  toml::table effective;
+  const auto  config = Config::Parse(example, effective, false);
+  spdlog::set_default_logger(previous);
+
+  for (const auto& message : rejected)
+    std::cerr << "rejected: " << message << '\n';
+  Check(rejected.empty(), "the example parses without warnings");
+
+  // Every value the example sets appears among the values the mod used.
+  const std::function<void(const toml::table&, const toml::table*, const std::string&)> compare =
+      [&](const toml::table& documented, const toml::table* used, const std::string& path) {
+        for (const auto& [key, node] : documented) {
+          const auto  name = path.empty() ? std::string(key.str()) : path + "." + std::string(key.str());
+          const auto* next = used ? used->get(key) : nullptr;
+          if (const auto* table = node.as_table()) {
+            compare(*table, next ? next->as_table() : nullptr, name);
+          } else if (!next && !kDocumentedButUnread.contains(name)) {
+            std::cerr << "unread setting: " << name << '\n';
+            Check(false, "every example setting is read");
+          }
+        }
+      };
+  compare(example, &effective, "");
+
+  Check(config->graphics.ui_scale > 0.0f, "example values are applied");
+  Check(config->ui.hud_q_trials == MissionHudVisibility::kAuto
+            && config->ui.hud_field_training == MissionHudVisibility::kAuto
+            && config->ui.hud_outposts == MissionHudVisibility::kAuto
+            && config->ui.hud_missions == MissionHudVisibility::kAuto,
+        "example HUD settings use native visibility");
+  Check(effective["sync"]["fleets"].value<bool>() == false && !config->sync.options.fleets,
+        "the example documents fleet sync, off by default");
+}
+
 void NotificationAudio()
 {
   struct Fixture {
@@ -235,6 +293,117 @@ void NotificationAudio()
   Check(NotificationSoundBytes(NotificationSound::kCount).empty()
             && NotificationSoundBytes(static_cast<NotificationSound>(255)).empty(),
         "invalid cues have no WAV data");
+}
+
+void DailyFactionSettings()
+{
+  const std::vector<std::string> all{"federation", "klingon", "romulan"};
+  toml::table                    effective;
+  for (const auto text : {"", "[ui]\ndaily_bulk_claim_factions = \"\"", "[ui]\ndaily_bulk_claim_factions = \"   \""}) {
+    const auto config = Config::Parse(toml::parse(text), effective, false);
+    Check(config->ui.daily_bulk_claim_factions == all, "missing and blank faction filters select all main factions");
+    Check(effective["ui"]["daily_bulk_claim_factions"].value<std::string>() == "federation,klingon,romulan",
+          "effective settings materialize the explicit daily faction default");
+    Check(!config->ui.auto_confirm_alliance_contribution, "alliance contribution confirmation is opt-in");
+  }
+  for (const auto filter : {"none", "NONE,federation"}) {
+    const auto config = Config::Parse(toml::parse(std::string("[ui]\ndaily_bulk_claim_factions = \"") + filter + "\""),
+                                      effective, false);
+    Check(config->ui.daily_bulk_claim_factions == std::vector<std::string>{"none"}, "none overrides named factions");
+  }
+  const auto config = Config::Parse(
+      toml::parse(
+          "[ui]\ndaily_bulk_claim_factions = \"Federation,romulan\"\nauto_confirm_alliance_contribution = true"),
+      effective, false);
+  Check(config->ui.daily_bulk_claim_factions == std::vector<std::string>{"federation", "romulan"},
+        "named faction filters remain case-insensitive");
+  Check(config->ui.auto_confirm_alliance_contribution, "alliance contribution setting survives parsing");
+}
+
+void UpstreamSettings()
+{
+  toml::table effective;
+  const auto  defaults = Config::Parse(toml::table{}, effective, false);
+  Check(defaults->graphics.haven_zoom == 4000.0f && defaults->ui.reverse_haven_history,
+        "Haven defaults match upstream");
+  Check(!defaults->ui.only_show_first_popup && defaults->audio.alert_victory == NotificationSound::kNone,
+        "popup suppression and audio cues stay opt-in");
+  for (const auto value : {"0.5", "inf", "nan"}) {
+    const auto invalid_zoom =
+        Config::Parse(toml::parse(std::string("[graphics]\ninterior_zoom_scale = ") + value), effective, false);
+    Check(invalid_zoom->graphics.interior_zoom_scale == 2.0f,
+          "invalid interior zoom scales fall back to the upstream default");
+    Check(effective["graphics"]["interior_zoom_scale"].value<float>() == 2.0f,
+          "effective settings report the interior zoom fallback");
+  }
+  const auto configured = Config::Parse(toml::parse(R"(
+    [audio]
+    disabled_events = " engine, aLl, music "
+    alert_victory = "Victory"
+    alert_defeat = "alarm"
+    alert_armada_created = "ping"
+    alert_armada_battle_won = "success"
+    alert_armada_battle_lost = "not-a-sound"
+    [graphics]
+    haven_zoom = -1.0
+    [ui]
+    reverse_haven_history = false
+    only_show_first_popup = true
+    hud_q_trials = "always"
+    hud_field_training = "never"
+    hud_outposts = "ALWAYS"
+    hud_missions = " auto "
+  )"),
+                                        effective, false);
+  Check(configured->audio.disable_all_events
+            && configured->audio.disabled_events == std::vector<std::string>{"engine", "music"},
+        "All is a case-insensitive wildcard, other event names retain their spelling");
+  Check(configured->audio.alert_victory == NotificationSound::kSuccess
+            && configured->audio.alert_defeat == NotificationSound::kAlarm
+            && configured->audio.alert_armada_created == NotificationSound::kPing
+            && configured->audio.alert_armada_battle_won == NotificationSound::kSuccess
+            && configured->audio.alert_armada_battle_lost == NotificationSound::kNone,
+        "notification sound names, aliases and invalid fallback");
+  Check(configured->ui.hud_q_trials == MissionHudVisibility::kAlways
+            && configured->ui.hud_field_training == MissionHudVisibility::kNever
+            && configured->ui.hud_outposts == MissionHudVisibility::kAlways
+            && configured->ui.hud_missions == MissionHudVisibility::kAuto,
+        "each HUD setting binds its own visibility");
+  Check(Value(effective, "audio", "alert_victory") == "success"
+            && Value(effective, "audio", "alert_armada_battle_lost") == "none",
+        "effective sound settings use canonical names");
+  Check(configured->graphics.haven_zoom == 4000.0f && !configured->ui.reverse_haven_history
+            && configured->ui.only_show_first_popup,
+        "Haven validation and new UI settings");
+}
+
+// Settings that were renamed still read their old names, and the new name wins when both are set.
+void RenamedSettings()
+{
+  toml::table effective;
+  const auto  old_names = Config::Parse(toml::parse(R"(
+    [graphics]
+    ui_scale_adjust = 0.1
+    [ui]
+    cargo_format = false
+    hide_artifact_exchange_all = true
+    [sync]
+    officer = true
+  )"),
+                                        effective, false);
+  Check(old_names->graphics.ui_scale_step == 0.1f, "ui_scale_adjust still sets the UI scale step");
+  Check(!old_names->ui.format_cargo_values, "cargo_format still sets format_cargo_values");
+  Check(old_names->ui.disable_exchange_all, "hide_artifact_exchange_all still sets disable_exchange_all");
+  Check(effective["ui"]["disable_exchange_all"].value_or(false), "the vars file records the new name");
+  Check(!effective["ui"]["hide_artifact_exchange_all"], "the vars file drops the old name");
+
+  const auto both = Config::Parse(toml::parse(R"(
+    [graphics]
+    ui_scale_step = 0.2
+    ui_scale_adjust = 0.1
+  )"),
+                                  effective, false);
+  Check(both->graphics.ui_scale_step == 0.2f, "the new name wins over the old one");
 }
 
 void Matching()
@@ -318,7 +487,11 @@ int main()
   ShipNames();
   Chords();
   Loading();
+  ExampleSettings();
   NotificationAudio();
+  DailyFactionSettings();
+  UpstreamSettings();
+  RenamedSettings();
   Matching();
   ChatStartupGate();
   if (failures)

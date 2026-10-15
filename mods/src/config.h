@@ -7,8 +7,11 @@
 
 #include "patches/parts/notification_audio.h"
 
+#include <toml++/toml.h>
+
 #include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -125,8 +128,6 @@ struct ShipFilter {
   std::vector<std::vector<std::string>> names;
   bool                                  all = false;
 };
-
-struct SettingsFile;
 
 class Config final
 {
@@ -342,8 +343,12 @@ public:
     std::string assets_url_override;
   } game;
 
+  // Settings from a parsed settings file; an empty table gives the defaults. `effective` receives every value
+  // used, which becomes the runtime vars file. Logs what it rejects, and each value at debug level when
+  // `log_values`. Also rebinds the shortcuts.
+  static std::unique_ptr<Config> Parse(const toml::table& file, toml::table& effective, bool log_values);
+
 private:
   Config() = default;
-  // Applies `file`. The first load also creates the settings file if it is missing.
-  void Load(const SettingsFile& file, bool first);
+  void Read(const toml::table& file, toml::table& effective, bool log_values);
 };

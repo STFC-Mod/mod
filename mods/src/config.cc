@@ -353,12 +353,6 @@ bool SyncConfig::enabled(SyncConfig::Type type) const
   return false;
 }
 
-// The settings file as parsed. `loaded` is false when it was missing or did not parse and defaults are used.
-struct SettingsFile {
-  toml::table table;
-  bool        loaded = false;
-};
-
 namespace
 {
 // The current settings. Replaced settings are never freed: a sync thread may still be reading them, and they only
@@ -370,7 +364,25 @@ toml::table ParseSettingsFile()
   const auto path = File::Path(File::Config()).u8string();
   return toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
 }
+
+// Writes `effective` as the runtime vars file, and on first use creates the settings file from it when missing.
+void SaveEffective(const toml::table& effective, bool first)
+{
+  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
+    spdlog::warn("Creating {} (default config file)", File::Config());
+    Save(effective, File::Config(), false);
+  }
+  spdlog::info("Creating {} (final config file)", File::Vars());
+  Save(effective, File::Vars(), true);
+}
 } // namespace
+
+std::unique_ptr<Config> Config::Parse(const toml::table& file, toml::table& effective, bool log_values)
+{
+  std::unique_ptr<Config> config(new Config);
+  config->Read(file, effective, log_values);
+  return config;
+}
 
 Config& Config::Get()
 {
@@ -379,17 +391,28 @@ Config& Config::Get()
   // First use, inside il2cpp_init on the game thread. A broken file falls back to the defaults here.
   static Config* const first = [] {
     File::MigrateLegacyFiles();
-    SettingsFile file;
+    toml::table file;
+    bool        loaded = false;
     try {
-      file.table  = ParseSettingsFile();
-      file.loaded = true;
+      file   = ParseSettingsFile();
+      loaded = true;
     } catch (const toml::parse_error& e) {
       spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
     } catch (...) {
       spdlog::warn("Failed to load config file, falling back to default settings");
     }
-    auto* config = new Config;
-    config->Load(file, true);
+    toml::table effective;
+    auto*       config = Parse(file, effective, loaded).release();
+    SaveEffective(effective, true);
+    std::cout << "\n\n-----------------------------\n\n"
+              << effective << "\n\n-----------------------------\n"
+#if VERSION_PATCH
+              << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
+              << " (Patch " << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
+#else
+              << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
+              << "\n\n";
+#endif
     current_config.store(config, std::memory_order_release);
     return config;
   }();
@@ -398,10 +421,9 @@ Config& Config::Get()
 
 bool Config::Reload()
 {
-  SettingsFile file;
+  toml::table file;
   try {
-    file.table  = ParseSettingsFile();
-    file.loaded = true;
+    file = ParseSettingsFile();
   } catch (const toml::parse_error& e) {
     spdlog::warn("Settings not reloaded, {} does not parse: {}", File::Config(), e.description());
     return false;
@@ -411,20 +433,22 @@ bool Config::Reload()
   }
 
   spdlog::info("Reloading settings from {}", File::Config());
-  auto* next = new Config;
+  std::unique_ptr<Config> next;
+  toml::table             effective;
   try {
-    next->Load(file, false);
+    next = Parse(file, effective, true);
+    SaveEffective(effective, false);
   } catch (const std::exception& e) {
     // Shortcuts may already be rebound from the new file; everything else keeps the current settings.
     spdlog::error("Settings not reloaded: {}", e.what());
-    delete next;
     return false;
   }
   // Hooks are installed once, so the startup hook groups stay in force.
   if (!(next->patches == Get().patches))
     spdlog::warn("Changes to [patches] take effect after a restart");
   next->patches = Get().patches;
-  current_config.store(next, std::memory_order_release);
+  // Never freed, see current_config.
+  current_config.store(next.release(), std::memory_order_release);
   return true;
 }
 
@@ -459,11 +483,9 @@ void Config::ReloadIfChanged()
   Reload();
 }
 
-void Config::Load(const SettingsFile& file, bool first)
+void Config::Read(const toml::table& config, toml::table& parsed, bool log_values)
 {
-  const auto& config = file.table;
-  toml::table parsed;
-  Reader      r(config, parsed, file.loaded);
+  Reader r(config, parsed, log_values);
   r.Read("graphics", "interior_zoom_scale", graphics.interior_zoom_scale);
   if (!std::isfinite(graphics.interior_zoom_scale) || graphics.interior_zoom_scale < 1.0f) {
     spdlog::warn("invalid graphics.interior_zoom_scale {}; using 2", graphics.interior_zoom_scale);
@@ -701,22 +723,4 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("config", "assets_url_override", game.assets_url_override);
 
   Shortcut::Load(config, parsed, control.hotkeys_extended, control.enable_experimental);
-
-  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
-    spdlog::warn("Creating {} (default config file)", File::Config());
-    Save(parsed, File::Config(), false);
-  }
-  spdlog::info("Creating {} (final config file)", File::Vars());
-  Save(parsed, File::Vars(), true);
-
-  if (!first)
-    return;
-  std::cout << "\n\n-----------------------------\n\n"
-            << parsed << "\n\n-----------------------------\n"
-#if VERSION_PATCH
-            << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Patch "
-            << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
-#else
-            << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << "\n\n";
-#endif
 }
