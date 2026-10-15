@@ -1,50 +1,22 @@
+// The Windows entry point: the game loads this as version.dll from its folder.
+
 #include <Windows.h>
 
-#include <filesystem>
+#include <string_view>
 
 #include "patches/patches.h"
 
-void VersionDllInit();
-
-BOOL WINAPI DllMain(HINSTANCE hinstDLL, DWORD fdwReason, LPVOID /*lpReserved*/)
+BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
 {
-  std::filesystem::path game_path;
+  if (reason != DLL_PROCESS_ATTACH)
+    return TRUE;
+  DisableThreadLibraryCalls(instance);
 
-  switch (fdwReason) {
-    case DLL_PROCESS_ATTACH:
-      DisableThreadLibraryCalls(hinstDLL);
-
-      TCHAR szFileName[MAX_PATH];
-      GetModuleFileName(NULL, szFileName, MAX_PATH);
-
-      game_path = szFileName;
-
-      if (!game_path.filename().generic_wstring().starts_with(L"prime")) {
-        return TRUE;
-      }
-
-      // Since we are replacing version.dll, need the proper forwards
-      VersionDllInit();
-      ApplyPatches();
-      break;
-    case DLL_THREAD_ATTACH:
-      break;
-    case DLL_THREAD_DETACH:
-      break;
-    case DLL_PROCESS_DETACH:
-      break;
-  }
+  // Other processes that load version.dll from the game folder only get the forwards in version.cc.
+  wchar_t    path[MAX_PATH];
+  const auto length = GetModuleFileNameW(nullptr, path, MAX_PATH);
+  const auto exe    = std::wstring_view(path, length);
+  if (exe.substr(exe.find_last_of(L"\\/") + 1).starts_with(L"prime"))
+    ApplyPatches();
   return TRUE;
-}
-
-void* operator new[](size_t size, const char* /*name*/, int /*flags*/, unsigned /*debugFlags*/, const char* /*file*/,
-                     int /*line*/)
-{
-  return malloc(size);
-}
-
-void* operator new[](size_t size, size_t /*alignment*/, size_t /*alignmentOffset*/, const char* /*name*/, int /*flags*/,
-                     unsigned /*debugFlags*/, const char* /*file*/, int /*line*/)
-{
-  return malloc(size);
 }

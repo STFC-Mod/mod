@@ -1,3 +1,5 @@
+// Double-click a ship tile, or press Enter, to press the dock's Assign button.
+
 #include "config.h"
 #include "patches/patches.h"
 #include "patches/input.h"

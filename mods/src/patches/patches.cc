@@ -1,86 +1,85 @@
-#include <filesystem>
-#include "patches.h"
+#include "patches/patches.h"
+
 #include "config.h"
 #include "file.h"
 #include "version.h"
 
 #include <il2cpp/il2cpp.h>
-
 #include <spud/detour.h>
 
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include <filesystem>
+#include <iterator>
+
 #if _WIN32
 #include <Windows.h>
 #else
 #include <dlfcn.h>
 #include <libgen.h>
+#include <limits.h>
 #include <mach-o/dyld.h>
 #endif
 
-void InstallUiScaleHooks();
-void InstallZoomHooks();
-void InstallHavenZoomHooks();
-void InstallInteriorZoomHooks();
-void InstallBuffFixHooks();
-#if _WIN32
-void InstallFreeResizeHooks();
-#endif
-void InstallToastBannerHooks();
-void InstallPanHooks();
-void InstallHotkeyHooks();
-void InstallGiftsBulkClaimHooks();
-void InstallDailyFactionBulkClaimHooks();
-
-void InstallTestPatches();
-void InstallMiscPatches();
-void InstallMissionHudTweaksHooks();
-void InstallArtifactExchangeHooks();
-void InstallChatPatches();
-void InstallChatTitleDisplayHooks();
-void InstallTempCrashFixes();
-void InstallSyncPatches();
-void InstallObjectTrackers();
-void InstallLoadingScreenHooks();
-void InstallTransitionScreenHooks();
-void InstallGalacticAnomalyTimer();
-void InstallLoadingTipHooks();
-void InstallCargoFormatHooks();
-void InstallInstantCargoCounterHooks();
-void InstallOfficerSortHooks();
-void InstallPinnedShipSortHooks();
-void InstallPinnedShipClickHooks();
-void InstallDoubleClickAssignShipHooks();
-void InstallInstantWarpConfirmationHooks();
-void InstallForbiddenTechConfirmationHooks();
-void InstallForbiddenTechShipNameHooks();
-void InstallRevealConfirmationHooks();
-void InstallAudioEventHooks();
-void InstallActionQueueRecovery();
-void InstallThinQueueProtection();
-void InstallQueueAddressGuard();
-void InstallHavenHistoryHooks();
-void InstallAllianceGamesStoreHooks();
-
-__int64 il2cpp_init_hook(auto original, const char* domain_name)
+namespace
 {
-  struct PatchEntry {
-    const char*                  name;
-    std::pair<void (*)(), bool*> fnAndEnabled;
-  };
+struct Patch {
+  const char* name;
+  void (*install)();
+  bool Config::* enabled;
+};
 
+// Installed in this order; the log numbers them. Toggles are [patches] settings unless noted in config.cc.
+constexpr Patch kPatches[] = {
+    {"InteriorZoomHooks", InstallInteriorZoomHooks, &Config::installInteriorZoomHooks},
+    {"ChatTitleDisplay", InstallChatTitleDisplayHooks, &Config::installPlayerTitleDisplayHooks},
+    {"PinnedShipClick", InstallPinnedShipClickHooks, &Config::installPinnedShipClickToggle},
+    {"RevealConfirm", InstallRevealConfirmationHooks, &Config::installRevealConfirmationHooks},
+    {"ActionQueueRecovery", InstallActionQueueRecovery, &Config::installActionQueueRecoveryHooks},
+    {"QueueAddressGuard", InstallQueueAddressGuard, &Config::installQueueAddressGuardHooks},
+    {"ThinQueueProtection", InstallThinQueueProtection, &Config::installThinQueueProtectionHooks},
+
+    {"HavenZoomHooks", InstallHavenZoomHooks, &Config::installHavenZoomHooks},
+    {"HavenHistory", InstallHavenHistoryHooks, &Config::installHavenHistoryHooks},
+    {"AllianceGamesStore", InstallAllianceGamesStoreHooks, &Config::installAllianceGamesStoreHooks},
+    {"UiScaleHooks", InstallUiScaleHooks, &Config::installUiScaleHooks},
+    {"ZoomHooks", InstallZoomHooks, &Config::installZoomHooks},
+    {"BuffFixHooks", InstallBuffFixHooks, &Config::installBuffFixHooks},
+    {"ToastBannerHooks", InstallToastBannerHooks, &Config::installToastBannerHooks},
+    {"PanHooks", InstallPanHooks, &Config::installPanHooks},
+    {"HotkeyHooks", InstallHotkeyHooks, &Config::installHotkeyHooks},
+    {"GiftsBulkClaimHooks", InstallGiftsBulkClaimHooks, &Config::installGiftsBulkClaimHooks},
+    {"DailyFactionBulkClaimHooks", InstallDailyFactionBulkClaimHooks, &Config::installDailyFactionBulkClaimHooks},
 #if _WIN32
-#ifndef NDEBUG
-  AllocConsole();
-  FILE* fp;
-  freopen_s(&fp, "CONOUT$", "w", stdout);
+    {"FreeResizeHooks", InstallFreeResizeHooks, &Config::installFreeResizeHooks},
 #endif
-#endif
+    {"TempCrashFixes", InstallTempCrashFixes, &Config::installTempCrashFixes},
+    {"TestPatches", InstallTestPatches, &Config::installTestPatches},
+    {"MiscPatches", InstallMiscPatches, &Config::installMiscPatches},
+    {"MissionHudTweaksHooks", InstallMissionHudTweaksHooks, &Config::installMissionHudTweaksHooks},
+    {"ArtifactExchangeHooks", InstallArtifactExchangeHooks, &Config::installArtifactExchangeHooks},
+    {"ChatPatches", InstallChatPatches, &Config::installChatPatches},
+    {"SyncPatches", InstallSyncPatches, &Config::installSyncPatches},
+    {"ObjectTracker", InstallObjectTrackers, &Config::installObjectTracker},
+    {"LoadingScreen", InstallLoadingScreenHooks, &Config::installLoadingScreenHooks},
+    {"TransitionScreen", InstallTransitionScreenHooks, &Config::installTransitionScreenHooks},
+    {"GalacticAnomalyTimer", InstallGalacticAnomalyTimer, &Config::installGalacticAnomalyTimerHooks},
+    {"LoadingTip", InstallLoadingTipHooks, &Config::installLoadingTipHooks},
+    {"InstantCargoCounter", InstallInstantCargoCounterHooks, &Config::installInstantCargoCounterHooks},
+    {"CargoFormat", InstallCargoFormatHooks, &Config::installCargoFormatHooks},
+    {"OfficerSortHooks", InstallOfficerSortHooks, &Config::installOfficerSortHooks},
+    {"PinnedShipSort", InstallPinnedShipSortHooks, &Config::installPinnedShipSortHooks},
+    {"DoubleClickAssignShip", InstallDoubleClickAssignShipHooks, &Config::installDoubleClickAssignShipHooks},
+    {"InstantWarpConfirm", InstallInstantWarpConfirmationHooks, &Config::installInstantWarpConfirmationHooks},
+    {"MessageBoxConfirmations", InstallForbiddenTechConfirmationHooks, &Config::installForbiddenTechConfirmationHooks},
+    {"ForbiddenTechShipName", InstallForbiddenTechShipNameHooks, &Config::installForbiddenTechShipNameHooks},
+    {"AudioEvents", InstallAudioEventHooks, &Config::installAudioEventHooks},
+};
 
-  File::Init();
-
+void StartLogging()
+{
   std::string rotation_error;
   try {
     const auto backup = [](int index) { return std::filesystem::path(File::Log() + "." + std::to_string(index)); };
@@ -94,174 +93,119 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
     rotation_error = error.what();
   }
   // Append if rotation failed so an existing session log is not truncated.
-  auto file_logger = spdlog::basic_logger_mt("default", File::Log(), false);
-  auto sink        = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-  file_logger->sinks().push_back(sink);
-  spdlog::set_default_logger(file_logger);
+  auto logger = spdlog::basic_logger_mt("default", File::Log(), false);
+  logger->sinks().push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
+  spdlog::set_default_logger(logger);
 
-  const auto log_level =
-      File::Trace() ? spdlog::level::trace : (File::Debug() ? spdlog::level::debug : spdlog::level::info);
-
-  spdlog::set_level(log_level);
-  spdlog::flush_on(log_level);
+  const auto level = File::Trace() ? spdlog::level::trace : File::Debug() ? spdlog::level::debug : spdlog::level::info;
+  spdlog::set_level(level);
+  spdlog::flush_on(level);
   if (!rotation_error.empty())
     spdlog::warn("Failed to rotate log history; preserving existing log: {}", rotation_error);
   il2cpp::SetErrorHandler([](std::string_view message) { spdlog::error("{}", message); });
+}
 
-#if VERSION_PATCH
-  if constexpr (sizeof(VERSION_COMMIT_HASH) > 1) {
+void LogBanner()
+{
+  if constexpr (VERSION_PATCH && sizeof(VERSION_COMMIT_HASH) > 1)
     spdlog::info("Initializing STFC Community Mod ({} [{}])", VER_PRODUCT_VERSION_STR, VERSION_COMMIT_HASH);
-  } else {
+  else
     spdlog::info("Initializing STFC Community Mod ({})", VER_PRODUCT_VERSION_STR);
-  }
-#else
-  spdlog::info("Initializing STFC Community Mod ({})", VER_PRODUCT_VERSION_STR);
-#endif
   spdlog::info("");
-  if (!File::Profile().empty()) {
-    spdlog::info("Using custom names");
-  } else {
-    spdlog::info("Using standard names");
-  }
-
+  spdlog::info("{}", File::Profile().empty() ? "Using standard names" : "Using custom names");
   spdlog::info("  Log: {}", File::Log());
   spdlog::info("  Cfg: {}", File::Config());
   spdlog::info("  Var: {}", File::Vars());
   spdlog::info("   BL: {}", File::Battles());
   spdlog::info("");
-
-#if VERSION_PATCH
-  spdlog::warn("*** NOTE: Beta versions may have unexpected bugs and issues");
-  spdlog::info("");
-#endif
-
+  if constexpr (VERSION_PATCH) {
+    spdlog::warn("*** NOTE: Beta versions may have unexpected bugs and issues");
+    spdlog::info("");
+  }
   spdlog::info("Please see https://github.com/STFC-Mod/mod for latest configuration help,");
   spdlog::info("examples and future releases, or visit the STFC Community Mod discord server");
   spdlog::info("at https://discord.gg/PrpHgs7Vjs");
   spdlog::info("");
   spdlog::info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=");
   spdlog::info("");
+}
+
+int64_t il2cpp_init_hook(auto original, const char* domain_name)
+{
+#if _WIN32 && !defined(NDEBUG)
+  AllocConsole();
+  FILE* console;
+  freopen_s(&console, "CONOUT$", "w", stdout);
+#endif
+
+  File::Init();
+  StartLogging();
+  LogBanner();
+
   spdlog::info("Loading Configuration...");
   spdlog::info("");
-
-  static auto& cfg = Config::Get();
-
+  auto& config = Config::Get();
   spdlog::info("");
   spdlog::info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=");
   spdlog::info("");
 
+  // Bindings resolve against the runtime's metadata, so nothing is installed before the domain exists.
+  const auto result = original(domain_name);
+
   spdlog::info("Initializing code hooks:");
-  const PatchEntry patches[] = {
-      {"UiScaleHooks", {InstallUiScaleHooks, &cfg.installUiScaleHooks}},
-      {"ZoomHooks", {InstallZoomHooks, &cfg.installZoomHooks}},
-      {"HavenZoomHooks", {InstallHavenZoomHooks, &cfg.installHavenZoomHooks}},
-      {"InteriorZoomHooks", {InstallInteriorZoomHooks, &cfg.installInteriorZoomHooks}},
-      {"BuffFixHooks", {InstallBuffFixHooks, &cfg.installBuffFixHooks}},
-      {"ToastBannerHooks", {InstallToastBannerHooks, &cfg.installToastBannerHooks}},
-      {"PanHooks", {InstallPanHooks, &cfg.installPanHooks}},
-      {"HotkeyHooks", {InstallHotkeyHooks, &cfg.installHotkeyHooks}},
-      {"GiftsBulkClaimHooks", {InstallGiftsBulkClaimHooks, &cfg.installGiftsBulkClaimHooks}},
-      {"DailyFactionBulkClaimHooks", {InstallDailyFactionBulkClaimHooks, &cfg.installDailyFactionBulkClaimHooks}},
-#if _WIN32
-      {"FreeResizeHooks", {InstallFreeResizeHooks, &cfg.installFreeResizeHooks}},
-#endif
-      {"TempCrashFixes", {InstallTempCrashFixes, &cfg.installTempCrashFixes}},
-      {"TestPatches", {InstallTestPatches, &cfg.installTestPatches}},
-      {"MiscPatches", {InstallMiscPatches, &cfg.installMiscPatches}},
-      {"MissionHudTweaksHooks", {InstallMissionHudTweaksHooks, &cfg.installMissionHudTweaksHooks}},
-      {"ArtifactExchangeHooks", {InstallArtifactExchangeHooks, &cfg.installArtifactExchangeHooks}},
-      {"ChatPatches", {InstallChatPatches, &cfg.installChatPatches}},
-      {"ChatTitleDisplay", {InstallChatTitleDisplayHooks, &cfg.installPlayerTitleDisplayHooks}},
-      {"SyncPatches", {InstallSyncPatches, &cfg.installSyncPatches}},
-      {"ObjectTracker", {InstallObjectTrackers, &cfg.installObjectTracker}},
-      {"LoadingScreen", {InstallLoadingScreenHooks, &cfg.installLoadingScreenHooks}},
-      {"TransitionScreen", {InstallTransitionScreenHooks, &cfg.installTransitionScreenHooks}},
-      {"GalacticAnomalyTimer", {InstallGalacticAnomalyTimer, &cfg.installGalacticAnomalyTimerHooks}},
-      {"LoadingTip", {InstallLoadingTipHooks, &cfg.installLoadingTipHooks}},
-      {"InstantCargoCounter", {InstallInstantCargoCounterHooks, &cfg.installInstantCargoCounterHooks}},
-      {"CargoFormat", {InstallCargoFormatHooks, &cfg.installCargoFormatHooks}},
-      {"OfficerSortHooks", {InstallOfficerSortHooks, &cfg.installOfficerSortHooks}},
-      {"PinnedShipSort", {InstallPinnedShipSortHooks, &cfg.installPinnedShipSortHooks}},
-      {"PinnedShipClick", {InstallPinnedShipClickHooks, &cfg.installPinnedShipClickToggle}},
-      {"DoubleClickAssignShip", {InstallDoubleClickAssignShipHooks, &cfg.installDoubleClickAssignShipHooks}},
-      {"InstantWarpConfirm", {InstallInstantWarpConfirmationHooks, &cfg.installInstantWarpConfirmationHooks}},
-      {"MessageBoxConfirmations", {InstallForbiddenTechConfirmationHooks, &cfg.installForbiddenTechConfirmationHooks}},
-      {"ForbiddenTechShipName", {InstallForbiddenTechShipNameHooks, &cfg.installForbiddenTechShipNameHooks}},
-      {"RevealConfirm", {InstallRevealConfirmationHooks, &cfg.installRevealConfirmationHooks}},
-      {"AudioEvents", {InstallAudioEventHooks, &cfg.installAudioEventHooks}},
-      {"ActionQueueRecovery", {InstallActionQueueRecovery, &cfg.installActionQueueRecoveryHooks}},
-      {"QueueAddressGuard", {InstallQueueAddressGuard, &cfg.installQueueAddressGuardHooks}},
-      {"ThinQueueProtection", {InstallThinQueueProtection, &cfg.installThinQueueProtectionHooks}},
-      {"HavenHistory", {InstallHavenHistoryHooks, &cfg.installHavenHistoryHooks}},
-      {"AllianceGamesStore", {InstallAllianceGamesStoreHooks, &cfg.installAllianceGamesStoreHooks}},
-  };
-  printf("il2cpp_init_hook(%s)\n", domain_name);
-
-  auto r = original(domain_name);
-
-  auto patch_count = 0;
-  auto patch_total = sizeof(patches) / sizeof(patches[0]);
-
-  for (const auto& patch : patches) {
-    patch_count++;
-    const auto [patch_func, patch_enabled] = patch.fnAndEnabled;
-    const auto patch_install               = (patch_enabled && *patch_enabled);
-    const auto patch_mode                  = patch_install ? "+ Patch" : "x Skipp";
-    spdlog::info(" {}ing {:>2} of {} ({})", patch_mode, patch_count, patch_total, patch.name);
-
-    if (patch_install) {
-      patch_func();
-    }
+  for (size_t i = 0; i < std::size(kPatches); ++i) {
+    const auto& patch   = kPatches[i];
+    const bool  enabled = config.*patch.enabled;
+    spdlog::info(" {} {:>2} of {} ({})", enabled ? "+ Patching" : "x Skipping", i + 1, std::size(kPatches), patch.name);
+    if (enabled)
+      patch.install();
   }
 
   spdlog::info("");
-
-#if VERSION_PATCH
-  spdlog::info("Installed beta version {}.{}.{} (Patch {})", VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION,
-               VERSION_PATCH);
-#else
-  spdlog::info("Installed release version {}.{}.{}", VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION);
-#endif
-
+  if constexpr (VERSION_PATCH)
+    spdlog::info("Installed beta version {}.{}.{} (Patch {})", VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION,
+                 VERSION_PATCH);
+  else
+    spdlog::info("Installed release version {}.{}.{}", VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION);
   spdlog::info("");
   spdlog::info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=");
   spdlog::info("");
 
-  return r;
+  return result;
 }
+} // namespace
 
 void ApplyPatches()
 {
 #if _WIN32
   auto assembly = LoadLibraryA("GameAssembly.dll");
 #else
-  char     buf[PATH_MAX];
-  uint32_t bufsize = PATH_MAX;
-  _NSGetExecutablePath(buf, &bufsize);
-
-  char assembly_path[PATH_MAX];
-  snprintf(assembly_path, sizeof(assembly_path), "%s/%s", dirname(buf), "../Frameworks/GameAssembly.dylib");
-  printf("Loading %s\n", assembly_path);
-  auto assembly = dlopen(assembly_path, RTLD_LAZY | RTLD_GLOBAL);
-
-#endif
-
-  if (assembly == nullptr) {
-    spdlog::error("Failed to load GameAssembly");
+  char     executable[PATH_MAX];
+  uint32_t size = sizeof(executable);
+  if (_NSGetExecutablePath(executable, &size) != 0) {
+    fprintf(stderr, "stfc-community-mod: executable path does not fit\n");
     return;
-  } else {
-    try {
-      il2cpp::Initialize(assembly);
-#if _WIN32
-      auto n = GetProcAddress(assembly, "il2cpp_init");
-#else
-      auto n = dlsym(assembly, "il2cpp_init");
+  }
+  char assembly_path[PATH_MAX];
+  snprintf(assembly_path, sizeof(assembly_path), "%s/../Frameworks/GameAssembly.dylib", dirname(executable));
+  auto assembly = dlopen(assembly_path, RTLD_LAZY | RTLD_GLOBAL);
 #endif
-      printf("Got il2cpp_init %p\n", n);
 
-      SPUD_STATIC_DETOUR(n, il2cpp_init_hook);
-    } catch (const std::exception& error) {
-      spdlog::error("Failed to initialize IL2CPP hooks: {}", error.what());
-    }
+  // The logger does not exist yet; it is set up inside il2cpp_init once the settings path is known.
+  if (!assembly) {
+    fprintf(stderr, "stfc-community-mod: failed to load GameAssembly\n");
+    return;
+  }
+
+  try {
+    il2cpp::Initialize(assembly);
+#if _WIN32
+    auto il2cpp_init = reinterpret_cast<void*>(GetProcAddress(assembly, "il2cpp_init"));
+#else
+    auto il2cpp_init = dlsym(assembly, "il2cpp_init");
+#endif
+    SPUD_STATIC_DETOUR(il2cpp_init, il2cpp_init_hook);
+  } catch (const std::exception& error) {
+    fprintf(stderr, "stfc-community-mod: failed to hook il2cpp_init: %s\n", error.what());
   }
 }

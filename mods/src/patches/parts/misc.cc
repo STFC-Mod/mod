@@ -1,23 +1,27 @@
+// Small game tweaks: purchase and donation limits, bundle cooldown buttons, crash guards, the reveal sequence,
+// the cursor, settings URL overrides, and the action queue toggle.
+
 #include "config.h"
 #include "prime/ui.h"
+#include "patches/patches.h"
 
+#include <prime/Hub.h>
+#include <prime/fleet.h>
 #include <prime/inventory.h>
 #include <prime/server.h>
-#include <prime/Hub.h>
+#include <prime/ui.h>
+#include <prime/unity.h>
 
 #include <il2cpp/il2cpp.h>
-
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
+
+#include <algorithm>
+#include <atomic>
 
 #if _WIN32
 #include <Windows.h>
 #endif
-
-#include <algorithm>
-#include <atomic>
-#include <prime/fleet.h>
-#include <prime/ui.h>
 
 namespace
 {
@@ -128,17 +132,6 @@ bool ShouldShowRevealHook(auto original, void* _this, bool ignore)
 }
 
 
-
-
-void ActionQueueManager_AddActionToQueue(auto original, ActionQueueManager* _this, int64_t fleet_id)
-{
-  spdlog::warn("ActionQueueManager_AddActionToQueue({})", fleet_id);
-  original(_this, fleet_id);
-}
-
-//   const auto section_data = Hub::get_SectionManager()->_sectionStorage->GetState(sectionID);
-
-
 std::atomic_bool popup_shown{false};
 
 bool ShouldSuppressAdditionalPopup()
@@ -170,14 +163,90 @@ void InstallTempCrashFixes()
   if (auto m = ShopSceneManager::Method("ShouldShowRevealSequence"))
     SPUD_STATIC_DETOUR(m.Pointer(), ShouldShowRevealHook);
 
-
-  // Debug-only trace, left disabled.
-  // if (auto m = ActionQueueManager::Class::Method("AddActionToQueue"))
-  //   SPUD_STATIC_DETOUR(m.Pointer(), ActionQueueManager_AddActionToQueue);
+  // TODO: disable_first_popup closed the first interstitial via InterstitialViewController.AboutToShow and
+  // CloseWhenReady. It was switched off and the hook only passed through, so it is no longer installed.
 
   using PopupShop = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;
   if (auto m = PopupShop::Method("ShowPlcOfferPopup", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), ShopSceneManager_ShowPlcOfferPopup_Hook);
   if (auto m = InterstitialViewController::Class::Method("AboutToShow", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), InterstitialViewController_AboutToShow_Hook);
+}
+
+// --- "test" patches: cursor, settings URL overrides, and the action queue toggle ---
+
+struct AppConfig : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "AppConfig">;
+
+  Il2CppString* PlatformSettingsUrl()
+  { return Get<"PlatformSettingsUrl", Il2CppString*>(); }
+  void SetPlatformSettingsUrl(Il2CppString* value)
+  { Set<"PlatformSettingsUrl">(value); }
+  Il2CppString* PlatformApiKey()
+  { return Get<"PlatformApiKey", Il2CppString*>(); }
+  void SetPlatformApiKey(Il2CppString* value)
+  { Set<"PlatformApiKey">(value); }
+  Il2CppString* AssetUrlOverride()
+  { return Get<"AssetUrlOverride", Il2CppString*>(); }
+  void SetAssetUrlOverride(Il2CppString* value)
+  { Set<"AssetUrlOverride">(value); }
+};
+
+struct Model : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Model">;
+
+  AppConfig* appConfig()
+  { return Field<"_appConfig", AppConfig*>(); }
+};
+
+void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* hotspot, int cursorMode)
+{
+#if _WIN32
+  if (!Config::Get().allow_cursor) {
+    SetCursor(LoadCursor(NULL, IDC_ARROW));
+    ClipCursor(nullptr); // free cursor from any Unity clipping
+    return;
+  }
+#endif
+
+  return original(_this, texture, hotspot, cursorMode);
+}
+
+void Model_LoadConfigs(auto original, Model* _this)
+{
+  original(_this);
+  auto config = _this->appConfig();
+  if (!config) {
+    return;
+  }
+
+  if (!Config::Get().config_settings_url.empty()) {
+    config->SetPlatformSettingsUrl(il2cpp_string_new(Config::Get().config_settings_url.c_str()));
+  }
+
+  if (!Config::Get().config_assets_url_override.empty()) {
+    config->SetAssetUrlOverride(il2cpp_string_new(Config::Get().config_assets_url_override.c_str()));
+  }
+}
+
+bool IsQueueEnabled(auto original, void* _this)
+{
+  if (Config::Get().queue_enabled) {
+    return original(_this);
+  }
+
+  return false;
+}
+
+void InstallTestPatches()
+{
+  using Cursor = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Cursor">;
+  if (auto m = Cursor::Method("SetCursor_Injected"))
+    SPUD_STATIC_DETOUR(m.Pointer(), Cursor_SetCursor);
+
+  if (auto m = Model::Class::Method("LoadConfigs", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), Model_LoadConfigs);
+
+  if (auto m = ActionQueueManager::Class::Method("IsQueueUnlocked"))
+    SPUD_STATIC_DETOUR(m.Pointer(), IsQueueEnabled);
 }
