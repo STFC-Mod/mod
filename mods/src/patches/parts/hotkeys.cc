@@ -1,43 +1,28 @@
-#include "config.h"
-#include "patches/object_tracker.h"
-#include "patches/ship_shortcut_hint.h"
-#include "prime/fleet.h"
+// Keyboard shortcuts and the mod's frame tick. ScreenManager.Update runs the other features' frame updates, then
+// dispatches the shortcut that was pressed. Returning without calling the game's Update swallows the key, so the
+// game's own handling of it does not run as well.
 
+#include "config.h"
+#include "patches/fleet_watch.h"
+#include "patches/parts/action_queue.h"
+#include "patches/input.h"
+#include "patches/object_tracker.h"
+#include "patches/patches.h"
+#include "patches/shortcuts.h"
+
+#include <prime/Hub.h>
+#include <prime/KeyCode.h>
+#include <prime/chat.h>
+#include <prime/fleet.h>
+#include <prime/inventory.h>
+#include <prime/navigation.h>
+#include <prime/ui.h>
+
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
-
-// Object Viewers
-#include "prime/viewers.h"
-
-#include "prime/fleet.h"
-#include "prime/ui.h"
-#include "prime/navigation.h"
-#include "prime/chat.h"
-#include "prime/inventory.h"
-#include "prime/Hub.h"
-#include "prime/KeyCode.h"
-
-#include "patches/parts/action_queue.h"
-#include "patches/fleet_watch.h"
-#include "patches/input.h"
-#include "patches/shortcuts.h"
-#include "patches/patches.h"
-
-#include "patches/parts/double_click_assign_ship.h"
-
-#include "str_utils.h"
-
-#include <il2cpp/il2cpp.h>
-
-
-#include <EASTL/vector.h>
-
-#include <array>
-#include <cstdint>
-#include <iostream>
-#include <span>
-#include <string_view>
+#include <chrono>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -45,213 +30,18 @@
 
 namespace
 {
-// Classes only the shortcut hint badges touch.
-struct InputAction : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputAction">;
+using Clock = std::chrono::steady_clock;
 
-  Il2CppString* name()
-  { return Get<"name", Il2CppString*>(); }
-};
+bool hotkeys_installed = false;
 
-struct InputActionReference : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputActionReference">;
-
-  InputAction* action()
-  { return Get<"action", InputAction*>(); }
-};
-
-struct ShortcutKeybindHint : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutKeybindHint">;
-
-  InputActionReference* inputAction()
-  { return Field<"_inputAction", InputActionReference*>(); }
-  TextLocalizer* keyTextLocalizer()
-  { return Field<"_keyTextLocalizer", TextLocalizer*>(); }
-};
-} // namespace
-
-static bool hotkeys_installed                 = false;
-static int  show_info_pending                 = 0;
-static int  show_officer_presets_pending      = 0;
-static int  show_officer_swap_pending         = 0;
-static int  show_ship_swap_pending            = 0;
-static bool officer_presets_assignment_opened = false;
-
-using UpdateShortcutHintTextFn = void(ShortcutKeybindHint*);
-
-static UpdateShortcutHintTextFn* original_shortcut_hint_update_text = nullptr;
-static bool                      initialize_actions_hook_ready      = false;
-static bool                      shortcut_hints_ready               = false;
-
-bool SetNativeShortcutHintsVisible(bool visible)
-{
-  auto* shortcuts_manager = ShortcutsManager::Instance();
-  if (!shortcuts_manager) {
-    spdlog::warn("[Hotkeys] native shortcut hints are unavailable");
-    return false;
-  }
-
-  if (shortcuts_manager->ShowKeybindings() != visible)
-    shortcuts_manager->SetShowKeybindings(visible);
-
-  return true;
-}
-
-bool ToggleNativeShortcutHints()
-{
-  auto* shortcuts_manager = shortcut_hints_ready ? ShortcutsManager::Instance() : nullptr;
-  if (!shortcuts_manager) {
-    spdlog::warn("[Hotkeys] native shortcut hints are unavailable");
-    return false;
-  }
-
-  // Match the native OnShowKeybindingsAction gate while avoiding a fabricated InputAction.CallbackContext.
-  if (!ShortcutsManager::CanUseShortcuts())
-    return false;
-
-  shortcuts_manager->SetShowKeybindings(!shortcuts_manager->ShowKeybindings());
-
-  return true;
-}
-
-struct NativeShortcutMapping {
-  std::string_view action_name;
-  GameFunction     primary;
-  GameFunction     fallback = GameFunction::Max;
-};
-
-constexpr auto kNativeShortcutMappings = std::to_array<NativeShortcutMapping>({
-    {"interior_view", GameFunction::ShowStationInterior},
-    {"exterior_view", GameFunction::ShowStationExterior},
-    {"system_view", GameFunction::ShowSystem},
-    {"galaxy_view", GameFunction::ShowGalaxy},
-    {"events", GameFunction::ShowEvents},
-    {"ship_a", GameFunction::SelectShip1},
-    {"ship_b", GameFunction::SelectShip2},
-    {"ship_c", GameFunction::SelectShip3},
-    {"ship_d", GameFunction::SelectShip4},
-    {"ship_e", GameFunction::SelectShip5},
-    {"ship_f", GameFunction::SelectShip6},
-    {"ship_g", GameFunction::SelectShip7},
-    {"ship_h", GameFunction::SelectShip8},
-    {"alliance", GameFunction::ShowAlliance},
-    {"chat", GameFunction::ShowChat},
-    {"side_chat", GameFunction::ShowChatSide1, GameFunction::ShowChatSide2},
-    {"away_teams", GameFunction::ShowAwayTeam},
-    {"missions", GameFunction::ShowMissions},
-    {"daily_goals", GameFunction::ShowDaily},
-    {"ship_locate", GameFunction::SelectCurrent},
-    {"ship_manage", GameFunction::ShowShips},
-    {"research", GameFunction::ShowResearch},
-    {"consumables", GameFunction::ShowExoComp},
-    {"ship_recall", GameFunction::ActionRecall},
-    {"show_keybindings", GameFunction::ToggleShortcutHints},
-    {"gifts", GameFunction::ShowGifts},
-    {"help_alliance", GameFunction::ShowAllianceHelp},
-    {"officers", GameFunction::ShowOfficers},
-    {"factions", GameFunction::ShowFactions},
-    {"items", GameFunction::ShowInventory},
-    {"refinery", GameFunction::ShowRefinery},
-    {"commanders", GameFunction::ShowCommander},
-    {"challenges", GameFunction::ShowQTrials},
-});
-
-consteval bool NativeShortcutActionsAreUnique()
-{
-  for (size_t index = 0; index < kNativeShortcutMappings.size(); ++index) {
-    for (size_t other = index + 1; other < kNativeShortcutMappings.size(); ++other) {
-      if (kNativeShortcutMappings[index].action_name == kNativeShortcutMappings[other].action_name) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-static_assert(NativeShortcutActionsAreUnique());
-
-constexpr const NativeShortcutMapping* NativeShortcutForAction(std::string_view action_name)
-{
-  for (const auto& mapping : kNativeShortcutMappings) {
-    if (mapping.action_name == action_name) {
-      return &mapping;
-    }
-  }
-  return nullptr;
-}
-
-static_assert(NativeShortcutForAction("interior_view")->primary == GameFunction::ShowStationInterior);
-static_assert(NativeShortcutForAction("side_chat")->fallback == GameFunction::ShowChatSide2);
-static_assert(NativeShortcutForAction("unknown") == nullptr);
-
-void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _this)
-{
-  if (!_this || !shortcut_hints_ready) {
-    return original(_this);
-  }
-
-  auto* text_localizer = _this->keyTextLocalizer();
-  if (!text_localizer) {
-    return original(_this);
-  }
-
-  // UpdateText does not clear an existing localization override. Clear ours first so native, disabled, and unknown
-  // actions cannot retain a stale mod badge.
-  text_localizer->ClearTextOverride();
-  original(_this);
-
-  const auto& config = Config::Get();
-  if (!config.hotkeys_enabled || config.use_scopely_hotkeys) {
-    return;
-  }
-
-  auto* input_action_reference = _this->inputAction();
-  if (!input_action_reference) {
-    return;
-  }
-
-  auto* action = input_action_reference->action();
-  auto* name   = action ? action->name() : nullptr;
-  if (!name) {
-    return;
-  }
-
-  const auto  action_name = to_string(name);
-  const auto* mapping     = NativeShortcutForAction(action_name);
-  if (!mapping) {
-    text_localizer->OverrideLocalizedText(il2cpp_string_new("-"));
-    return;
-  }
-
-  auto hint_action = mapping->primary;
-  if (hint_action >= GameFunction::SelectShip1 && hint_action <= GameFunction::SelectShip8) {
-    // Use the same context array as FleetBarViewController::RequestSelect(int, bool), not the native dock index.
-    auto* bar     = ObjectFinder<FleetBarViewController>::Get();
-    auto* context = bar ? bar->CanvasContext() : nullptr;
-    auto* fleets  = context ? context->FleetData() : nullptr;
-    hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->size() : 0, [fleets](std::size_t position) {
-      auto* fleet = (*fleets)[position];
-      return fleet ? fleet->Index() : -1;
-    });
-  }
-  auto shortcut = hint_action == GameFunction::Max ? std::string{} : Shortcut::Hint(hint_action);
-
-  if (shortcut.empty() && mapping->fallback != GameFunction::Max) {
-    shortcut = Shortcut::Hint(mapping->fallback);
-  }
-  if (shortcut.empty()) {
-    shortcut = "-";
-  }
-  text_localizer->OverrideLocalizedText(il2cpp_string_new(shortcut.c_str()));
-}
-
-void ShortcutKeybindHint_UpdateVisibility_Hook(auto original, ShortcutKeybindHint* _this, bool visible)
-{
-  original(_this, visible);
-  if (visible && shortcut_hints_ready && original_shortcut_hint_update_text) {
-    ShortcutKeybindHint_UpdateText_Hook(original_shortcut_hint_update_text, _this);
-  }
-}
+// Ship Swap and Officer Swap live on the Manage Ships screen, and Officer Presets on the officer assignment screen
+// that Officer Swap opens. Their shortcuts open those screens first, then press the button once it exists. 300
+// frames is a few seconds at the game's frame rate.
+constexpr int kButtonWaitFrames         = 300;
+int           ship_swap_frames          = 0;
+int           officer_swap_frames       = 0;
+int           officer_presets_frames    = 0;
+bool          officer_assignment_opened = false;
 
 // UnityEngine.InputSystem.InputAction.CallbackContext, passed empty. Generated code takes it by value with the
 // platform's C++ ABI, so this layout must match the managed struct.
@@ -259,158 +49,539 @@ struct InputActionCallbackContext {
   void*   state;
   int32_t action_index;
 };
-
 static_assert(sizeof(InputActionCallbackContext) == 16);
 
-// Calls one of ShortcutsManager's On*Action(InputAction.CallbackContext) handlers. A missing handler is reported
-// once by the binding layer and does nothing.
-template <il2cpp::Name Action> bool InvokeNativeShortcut(const char* action_name)
+// Runs one of ShortcutsManager's On*Action(InputAction.CallbackContext) handlers, the way the game's own shortcut
+// for it would. A handler missing from this client is reported once by the binding layer and does nothing.
+template <il2cpp::Name Action> void Native()
 {
-  auto* shortcuts_manager = ShortcutsManager::Instance();
-  if (!shortcuts_manager) {
-    spdlog::warn("[Hotkeys] native {} shortcut is unavailable", action_name);
-    return false;
+  if (auto* manager = ShortcutsManager::Instance())
+    manager->Call<Action>(InputActionCallbackContext{});
+  else
+    spdlog::warn("[Hotkeys] native {} shortcut is unavailable", Action.View());
+}
+
+void GotoSection(SectionID section, void* data = nullptr)
+{
+  if (auto* manager = Hub::get_SectionManager())
+    manager->TriggerSectionChange(section, data, false, false, true);
+}
+
+template <SectionID Section> void Goto()
+{ GotoSection(Section); }
+
+// Galaxy and system views keep their state in section storage; reuse it so the camera returns where it was.
+template <SectionID Section> void GotoNavigation()
+{
+  auto* manager = Hub::get_SectionManager();
+  auto* storage = manager ? manager->sectionStorage() : nullptr;
+  if (auto* state = storage ? storage->GetState(Section) : nullptr)
+    GotoSection(Section, state);
+  else
+    NavigationSectionManager::ChangeNavigationSection(Section);
+}
+
+template <bool Config::* Setting> void Toggle()
+{
+  auto& config    = Config::Get();
+  config.*Setting = !(config.*Setting);
+}
+
+template <spdlog::level::level_enum Level> void SetLogLevel()
+{
+  spdlog::set_level(Level);
+  spdlog::flush_on(Level);
+}
+
+template <void (*Adjust)(bool), bool Up> void Scale()
+{ Adjust(Up); }
+
+void ShowBookmarks()
+{
+  if (auto* bookmarks = BookmarksManager::Instance())
+    bookmarks->ViewBookmarks();
+  else
+    GotoSection(SectionID::Bookmarks_Main);
+}
+
+void ShowCoordinateSearch()
+{
+  if (auto* bookmarks = BookmarksManager::Instance())
+    return bookmarks->ViewCoordinateSearch();
+  spdlog::warn("[ShowLookup] BookmarksManager instance not available, falling back to main bookmarks");
+  GotoSection(SectionID::Bookmarks_Main);
+}
+
+void ShowHaven()
+{ PlanetaryBaseManager::ViewOwnHaven(); }
+
+// Presses the button `pick` returns on the first visible, active Controller.
+template <typename Controller> bool PressButton(Button* (*pick)(Controller*))
+{
+  for (auto* controller : ObjectFinder<Controller>::GetAll()) {
+    auto* canvas = controller ? GetCanvasControllerFromComponent(controller) : nullptr;
+    auto* button = canvas && canvas->Visible() && controller->isActiveAndEnabled() ? pick(controller) : nullptr;
+    if (button) {
+      button->Press();
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PressShipSwapButton()
+{
+  return PressButton<ShipManagementScreenStateViewController>(
+      [](ShipManagementScreenStateViewController* controller) { return controller->swapShipButton(); });
+}
+
+bool PressOfficerSwapButton()
+{
+  return PressButton<ShipManagementScreenStateViewController>(
+      [](ShipManagementScreenStateViewController* controller) { return controller->officerIconButton(); });
+}
+
+bool PressOfficerPresetsButton()
+{
+  return PressButton<OfficerAssignmentViewController>([](OfficerAssignmentViewController* controller) -> Button* {
+    auto* widget   = controller->officerPresetsButton();
+    auto* listener = widget ? widget->SemaphoreListener() : nullptr;
+    return listener ? listener->TheButton() : nullptr;
+  });
+}
+
+void OpenManageShips()
+{
+  auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+  if (auto* fleet = fleet_bar ? fleet_bar->SelectedFleet() : nullptr)
+    fleet_bar->fleetPanelController()->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+}
+
+void ShowShipSwap()
+{
+  if (PressShipSwapButton())
+    return;
+  auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+  if (!fleet_bar || !fleet_bar->SelectedFleet()) {
+    spdlog::warn("[Hotkeys] unable to open Manage Ships for Ship Swap");
+    return;
+  }
+  OpenManageShips();
+  ship_swap_frames = kButtonWaitFrames;
+}
+
+void ShowOfficerSwap()
+{
+  if (PressOfficerSwapButton())
+    return;
+  auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+  if (!fleet_bar || !fleet_bar->SelectedFleet()) {
+    spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Swap");
+    return;
+  }
+  OpenManageShips();
+  officer_swap_frames = kButtonWaitFrames;
+}
+
+void ShowOfficerPresets()
+{
+  if (PressOfficerPresetsButton())
+    return;
+  officer_assignment_opened = PressOfficerSwapButton();
+  if (!officer_assignment_opened) {
+    auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+    if (!fleet_bar || !fleet_bar->SelectedFleet()) {
+      spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Presets");
+      return;
+    }
+    OpenManageShips();
+  }
+  officer_presets_frames = kButtonWaitFrames;
+}
+
+// Presses the button a Show* shortcut above is waiting for once its screen is up. Returns true when one was pressed.
+bool PressAwaitedButton()
+{
+  if (officer_presets_frames > 0) {
+    if (PressOfficerPresetsButton()) {
+      officer_presets_frames    = 0;
+      officer_assignment_opened = false;
+      return true;
+    }
+    // Manage Ships is up but officer assignment not yet: open it on the way.
+    if (!officer_assignment_opened && PressOfficerSwapButton())
+      officer_assignment_opened = true;
+    if (--officer_presets_frames == 0) {
+      officer_assignment_opened = false;
+      spdlog::warn("[Hotkeys] timed out waiting for the Officer Presets button");
+    }
   }
 
-  shortcuts_manager->Call<Action>(InputActionCallbackContext{});
+  if (officer_swap_frames > 0) {
+    if (PressOfficerSwapButton()) {
+      officer_swap_frames = 0;
+      return true;
+    }
+    if (--officer_swap_frames == 0)
+      spdlog::warn("[Hotkeys] timed out waiting for the Officer Swap button");
+  }
+
+  if (ship_swap_frames > 0) {
+    if (PressShipSwapButton()) {
+      ship_swap_frames = 0;
+      return true;
+    }
+    if (--ship_swap_frames == 0)
+      spdlog::warn("[Hotkeys] timed out waiting for the Ship Swap button");
+  }
+  return false;
+}
+
+void CycleAutoConfirmInstantWarp()
+{
+  auto& setting = Config::Get().auto_confirm_instant_warp;
+  switch (setting) {
+    case InstantWarpConfirmation::None:
+      setting = InstantWarpConfirmation::Warp;
+      break;
+    case InstantWarpConfirmation::Warp:
+      setting = InstantWarpConfirmation::Jump;
+      break;
+    case InstantWarpConfirmation::Jump:
+      setting = InstantWarpConfirmation::None;
+      break;
+  }
+  constexpr const char* kNames[] = {"none", "warp", "jump"};
+  spdlog::info("Auto-confirm instant warp set to {}", kNames[static_cast<int>(setting)]);
+}
+
+struct Action {
+  GameFunction shortcut;
+  void (*run)();
+  // Held actions repeat every frame while the keys are down; the rest fire once per press.
+  bool held = false;
+  // Navigation swallows the key; toggles let the game see it too.
+  bool consumes = true;
+};
+
+// Checked in order, outside chat and text fields; the first pressed one runs.
+constexpr Action kActions[] = {
+    {GameFunction::ShowQTrials, Goto<SectionID::ChallengeSelection>},
+    {GameFunction::ShowBookmarks, ShowBookmarks},
+    {GameFunction::ShowLookup, ShowCoordinateSearch},
+    {GameFunction::ShowRefinery, Goto<SectionID::Shop_Refining_List>},
+    {GameFunction::ShowFactions, Goto<SectionID::Shop_MainFactions>},
+    {GameFunction::ShowStationExterior, Goto<SectionID::Starbase_Exterior>},
+    {GameFunction::NativeShortcutGalaxy, Native<"OnGalaxyAction">},
+    {GameFunction::ShowGalaxy, GotoNavigation<SectionID::Navigation_Galaxy>},
+    {GameFunction::ShowStationInterior, Goto<SectionID::Starbase_Interior>},
+    {GameFunction::ShowHaven, ShowHaven},
+    {GameFunction::ShowSystem, GotoNavigation<SectionID::Navigation_System>},
+    {GameFunction::ShowArtifacts, Goto<SectionID::ArtifactHall_Inventory>},
+    {GameFunction::ShowShipConstruction, Native<"OnShipsAction">},
+    {GameFunction::ShowOfficerSwap, ShowOfficerSwap},
+    {GameFunction::ShowShipSwap, ShowShipSwap},
+    {GameFunction::ShowShields, Native<"OnPeaceShieldAction">},
+    {GameFunction::ShowBattlelogs, Native<"OnInboxAction">},
+    {GameFunction::ShowInventory, Goto<SectionID::InventoryList>},
+    {GameFunction::ShowMissions, Goto<SectionID::Missions_AcceptedList>},
+    {GameFunction::ShowResearch, Goto<SectionID::Research_LandingPage>},
+    {GameFunction::ShowScrapYard, Goto<SectionID::ShipScrapping_List>},
+    {GameFunction::ShowOfficers, Goto<SectionID::OfficerInventory>},
+    {GameFunction::ShowOfficerPresets, ShowOfficerPresets},
+    // TODO: opens the first fleet commander (Spock), not the selected fleet's.
+    {GameFunction::ShowCommander, Goto<SectionID::FleetCommander_Management>},
+    {GameFunction::ShowAwayTeam, Goto<SectionID::Missions_AwayTeamsList>},
+    {GameFunction::NativeShortcutEvents, Native<"OnEventsAction">},
+    {GameFunction::ShowEvents, Goto<SectionID::Tournament_Group_Selection>},
+    {GameFunction::ShowExoComp, Goto<SectionID::Consumables>},
+    {GameFunction::ShowDaily, Goto<SectionID::Missions_DailyGoals>},
+    {GameFunction::ShowGifts, Goto<SectionID::Shop_List>},
+    {GameFunction::ShowAlliance, Goto<SectionID::Alliance_Main>},
+    {GameFunction::ShowAllianceHelp, Goto<SectionID::Alliance_Help>},
+    {GameFunction::ShowAllianceArmada, Goto<SectionID::Alliance_Armadas>},
+    {GameFunction::ShowSettings, Goto<SectionID::GameSettings>},
+    {GameFunction::UiScaleUp, Scale<AdjustUiScale, true>, true, false},
+    {GameFunction::UiScaleDown, Scale<AdjustUiScale, false>, true, false},
+    {GameFunction::UiShipScaleUp, Scale<AdjustUiShipScale, true>, true, false},
+    {GameFunction::UiShipScaleDown, Scale<AdjustUiShipScale, false>, true, false},
+    {GameFunction::UiViewerScaleUp, Scale<AdjustUiViewerScale, true>, true, false},
+    {GameFunction::UiViewerScaleDown, Scale<AdjustUiViewerScale, false>, true, false},
+    {GameFunction::ToggleAutoConfirmInstantWarp, CycleAutoConfirmInstantWarp, false, false},
+    {GameFunction::TogglePreviewLocate, Toggle<&Config::disable_preview_locate>, false, false},
+    {GameFunction::TogglePreviewRecall, Toggle<&Config::disable_preview_recall>, false, false},
+    {GameFunction::ToggleCargoDefault, Toggle<&Config::show_cargo_default>, false, false},
+    {GameFunction::ToggleCargoPlayer, Toggle<&Config::show_player_cargo>, false, false},
+    {GameFunction::ToggleCargoStation, Toggle<&Config::show_station_cargo>, false, false},
+    {GameFunction::ToggleCargoHostile, Toggle<&Config::show_hostile_cargo>, false, false},
+    {GameFunction::ToggleCargoArmada, Toggle<&Config::show_armada_cargo>, false, false},
+    {GameFunction::LogLevelOff, SetLogLevel<spdlog::level::off>, false, false},
+    {GameFunction::LogLevelError, SetLogLevel<spdlog::level::err>, false, false},
+    {GameFunction::LogLevelWarn, SetLogLevel<spdlog::level::warn>, false, false},
+    {GameFunction::LogLevelInfo, SetLogLevel<spdlog::level::info>, false, false},
+    {GameFunction::LogLevelDebug, SetLogLevel<spdlog::level::debug>, false, false},
+    {GameFunction::LogLevelTrace, SetLogLevel<spdlog::level::trace>, false, false},
+    {GameFunction::ShowShips, OpenManageShips, false, false},
+};
+
+// The table's first pressed action, if any. Returns true when that action swallows the key.
+bool RunAction()
+{
+  for (const auto& action : kActions) {
+    if (action.held ? Shortcut::IsPressed(action.shortcut) : Shortcut::IsDown(action.shortcut)) {
+      action.run();
+      return action.consumes;
+    }
+  }
+  return false;
+}
+
+void ViewSelectedFleet(FleetPlayerData* fleet)
+{
+  NavigationSectionManager::HideInteraction();
+  if (auto* fleets = FleetsManager::Instance())
+    fleets->RequestViewFleet(fleet, true);
+}
+
+// The number keys select a ship in the fleet bar; pressing the same one again within select_timer flies the
+// camera to it. With disable_preview_locate, the second press only selects while a target card is open.
+// Returns true when the key was used.
+bool SelectShip()
+{
+  constexpr GameFunction kShips[]   = {GameFunction::SelectShip1, GameFunction::SelectShip2, GameFunction::SelectShip3,
+                                       GameFunction::SelectShip4, GameFunction::SelectShip5, GameFunction::SelectShip6,
+                                       GameFunction::SelectShip7, GameFunction::SelectShip8};
+  static auto            last_press = Clock::now();
+  static int32_t         last_index = -1;
+
+  int32_t index = 0;
+  while (index < 8 && !Shortcut::IsDown(kShips[index]))
+    ++index;
+  // TODO: Shift+ship used to request a tow by the Discovery. Its bindings had drifted, so it never ran on
+  // recent clients, and it was disabled until someone verifies it in game. Shift+ship does nothing meanwhile.
+  if (index == 8 || Key::IsInputFocused() || Key::HasShift())
+    return false;
+
+  auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+  if (!fleet_bar)
+    return false;
+
+  const auto now        = Clock::now();
+  const bool can_locate = !Config::Get().disable_preview_locate || !TargetViewerShown();
+  if (can_locate && index == last_index && fleet_bar->IsIndexSelected(index)
+      && now - last_press < std::chrono::milliseconds(Config::Get().select_timer)) {
+    auto* fleet = fleet_bar->SelectedFleet();
+    if (!fleet)
+      return true;
+    ViewSelectedFleet(fleet);
+  } else {
+    fleet_bar->RequestSelect(index);
+  }
+  last_index = index;
+  last_press = now;
   return true;
 }
 
-bool force_space_action_next_frame = false;
-
-void     ChangeNavigationSection(SectionID sectionID);
-void     ExecuteSpaceAction(FleetBarViewController* fleet_bar);
-bool     DidExecuteRecall(FleetBarViewController* fleet_bar);
-bool     DidExecuteRepair(FleetBarViewController* fleet_bar);
-HullType GetHullTypeFromBattleTarget(BattleTargetData* context);
-void     GotoSection(SectionID sectionID, void* screen_data = nullptr);
-bool     CanHideViewers();
-bool     DidHideViewers();
-
-void CycleAutoConfirmInstantWarp(Config& config)
+// Opens chat, or focuses its input when side chat is already open. Does not swallow the key.
+void OpenChat()
 {
-  const char* state = nullptr;
-  switch (config.auto_confirm_instant_warp) {
-    case InstantWarpConfirmation::None:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::Warp;
-      state                            = "warp";
-      break;
-    case InstantWarpConfirmation::Warp:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::Jump;
-      state                            = "jump";
-      break;
-    case InstantWarpConfirmation::Jump:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::None;
-      state                            = "none";
-      break;
-  }
+  const bool side = Shortcut::IsDown(GameFunction::ShowChatSide1) || Shortcut::IsDown(GameFunction::ShowChatSide2);
+  if (!side && !Shortcut::IsDown(GameFunction::ShowChat))
+    return;
+  auto* chat = ChatManager::Instance();
+  if (!chat)
+    return;
 
-  spdlog::info("Auto-confirm instant warp set to {}", state);
+  if (chat->IsSideChatOpen()) {
+    auto* view  = ObjectFinder<FullScreenChatViewController>::Get();
+    auto* list  = view ? view->messageList() : nullptr;
+    auto* input = list ? list->inputField() : nullptr;
+    if (input)
+      input->ActivateInputField();
+  } else {
+    chat->OpenChannel(ChatChannelCategory::Alliance, side ? ChatViewMode::Side : ChatViewMode::Fullscreen);
+  }
 }
 
-bool MoveOfficerCanvas(bool goLeft)
+// In chat, the chat shortcuts switch channel. Returns true when the key was used.
+bool SelectChatChannel()
 {
-  auto selectors = ObjectFinder<ElementSelectorViewController>::GetAll();
-  if (selectors.empty()) {
+  auto* chat = ChatManager::Instance();
+  if (!chat)
     return false;
-  }
-
-  bool acted = false;
-  for (auto selector : selectors) {
-    if (!selector || !selector->isActiveAndEnabled()) {
-      continue;
+  for (auto [shortcut, channel] : {std::pair{GameFunction::SelectChatGlobal, ChatChannelCategory::Global},
+                                   std::pair{GameFunction::SelectChatAlliance, ChatChannelCategory::Alliance},
+                                   std::pair{GameFunction::SelectChatPrivate, ChatChannelCategory::Private}}) {
+    if (Shortcut::IsDown(shortcut)) {
+      chat->OpenChannel(channel);
+      return true;
     }
-    if (goLeft) {
-      selector->PressDecrement();
-    } else {
-      selector->PressIncrement();
-    }
-    acted = true;
   }
-
-  return acted;
+  return false;
 }
 
-bool MoveArtifactCanvas(bool goLeft)
+// Left and right step through docks, ship lists, artifacts and officer pages on the screens that have them,
+// before they pan the camera. Returns true when something moved.
+bool StepScreen(bool left)
 {
-  bool acted = false;
-  for (auto controller : ObjectFinder<ArtifactHallDetailsViewController>::GetAll()) {
-    if (!controller) {
-      spdlog::trace("MoveArtifactCanvas({}) - No controller", (int)goLeft);
-      continue;
-    }
+  const auto& config = Config::Get();
 
-    if (!controller->isActiveAndEnabled()) {
-      spdlog::trace("MoveArtifactCanvas({}) - Controller not active", (int)goLeft);
-      continue;
+  if (config.arrow_keys_to_select_ship && Hub::CurrentSection() == SectionID::ShipManagement_Details) {
+    bool moved = false;
+    for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
+      auto* canvas =
+          controller && controller->isActiveAndEnabled() ? GetCanvasControllerFromComponent(controller) : nullptr;
+      auto* context = canvas && canvas->Visible() ? controller->Context() : nullptr;
+      if (!context)
+        continue;
+      const int32_t count = context->ListCount();
+      const int32_t next  = context->CurrentIndex() + (left ? -1 : 1);
+      if (count <= 1 || context->CurrentIndex() < 0 || next < 0 || next >= count)
+        continue;
+      context->SetLastMovementWasToIncrement(!left);
+      context->SetCurrentIndex(next);
+      moved = true;
     }
-
-    if (goLeft) {
-      spdlog::debug("MoveArtifactCanvas({}) - Pressing Left Arrow", (int)goLeft);
-      controller->PressLeftArrow();
-    } else {
-      spdlog::debug("MoveArtifactCanvas({}) - Pressing Right Arrow", (int)goLeft);
-      controller->PressRightArrow();
-    }
-    acted = true;
+    if (moved)
+      return true;
   }
 
-  return acted;
+  if (config.arrow_keys_to_select_ship) {
+    bool moved = false;
+    for (auto* widget : ObjectFinder<AssignShipsWidget>::GetAll()) {
+      auto* canvas = widget ? GetCanvasControllerFromComponent(widget) : nullptr;
+      auto* list   = canvas && canvas->Visible() && widget->isActiveAndEnabled() ? widget->selectableList() : nullptr;
+      if (!list || list->Count() <= 0)
+        continue;
+      // Skip empty dock slots.
+      const int32_t count = list->Count();
+      int32_t       index = list->SelectedIndex();
+      do
+        index += left ? -1 : 1;
+      while (index >= 0 && index < count
+             && !(list->DataItem(index) && static_cast<FleetPlayerData*>(list->DataItem(index))->HasShip()));
+      if (index < 0 || index >= count)
+        continue;
+      list->RequestSelect(index);
+      moved = true;
+    }
+    if (moved)
+      return true;
+  }
+
+  bool moved = false;
+  for (auto* controller : ObjectFinder<ArtifactHallDetailsViewController>::GetAll()) {
+    if (!controller || !controller->isActiveAndEnabled())
+      continue;
+    left ? controller->PressLeftArrow() : controller->PressRightArrow();
+    moved = true;
+  }
+  if (moved)
+    return true;
+
+  for (auto* selector : ObjectFinder<ElementSelectorViewController>::GetAll()) {
+    if (!selector || !selector->isActiveAndEnabled())
+      continue;
+    left ? selector->PressDecrement() : selector->PressIncrement();
+    moved = true;
+  }
+  return moved;
 }
 
-bool IsRealShipIndex(SelectableList* list, int32_t index)
+// Focuses the search box of whichever inventory, officer or ship list is on screen.
+bool FocusSearchBox()
 {
-  auto* item = list->DataItem(index);
-  if (!item) return false;
-  return static_cast<FleetPlayerData*>(item)->HasShip();
-}
-
-bool MoveShipSelectionInDock(bool goLeft)
-{
-  if (!Config::Get().arrow_keys_to_select_ship) {
+  // Never steal focus from the chat box.
+  if (auto* chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->inputFieldSelected())
     return false;
-  }
 
-  bool acted = false;
-  for (auto widget : ObjectFinder<AssignShipsWidget>::GetAll()) {
-    if (!widget) continue;
-
-    auto canvas = GetCanvasControllerFromComponent(widget);
-    if (!canvas || !canvas->Visible() || !widget->isActiveAndEnabled()) {
-      spdlog::trace("MoveShipSelectionInDock({}) - widget={} not visible/active", (int)goLeft, (void*)widget);
-      continue;
-    }
-
-    auto* list = widget->selectableList();
-    if (!list) {
-      spdlog::trace("MoveShipSelectionInDock({}) - widget={} has no _selectableList", (int)goLeft, (void*)widget);
-      continue;
-    }
-
-    const auto count = list->Count();
-    if (count <= 0) {
-      spdlog::trace("MoveShipSelectionInDock({}) - list={} count={}", (int)goLeft, (void*)list, count);
-      continue;
-    }
-
-    const auto step = goLeft ? -1 : 1;
-    auto       newIndex = list->SelectedIndex() + step;
-    while (newIndex >= 0 && newIndex < count && !IsRealShipIndex(list, newIndex)) {
-      newIndex += step;
-    }
-    if (newIndex < 0 || newIndex >= count) {
-      spdlog::trace("MoveShipSelectionInDock({}) - no further real ship in that direction", (int)goLeft);
-      continue;
-    }
-
-    spdlog::debug("MoveShipSelectionInDock({}) - selecting index {} of {}", (int)goLeft, newIndex, count);
-    list->RequestSelect(newIndex);
-    acted = true;
-  }
-
-  return acted;
+  const auto focus = [](auto* owner, CanvasController* canvas) {
+    auto* field = owner ? owner->inputField() : nullptr;
+    if (!field || !canvas || !canvas->Visible() || !owner->isActiveAndEnabled() || !field->isActiveAndEnabled())
+      return false;
+    field->Focus();
+    return true;
+  };
+  // InventoryListViewController also covers the officer roster and the other inventory screens.
+  for (auto* controller : ObjectFinder<InventoryListViewController>::GetAll())
+    if (controller && focus(controller, controller->canvasController()))
+      return true;
+  for (auto* controller : ObjectFinder<OfficerAssignmentViewController>::GetAll())
+    if (controller && focus(controller, controller->canvasController()))
+      return true;
+  for (auto* widget : ObjectFinder<AssignShipsWidget>::GetAll())
+    if (widget && focus(widget, GetCanvasControllerFromComponent(widget)))
+      return true;
+  return false;
 }
 
+// Shortcuts that act on the screen rather than navigate. Returns true when the key was swallowed.
+bool RunScreenShortcuts()
+{
+  if (Shortcut::IsDown(GameFunction::SelectCurrent)) {
+    auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
+    if (auto* fleet = fleet_bar ? fleet_bar->SelectedFleet() : nullptr) {
+      ViewSelectedFleet(fleet);
+      return true;
+    }
+  }
+  if (Shortcut::IsDown(GameFunction::ToggleQueue)) {
+    Toggle<&Config::queue_enabled>();
+    ResetQueueRecoveryTracking();
+    return true;
+  }
+  OpenChat();
+  if (Shortcut::IsDown(GameFunction::MoveLeft) && StepScreen(true))
+    return true;
+  if (Shortcut::IsDown(GameFunction::MoveRight) && StepScreen(false))
+    return true;
+  if (Config::Get().focus_search && Shortcut::IsDown(GameFunction::FocusSearch) && FocusSearchBox())
+    return true;
+  return RunAction();
+}
+
+// With disable_escape_exit, Escape no longer reaches the game's exit prompt. disable_escape_exit_timer > 0 lets
+// a double tap within that many milliseconds through. Returns true when Escape is swallowed.
+bool SwallowEscape()
+{
+  const auto& config = Config::Get();
+  if (!config.disable_escape_exit || !Key::Pressed(KeyCode::Escape))
+    return false;
+  // A held key stays swallowed; only distinct presses count towards a double tap.
+  if (config.disable_escape_exit_timer <= 0 || !Key::Down(KeyCode::Escape))
+    return true;
+
+  static Clock::time_point first_press{};
+  const auto               now = Clock::now();
+  if (first_press == Clock::time_point{}
+      || now - first_press > std::chrono::milliseconds(config.disable_escape_exit_timer)) {
+    first_press = now;
+    return true;
+  }
+  // Consume the pair so a quick third press starts a new one.
+  first_press = {};
+  return false;
+}
+
+void RunFrameUpdates()
+{
+  // Each returns at once when its feature is off. They run in every hotkey mode, including Scopely's and while
+  // hotkeys are toggled off. An exception must not unwind into the game's native frame.
+  for (auto update : {AllianceGamesStoreUpdate, AssignShipEnterKeyUpdate, ChatOptionsUpdate,
+                      DailyFactionBulkClaimUpdate, fleet_watch::Tick, FleetSyncUpdate, GalacticAnomalyTimerUpdate,
+                      WarpActionLabelUpdate}) {
+    try {
+      update();
+    } catch (const std::exception& error) {
+      spdlog::warn("[FrameUpdate] update failed: {}", error.what());
+    } catch (...) {
+      spdlog::warn("[FrameUpdate] update failed with an unknown exception");
+    }
+  }
+}
+
+// The shortcut dispatch for one frame. Returns true when the game's Update must not run, so it does not also
+// handle the key.
 void UpdateManageShipDockSelection()
 {
   static uint64_t last_fleet_id = 0;
@@ -495,1235 +666,87 @@ void UpdateExpiredAbilityButtons()
   }
 }
 
-bool MoveDockInManagementView(bool goLeft)
+bool HandleShortcuts()
 {
-  if (!Config::Get().arrow_keys_to_select_ship) {
-    return false;
-  }
-
-  auto* section_manager = Hub::get_SectionManager();
-  if (!section_manager || section_manager->CurrentSection() != SectionID::ShipManagement_Details) {
-    return false;
-  }
-
-  bool acted = false;
-  for (auto controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
-    if (!controller || !controller->isActiveAndEnabled()) {
-      continue;
-    }
-
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (!canvas || !canvas->Visible()) {
-      spdlog::trace("MoveDockInManagementView({}) - controller={} not visible", (int)goLeft, (void*)controller);
-      continue;
-    }
-
-    auto* context = controller->Context();
-    if (!context) {
-      spdlog::trace("MoveDockInManagementView({}) - controller={} has no context", (int)goLeft,
-                    (void*)controller);
-      continue;
-    }
-
-    const int32_t count   = context->ListCount();
-    const int32_t current = context->CurrentIndex();
-    if (count <= 1 || current < 0) {
-      spdlog::trace("MoveDockInManagementView({}) - context={} index={} count={}", (int)goLeft, (void*)context,
-                    current, count);
-      continue;
-    }
-
-    const auto next = current + (goLeft ? -1 : 1);
-    if (next < 0 || next >= count) {
-      spdlog::trace("MoveDockInManagementView({}) - no further dock (index={} count={})", (int)goLeft, current, count);
-      continue;
-    }
-
-    spdlog::debug("MoveDockInManagementView({}) - switching dock {} -> {}", (int)goLeft, current, next);
-    context->SetLastMovementWasToIncrement(!goLeft);
-    context->SetCurrentIndex(next);
-    acted = true;
-  }
-
-  return acted;
-}
-
-bool PressShipSwapButton()
-{
-  for (auto controller : ObjectFinder<ShipManagementScreenStateViewController>::GetAll()) {
-    if (!controller) {
-      continue;
-    }
-
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled()) {
-      continue;
-    }
-
-    auto* button = controller->swapShipButton();
-    if (button) {
-      spdlog::info("[ShipSwap] pressing swap button controller={} button={}", static_cast<void*>(controller),
-                   static_cast<void*>(button));
-      button->Press();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool PressOfficerSwapButton()
-{
-  for (auto controller : ObjectFinder<ShipManagementScreenStateViewController>::GetAll()) {
-    if (!controller) {
-      continue;
-    }
-
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled()) {
-      continue;
-    }
-
-    auto* button = controller->officerIconButton();
-    if (button) {
-      spdlog::info("[OfficerSwap] pressing officer button controller={} button={}", static_cast<void*>(controller),
-                   static_cast<void*>(button));
-      button->Press();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-bool PressOfficerPresetsButton()
-{
-  for (auto controller : ObjectFinder<OfficerAssignmentViewController>::GetAll()) {
-    if (!controller) {
-      continue;
-    }
-
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled()) {
-      continue;
-    }
-
-    auto* button = controller->officerPresetsButton();
-    auto* listener = button ? button->SemaphoreListener() : nullptr;
-    auto* native_button = listener ? listener->TheButton() : nullptr;
-    if (native_button) {
-      spdlog::info("[OfficerPresets] pressing presets button controller={} button={}",
-                   static_cast<void*>(controller), static_cast<void*>(button));
-      native_button->Press();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// Focuses the search box of whichever inventory, officer, or ship list is on screen.
-bool FocusSearchBox()
-{
-  if (!Config::Get().focus_search) {
-    return false;
-  }
-
-  // Guard chat input so we don't steal focus from the chat text box
-  if (auto chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->inputFieldSelected()) {
-    return false;
-  }
-
-  // InventoryListViewController covers OfficerRosterViewController and other inventory subclasses
-  auto inventoryControllers = ObjectFinder<InventoryListViewController>::GetAll();
-  for (auto controller : inventoryControllers) {
-    if (!controller || !controller->inputField()) {
-      continue;
-    }
-
-    auto canvas  = controller->canvasController();
-    bool visible = canvas && canvas->Visible();
-    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
-    spdlog::debug("[FocusSearch] inventory controller={} section={} canvas={} visible={} active={}", (void*)controller,
-                 (int32_t)controller->targetSection(), (void*)canvas, visible, active);
-
-    if (visible && active) {
-      controller->inputField()->Focus();
-      return true;
-    }
-  }
-
-  // OfficerAssignmentViewController (separate from inventory list)
-  auto officerControllers = ObjectFinder<OfficerAssignmentViewController>::GetAll();
-  for (auto controller : officerControllers) {
-    if (!controller || !controller->inputField()) {
-      continue;
-    }
-
-    auto canvas  = controller->canvasController();
-    bool visible = canvas && canvas->Visible();
-    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
-    spdlog::debug("[FocusSearch] officer assignment controller={} canvas={} visible={} active={}", (void*)controller,
-                 (void*)canvas, visible, active);
-
-    if (visible && active) {
-      controller->inputField()->Focus();
-      return true;
-    }
-  }
-
-  // AssignShipsWidget (ship selection / assignment)
-  auto assignShipWidgets = ObjectFinder<AssignShipsWidget>::GetAll();
-  for (auto widget : assignShipWidgets) {
-    if (!widget || !widget->inputField()) {
-      continue;
-    }
-
-    auto canvas  = GetCanvasControllerFromComponent(widget);
-    bool visible = canvas && canvas->Visible();
-    bool active  = widget->isActiveAndEnabled() && widget->inputField()->isActiveAndEnabled();
-    spdlog::debug("[FocusSearch] assign ships widget={} canvas={} visible={} active={}", (void*)widget, (void*)canvas,
-                 visible, active);
-
-    if (visible && active) {
-      widget->inputField()->Focus();
-      return true;
-    }
-  }
-
-  return false;
-}
-
-void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
-{
-  // Each returns at once when its feature is off. They run in every hotkey mode, including Scopely's and while
-  // hotkeys are toggled off. An exception must not unwind into the game's native frame.
-  for (auto update : {AllianceGamesStoreUpdate, AssignShipEnterKeyUpdate, ChatOptionsUpdate,
-                      DailyFactionBulkClaimUpdate, fleet_watch::Tick, FleetSyncUpdate, GalacticAnomalyTimerUpdate,
-                      WarpActionLabelUpdate}) {
-    try {
-      update();
-    } catch (const std::exception& error) {
-      spdlog::warn("[FrameUpdate] update failed: {}", error.what());
-    } catch (...) {
-      spdlog::warn("[FrameUpdate] update failed with an unknown exception");
-    }
-  }
-
-  if (!hotkeys_installed) {
-    return original(_this);
-  }
-
-  UpdateManageShipDockSelection();
-  UpdateExpiredAbilityButtons();
-
-  // This function is called every frame to update the screen manager.
-  // Create a global clock to detect time elapsed
-  static std::chrono::time_point<std::chrono::steady_clock> select_clock             = std::chrono::steady_clock::now();
-  static int32_t                                            last_ship_select_request = -1;
+  auto& config = Config::Get();
 
   if (Shortcut::IsDown(GameFunction::DisableHotKeys)) {
-    if (shortcut_hints_ready) {
-      SetNativeShortcutHintsVisible(false);
-    }
-    Config::Get().hotkeys_enabled = false;
+    HideShortcutBadges();
+    config.hotkeys_enabled = false;
     spdlog::warn("Setting hotkeys to DISABLED");
-    return;
-  } else if (Shortcut::IsDown(GameFunction::EnableHotKeys)) {
-    Config::Get().hotkeys_enabled = true;
+    return true;
+  }
+  if (Shortcut::IsDown(GameFunction::EnableHotKeys)) {
+    config.hotkeys_enabled = true;
     spdlog::warn("Setting hotkeys to ENABLED");
-    return;
+    return true;
   }
 
-  if (show_officer_presets_pending > 0) {
-    if (PressOfficerPresetsButton()) {
-      show_officer_presets_pending       = 0;
-      officer_presets_assignment_opened = false;
-      return;
-    }
+  if (PressAwaitedButton())
+    return true;
 
-    if (!officer_presets_assignment_opened && PressOfficerSwapButton()) {
-      officer_presets_assignment_opened = true;
-    }
+  // Scopely's hotkeys are the game's own; mod hotkeys switched off block both.
+  if (config.use_scopely_hotkeys && config.hotkeys_enabled)
+    return false;
+  if (!config.hotkeys_enabled)
+    return true;
 
-    if (--show_officer_presets_pending == 0) {
-      officer_presets_assignment_opened = false;
-      spdlog::warn("[Hotkeys] timed out waiting for the Officer Presets button");
-    }
-  }
-
-  if (show_officer_swap_pending > 0) {
-    if (PressOfficerSwapButton()) {
-      show_officer_swap_pending = 0;
-      return;
-    }
-
-    if (--show_officer_swap_pending == 0) {
-      spdlog::warn("[Hotkeys] timed out waiting for the Officer Swap button");
-    }
-  }
-
-  if (show_ship_swap_pending > 0) {
-    if (PressShipSwapButton()) {
-      show_ship_swap_pending = 0;
-      return;
-    }
-
-    if (--show_ship_swap_pending == 0) {
-      spdlog::warn("[Hotkeys] timed out waiting for the Ship Swap button");
-    }
-  }
-
-  if (Config::Get().use_scopely_hotkeys && Config::Get().hotkeys_enabled) {
-    return original(_this);
-  }
-
-  if (!Config::Get().hotkeys_enabled) {
-    return;
-  }
-
-  if (shortcut_hints_ready && Shortcut::IsDown(GameFunction::ToggleShortcutHints)) {
-    ToggleNativeShortcutHints();
-    return;
-  }
-
-  const auto is_in_chat = Hub::IsInChat();
-  const auto config     = &Config::Get();
+  if (Shortcut::IsDown(GameFunction::ToggleShortcutHints) && ToggleShortcutBadges())
+    return true;
 
   if (Shortcut::IsDown(GameFunction::Restart)) {
     spdlog::info("Clearing localisation cache and restarting");
     LanguageManager::ClearCache();
     Hub::get_App()->Reload();
-    return;
-  }
-
-#ifdef _WIN32
-  if (Shortcut::IsDown(GameFunction::Quit)) {
-    TerminateProcess(GetCurrentProcess(), 1);
-  }
-#elif defined(__APPLE__)
-  if (Shortcut::IsDown(GameFunction::Quit)) {
-    Hub::get_App()->Quit();
-    return;
-  }
-#endif
-
-  int32_t ship_select_request = -1;
-  if (Shortcut::IsDown(GameFunction::SelectShip1)) {
-    ship_select_request = 0;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip2)) {
-    ship_select_request = 1;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip3)) {
-    ship_select_request = 2;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip4)) {
-    ship_select_request = 3;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip5)) {
-    ship_select_request = 4;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip6)) {
-    ship_select_request = 5;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip7)) {
-    ship_select_request = 6;
-  } else if (Shortcut::IsDown(GameFunction::SelectShip8)) {
-    ship_select_request = 7;
-  }
-
-  if (ship_select_request != -1 && !Key::IsInputFocused()) {
-
-    // TODO: Shift+ship towing with the Discovery never ran on earlier clients (its PlanCourse and
-    // SetTowRequest bindings had drifted) and has not been tested in game since they were fixed. It sends a
-    // real tow request, so keep it off until someone verifies it. Shift+ship falls through as a no-op meanwhile.
-    constexpr bool kEnableDiscoveryTow = false;
-    if (Key::HasShift()) {
-      if constexpr (kEnableDiscoveryTow) {
-        FleetPlayerData* foundDisco = nullptr;
-        for (int discoIdx = 0; discoIdx < 10; ++discoIdx) {
-          auto fleetPlayerData = FleetsManager::Instance()->GetFleetPlayerData(discoIdx);
-          if (fleetPlayerData && fleetPlayerData->Hull() && fleetPlayerData->Hull()->Id() == 1307832955) {
-            foundDisco = fleetPlayerData;
-            break;
-          }
-        }
-
-        if (foundDisco) {
-          auto* towed      = FleetsManager::Instance()->GetFleetPlayerData(ship_select_request);
-          auto* deployment = DeploymentManger::Instance();
-          auto* plannedCourse =
-              towed && deployment ? deployment->PlanCourse(towed, foundDisco->Address(), Vector3::zero(), nullptr,
-                                                           nullptr, nullptr)
-                                  : nullptr;
-          if (plannedCourse) {
-            // Drain the planning coroutine synchronously. The bound stops a coroutine that keeps yielding
-            // (it waits on something only the game loop advances) from hanging the frame.
-            for (int step = 0; step < 1000 && plannedCourse->MoveNext(); ++step) {
-            }
-            deployment->SetTowRequest(towed->Id(), foundDisco->Id());
-          }
-        }
-      }
-    } else {
-      auto fleet_bar  = ObjectFinder<FleetBarViewController>::Get();
-      auto can_locate = !config->disable_preview_locate || !CanHideViewers();
-      if (fleet_bar) {
-        std::chrono::time_point<std::chrono::steady_clock> select_now = std::chrono::steady_clock::now();
-        std::chrono::milliseconds                          select_diff =
-            std::chrono::duration_cast<std::chrono::milliseconds>(select_now - select_clock);
-        spdlog::debug("select_diff was {}ms", select_diff.count());
-        if (can_locate && ship_select_request == last_ship_select_request
-            && fleet_bar->IsIndexSelected(ship_select_request)
-            && select_diff < std::chrono::milliseconds((int)Config::Get().select_timer)) {
-          auto fleet_controller = fleet_bar->fleetPanelController();
-          auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-          if (!fleet) {
-            return;
-          }
-          if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager()) {
-            NavigationSectionManager::Instance()->SNavigationManager()->HideInteraction();
-          }
-          FleetsManager::Instance()->RequestViewFleet(fleet, true);
-        } else {
-          fleet_bar->RequestSelect(ship_select_request);
-        }
-
-        last_ship_select_request = ship_select_request;
-        select_clock             = select_now;
-        return;
-      }
-    }
-  }
-
-  if (Key::Pressed(KeyCode::Escape) && (Key::IsInputFocused() || Hub::IsInChat())) {
-    // This fixes issues with detecting when an input is selected
-    // As the game usually doesn't clear this when using Escape, only when
-    // pressing the back button with the mouse...
-    return Key::ClearInputFocus();
-  }
-
-  if (!is_in_chat) {
-    if (!Key::IsInputFocused()) {
-      if (Shortcut::IsDown(GameFunction::SelectCurrent)) {
-        auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
-        if (fleet_bar) {
-          auto fleet_controller = fleet_bar->fleetPanelController();
-          auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-          if (fleet) {
-            if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager()) {
-              NavigationSectionManager::Instance()->SNavigationManager()->HideInteraction();
-            }
-            FleetsManager::Instance()->RequestViewFleet(fleet, true);
-            return;
-          }
-        }
-      }
-
-      if ((Shortcut::IsDown(GameFunction::ToggleQueue))) {
-        config->queue_enabled = !config->queue_enabled;
-        // Forget stale recovery authorizations; existing native target queues keep processing.
-        ResetQueueRecoveryTracking();
-        return;
-      }
-
-      if ((Shortcut::IsDown(GameFunction::ShowChat) || Shortcut::IsDown(GameFunction::ShowChatSide1)
-           || Shortcut::IsDown(GameFunction::ShowChatSide2))) {
-        if (auto chat_manager = ChatManager::Instance(); chat_manager) {
-          if (chat_manager->IsSideChatOpen()) {
-            if (auto view_controller = ObjectFinder<FullScreenChatViewController>::Get(); view_controller) {
-              if (auto message_list = view_controller->messageList(); message_list) {
-                if (auto message_field = message_list->inputField(); message_field) {
-                  message_field->ActivateInputField();
-                }
-              }
-            }
-          } else if (Shortcut::IsDown(GameFunction::ShowChatSide1) || Shortcut::IsDown(GameFunction::ShowChatSide2)) {
-            chat_manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
-          } else {
-            chat_manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Fullscreen);
-          }
-        }
-      }
-
-      if (Shortcut::IsDown(GameFunction::MoveLeft)) {
-        auto const result = MoveDockInManagementView(true) || MoveShipSelectionInDock(true) || MoveArtifactCanvas(true)
-                            || MoveOfficerCanvas(true);
-        if (result) {
-          return;
-        }
-      }
-
-      if (Shortcut::IsDown(GameFunction::MoveRight)) {
-        auto const result = MoveDockInManagementView(false) || MoveShipSelectionInDock(false)
-                            || MoveArtifactCanvas(false) || MoveOfficerCanvas(false);
-        if (result) {
-          return;
-        }
-      }
-
-      if (Config::Get().focus_search && Shortcut::IsDown(GameFunction::FocusSearch)) {
-        if (FocusSearchBox()) {
-          return;
-        }
-      }
-
-      if (Shortcut::IsDown(GameFunction::ShowQTrials)) {
-        return GotoSection(SectionID::ChallengeSelection);
-      } else if (Shortcut::IsDown(GameFunction::ShowBookmarks)) {
-        auto bookmark_manager = BookmarksManager::Instance();
-        if (bookmark_manager) {
-          return bookmark_manager->ViewBookmarks();
-        }
-        return GotoSection(SectionID::Bookmarks_Main);
-      } else if (Shortcut::IsDown(GameFunction::ShowLookup)) {
-        auto bookmark_manager = BookmarksManager::Instance();
-        if (bookmark_manager) {
-          bookmark_manager->ViewCoordinateSearch();
-          return;
-        }
-        spdlog::warn("[ShowLookup] BookmarksManager instance not available, falling back to main bookmarks");
-        GotoSection(SectionID::Bookmarks_Main);
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowRefinery)) {
-        return GotoSection(SectionID::Shop_Refining_List);
-      } else if (Shortcut::IsDown(GameFunction::ShowFactions)) {
-        return GotoSection(SectionID::Shop_MainFactions);
-      } else if (Shortcut::IsDown(GameFunction::ShowStationExterior)) {
-        return GotoSection(SectionID::Starbase_Exterior);
-      } else if (Shortcut::IsDown(GameFunction::NativeShortcutGalaxy)) {
-        InvokeNativeShortcut<"OnGalaxyAction">("Galaxy");
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowGalaxy)) {
-        return ChangeNavigationSection(SectionID::Navigation_Galaxy);
-      } else if (Shortcut::IsDown(GameFunction::ShowStationInterior)) {
-        return GotoSection(SectionID::Starbase_Interior);
-      } else if (Shortcut::IsDown(GameFunction::ShowHaven)) {
-        return PlanetaryBaseManager::ViewOwnHaven();
-      } else if (Shortcut::IsDown(GameFunction::ShowSystem)) {
-        return ChangeNavigationSection(SectionID::Navigation_System);
-      } else if (Shortcut::IsDown(GameFunction::ShowArtifacts)) {
-        return GotoSection(SectionID::ArtifactHall_Inventory);
-      } else if (Shortcut::IsDown(GameFunction::ShowShipConstruction)) {
-        InvokeNativeShortcut<"OnShipsAction">("Ship Construction");
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowOfficerSwap)) {
-        auto* section_manager = Hub::get_SectionManager();
-        spdlog::info("[OfficerSwap] shortcut pressed current_section={}",
-                     section_manager ? static_cast<int32_t>(section_manager->CurrentSection()) : 0);
-        if (PressOfficerSwapButton()) {
-          return;
-        }
-
-        auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
-        auto* fleet_controller = fleet_bar ? fleet_bar->fleetPanelController() : nullptr;
-        auto* fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-        if (fleet) {
-          spdlog::info("[OfficerSwap] requesting Manage Ships before officer assignment fleet={}",
-                       static_cast<void*>(fleet));
-          fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
-          show_officer_swap_pending = 300;
-        } else {
-          spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Swap");
-        }
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowShipSwap)) {
-        auto* section_manager = Hub::get_SectionManager();
-        spdlog::info("[ShipSwap] shortcut pressed current_section={}",
-                     section_manager ? static_cast<int32_t>(section_manager->CurrentSection()) : 0);
-        if (PressShipSwapButton()) {
-          return;
-        }
-
-        auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
-        auto* fleet_controller = fleet_bar ? fleet_bar->fleetPanelController() : nullptr;
-        auto* fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-        if (fleet) {
-          spdlog::info("[ShipSwap] requesting Manage Ships before swap fleet={}", static_cast<void*>(fleet));
-          fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
-          show_ship_swap_pending = 300;
-        } else {
-          spdlog::warn("[Hotkeys] unable to open Manage Ships for Ship Swap");
-        }
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowShields)) {
-        InvokeNativeShortcut<"OnPeaceShieldAction">("Peace Shields");
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowBattlelogs)) {
-        InvokeNativeShortcut<"OnInboxAction">("Battle Reports");
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowInventory)) {
-        return GotoSection(SectionID::InventoryList);
-      } else if (Shortcut::IsDown(GameFunction::ShowMissions)) {
-        return GotoSection(SectionID::Missions_AcceptedList);
-      } else if (Shortcut::IsDown(GameFunction::ShowResearch)) {
-        return GotoSection(SectionID::Research_LandingPage);
-      } else if (Shortcut::IsDown(GameFunction::ShowScrapYard)) {
-        return GotoSection(SectionID::ShipScrapping_List);
-      } else if (Shortcut::IsDown(GameFunction::ShowOfficers)) {
-        return GotoSection(SectionID::OfficerInventory);
-      } else if (Shortcut::IsDown(GameFunction::ShowOfficerPresets)) {
-        if (PressOfficerPresetsButton()) {
-          return;
-        }
-
-        officer_presets_assignment_opened = PressOfficerSwapButton();
-        if (!officer_presets_assignment_opened) {
-          auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
-          auto* fleet_controller = fleet_bar ? fleet_bar->fleetPanelController() : nullptr;
-          auto* fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-          if (fleet) {
-            spdlog::info("[OfficerPresets] requesting Manage Ships before officer presets fleet={}",
-                         static_cast<void*>(fleet));
-            fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
-          } else {
-            spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Presets");
-            return;
-          }
-        }
-        show_officer_presets_pending = 300;
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowCommander)) {
-        // TODO: Does not work properly, defaults to first FleetCommander (spock, rather than selected fleet
-        // commander)
-        return GotoSection(SectionID::FleetCommander_Management);
-      } else if (Shortcut::IsDown(GameFunction::ShowAwayTeam)) {
-        return GotoSection(SectionID::Missions_AwayTeamsList);
-      } else if (Shortcut::IsDown(GameFunction::NativeShortcutEvents)) {
-        InvokeNativeShortcut<"OnEventsAction">("Events");
-        return;
-      } else if (Shortcut::IsDown(GameFunction::ShowEvents)) {
-        return GotoSection(SectionID::Tournament_Group_Selection);
-      } else if (Shortcut::IsDown(GameFunction::ShowExoComp)) {
-        return GotoSection(SectionID::Consumables);
-      } else if (Shortcut::IsDown(GameFunction::ShowDaily)) {
-        return GotoSection(SectionID::Missions_DailyGoals);
-      } else if (Shortcut::IsDown(GameFunction::ShowGifts)) {
-        return GotoSection(SectionID::Shop_List);
-      } else if (Shortcut::IsDown(GameFunction::ShowAlliance)) {
-        return GotoSection(SectionID::Alliance_Main);
-      } else if (Shortcut::IsDown(GameFunction::ShowAllianceHelp)) {
-        return GotoSection(SectionID::Alliance_Help);
-      } else if (Shortcut::IsDown(GameFunction::ShowAllianceArmada)) {
-        return GotoSection(SectionID::Alliance_Armadas);
-      } else if (Shortcut::IsDown(GameFunction::ShowSettings)) {
-        return GotoSection(SectionID::GameSettings);
-      } else if (Shortcut::IsPressed(GameFunction::UiScaleUp)) {
-        AdjustUiScale(true);
-      } else if (Shortcut::IsPressed(GameFunction::UiScaleDown)) {
-        AdjustUiScale(false);
-      } else if (Shortcut::IsPressed(GameFunction::UiShipScaleUp)) {
-        AdjustUiShipScale(true);
-      } else if (Shortcut::IsPressed(GameFunction::UiShipScaleDown)) {
-        AdjustUiShipScale(false);
-      } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleUp)) {
-        AdjustUiViewerScale(true);
-      } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleDown)) {
-        AdjustUiViewerScale(false);
-      } else if (Shortcut::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
-        CycleAutoConfirmInstantWarp(*config);
-      } else if (Shortcut::IsDown(GameFunction::TogglePreviewLocate)) {
-        config->disable_preview_locate = !config->disable_preview_locate;
-      } else if (Shortcut::IsDown(GameFunction::TogglePreviewRecall)) {
-        config->disable_preview_recall = !config->disable_preview_recall;
-      } else if (Shortcut::IsDown(GameFunction::ToggleCargoDefault)) {
-        config->show_cargo_default = !config->show_cargo_default;
-      } else if (Shortcut::IsDown(GameFunction::ToggleCargoPlayer)) {
-        config->show_player_cargo = !config->show_player_cargo;
-      } else if (Shortcut::IsDown(GameFunction::ToggleCargoStation)) {
-        config->show_station_cargo = !config->show_station_cargo;
-      } else if (Shortcut::IsDown(GameFunction::ToggleCargoHostile)) {
-        config->show_hostile_cargo = !config->show_hostile_cargo;
-      } else if (Shortcut::IsDown(GameFunction::ToggleCargoArmada)) {
-        config->show_armada_cargo = !config->show_armada_cargo;
-      } else if (Shortcut::IsDown(GameFunction::LogLevelOff)) {
-        // spdlog::log("Setting log level to OFF");
-        spdlog::set_level(spdlog::level::off);
-        spdlog::flush_on(spdlog::level::off);
-      } else if (Shortcut::IsDown(GameFunction::LogLevelError)) {
-        spdlog::set_level(spdlog::level::err);
-        spdlog::flush_on(spdlog::level::err);
-        // spdlog::log("Setting log level to ERROR");
-      } else if (Shortcut::IsDown(GameFunction::LogLevelWarn)) {
-        spdlog::set_level(spdlog::level::warn);
-        spdlog::flush_on(spdlog::level::warn);
-        // spdlog::log("Setting log level to WARN");
-      } else if (Shortcut::IsDown(GameFunction::LogLevelInfo)) {
-        spdlog::set_level(spdlog::level::info);
-        spdlog::flush_on(spdlog::level::info);
-        // spdlog::log("Setting log level to INFO");
-      } else if (Shortcut::IsDown(GameFunction::LogLevelDebug)) {
-        spdlog::set_level(spdlog::level::debug);
-        spdlog::flush_on(spdlog::level::debug);
-        // spdlog::log("Setting log level to DEBUG");
-      } else if (Shortcut::IsDown(GameFunction::LogLevelTrace)) {
-        spdlog::set_level(spdlog::level::trace);
-        spdlog::flush_on(spdlog::level::trace);
-        // spdlog::log("Setting log level to TRACE");
-      } else if (Shortcut::IsDown(GameFunction::ShowShips)) {
-        auto fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
-        auto fleet_controller = fleet_bar ? fleet_bar->fleetPanelController() : nullptr;
-        auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-        if (fleet) {
-          fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
-        }
-      }
-    }
-  } else {
-    if (auto chat_manager = ChatManager::Instance(); chat_manager) {
-      if (Shortcut::IsDown(GameFunction::SelectChatGlobal)) {
-        return chat_manager->OpenChannel(ChatChannelCategory::Global);
-      } else if (Shortcut::IsDown(GameFunction::SelectChatAlliance)) {
-        return chat_manager->OpenChannel(ChatChannelCategory::Alliance);
-      } else if (Shortcut::IsDown(GameFunction::SelectChatPrivate)) {
-        return chat_manager->OpenChannel(ChatChannelCategory::Private);
-      }
-    }
-  }
-
-  if (!Key::IsInputFocused()) {
-    // Lets try to remove the pre-scan because we hit escape and it's visible
-    if (Key::Pressed(KeyCode::Escape)) {
-      if (config->primary_requires_visible_target) {
-        force_space_action_next_frame = false;
-      }
-      if (DidHideViewers()) {
-        return;
-      }
-    }
-
-    // Dismiss the golden rewards screen when escape or space is pressed.
-    if (Shortcut::IsDown(GameFunction::ActionPrimary) || Key::Pressed(KeyCode::Escape)) {
-      if (auto reward_controller = ObjectFinder<AnimatedRewardsScreenViewController>::Get(); reward_controller) {
-        if (reward_controller->IsActive()) {
-          return reward_controller->GoBackToLastSection();
-        }
-      }
-    }
-
-    if (Shortcut::IsDown(GameFunction::ActionPrimary) || Shortcut::IsDown(GameFunction::ActionSecondary)
-        || Shortcut::IsDown(GameFunction::ActionRecall) || Shortcut::IsDown(GameFunction::ActionRepair)
-        || Shortcut::IsDown(GameFunction::ActionQueue) || Shortcut::IsDown(GameFunction::ActionQueueClear)
-        || force_space_action_next_frame) {
-      if (Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat() && !Key::IsInputFocused()) {
-        auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
-        bool was_forced = force_space_action_next_frame;
-        ExecuteSpaceAction(fleet_bar);
-        if (was_forced) {
-          force_space_action_next_frame = false;
-        }
-      }
-    }
-
-    if (Shortcut::IsDown(GameFunction::ActionView)) {
-      auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
-
-      for (auto& pre_scan_widget : all_pre_scan_widgets) {
-        auto visibility_controller = pre_scan_widget ? pre_scan_widget->visibilityController() : nullptr;
-        auto rewardsWidget         = pre_scan_widget ? pre_scan_widget->rewardsButtonWidget() : nullptr;
-        auto rewards_controller    = rewardsWidget ? rewardsWidget->rewardsController() : nullptr;
-        if (visibility_controller
-            && (visibility_controller->state() == VisibilityState::Visible
-                || visibility_controller->state() == VisibilityState::Show)
-            && rewards_controller) {
-          if (rewards_controller->state() != VisibilityState::Visible
-              && rewards_controller->state() != VisibilityState::Show) {
-            show_info_pending = 5;
-          } else {
-            rewards_controller->Hide();
-          }
-        }
-      }
-    }
-
-    // Did we not find a rewards widget in the previous frame?
-    if (show_info_pending > 0) {
-      auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
-
-      for (auto& pre_scan_widget : all_pre_scan_widgets) {
-        auto       visibility_controller = pre_scan_widget ? pre_scan_widget->visibilityController() : nullptr;
-        auto       rewardsWidget         = pre_scan_widget ? pre_scan_widget->rewardsButtonWidget() : nullptr;
-        auto       rewards_controller    = rewardsWidget ? rewardsWidget->rewardsController() : nullptr;
-        const auto pre_scan_visible      = visibility_controller
-                                           && (visibility_controller->state() == VisibilityState::Visible
-                                               || visibility_controller->state() == VisibilityState::Show);
-        if (pre_scan_visible && rewards_controller) {
-          const auto rewards_widget_visible = rewards_controller->state() == VisibilityState::Visible
-                                              || rewards_controller->state() == VisibilityState::Show;
-          if (!rewards_widget_visible) {
-            rewards_controller->Show(true);
-          }
-        }
-      }
-      show_info_pending -= 1;
-    }
-  }
-
-  if (config->disable_escape_exit && Key::Pressed(KeyCode::Escape)) {
-    // Keep suppressing a held key. Only distinct key-down edges participate in
-    // the double-tap window.
-    if (config->disable_escape_exit_timer <= 0 || !Key::Down(KeyCode::Escape)) {
-      return;
-    }
-
-    static auto previous_escape_down = std::chrono::steady_clock::time_point{};
-    const auto  escape_now           = std::chrono::steady_clock::now();
-    const auto  escape_diff =
-        std::chrono::duration_cast<std::chrono::milliseconds>(escape_now - previous_escape_down);
-
-    if (previous_escape_down == std::chrono::steady_clock::time_point{}
-        || escape_diff > std::chrono::milliseconds(config->disable_escape_exit_timer)) {
-      previous_escape_down = escape_now;
-      return;
-    }
-
-    // Consume the completed pair so a rapid third press starts a new one.
-    previous_escape_down = {};
-  }
-
-  // config->Load();
-
-  return original(_this);
-}
-
-template <typename T> inline bool CanHideViewer(T* widget, bool require_parent = false)
-{
-  auto* visibility = widget ? widget->visibilityController() : nullptr;
-  if (!visibility || (visibility->state() != VisibilityState::Visible && visibility->state() != VisibilityState::Show)) {
-    return false;
-  }
-  if (!require_parent) {
     return true;
   }
-  auto* parent = widget->Parent();
-  return parent && parent->IsShowing();
-}
+  if (Shortcut::IsDown(GameFunction::Quit)) {
+#ifdef _WIN32
+    TerminateProcess(GetCurrentProcess(), 1);
+#else
+    Hub::get_App()->Quit();
+    return true;
+#endif
+  }
 
-template <typename T> inline bool CanHideViewersOfType()
-{
-  for (auto widget : ObjectFinder<T>::GetAll()) {
-    if (CanHideViewer(widget)) {
+  if (SelectShip())
+    return true;
+
+  // The game only clears a focused text field from its back button; Escape should too.
+  if (Key::Pressed(KeyCode::Escape) && (Key::IsInputFocused() || Hub::IsInChat())) {
+    Key::ClearInputFocus();
+    return true;
+  }
+
+  if (Hub::IsInChat()) {
+    if (SelectChatChannel())
       return true;
-    }
+  } else if (!Key::IsInputFocused() && RunScreenShortcuts()) {
+    return true;
   }
 
-  return false;
+  return SpaceActionsUpdate() || SwallowEscape();
 }
 
-bool CanHideViewers()
+void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 {
-  return (CanHideViewersOfType<AllianceStarbaseObjectViewerWidget>() || CanHideViewersOfType<ArmadaObjectViewerWidget>()
-          || CanHideViewersOfType<CelestialObjectViewerWidget>() || CanHideViewersOfType<EmbassyObjectViewer>()
-          || CanHideViewersOfType<HousingObjectViewerWidget>() || CanHideViewersOfType<MiningObjectViewerWidget>()
-          || CanHideViewersOfType<MissionsObjectViewerWidget>() || CanHideViewersOfType<PreScanTargetWidget>()
-          || CanHideViewersOfType<HousingObjectViewerWidget>());
-}
-
-template <typename T> inline bool DidHideViewersOfType()
-{
-  const auto objects = ObjectFinder<T>::GetAll();
-  auto       didHide = false;
-  for (auto widget : objects) {
-    if (CanHideViewer(widget)) {
-      widget->HideAllViewers();
-      didHide = true;
-    }
+  RunFrameUpdates();
+  if (hotkeys_installed) {
+    UpdateManageShipDockSelection();
+    UpdateExpiredAbilityButtons();
   }
-
-  return didHide;
-}
-
-bool DidHideViewers()
-{
-  return DidHideViewersOfType<AllianceStarbaseObjectViewerWidget>() || DidHideViewersOfType<ArmadaObjectViewerWidget>()
-         || DidHideViewersOfType<CelestialObjectViewerWidget>() || DidHideViewersOfType<EmbassyObjectViewer>()
-         || DidHideViewersOfType<HousingObjectViewerWidget>() || DidHideViewersOfType<MiningObjectViewerWidget>()
-         || DidHideViewersOfType<MissionsObjectViewerWidget>() || DidHideViewersOfType<PreScanTargetWidget>()
-         || DidHideViewersOfType<HousingObjectViewerWidget>();
-}
-
-void GotoSection(SectionID sectionID, void* section_data)
-{
-  Hub::get_SectionManager()->TriggerSectionChange(sectionID, section_data, false, false, true);
-}
-
-void ChangeNavigationSection(SectionID sectionID)
-{
-  const auto section_data = Hub::get_SectionManager()->sectionStorage()->GetState(sectionID);
-
-  if (section_data) {
-    GotoSection(sectionID, section_data);
-  } else {
-    NavigationSectionManager::ChangeNavigationSection(sectionID);
-  }
-}
-
-#define FleetAction_Format "Fleet {} ({}) #{} - State: {}, previous {} - canAction {}, canState {} - didAction: {}"
-
-template <typename T>
-inline bool DidExecuteFleetAction(std::string_view actionText, ActionType actionType, FleetBarViewController* fleet_bar,
-                                  const std::span<const FleetState> wantedStates,
-                                  FleetState                        helpState = FleetState::Unknown)
-{
-  if (!fleet_bar) {
-    return false;
-  }
-
-  auto fleet_controller = fleet_bar->fleetPanelController();
-  auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-  if (!fleet) {
-    return false;
-  }
-  auto fleet_state = fleet->CurrentState();
-
-  auto       fleet_id   = fleet->Id();
-  auto       prev_state = fleet->PreviousState();
-  auto       canAction  = true; // actionRequired->CheckIsMet();
-  FleetState canState   = FleetState::Unknown;
-  auto       didAction  = false;
-
-  if (std::find(std::begin(wantedStates), std::end(wantedStates), fleet_state) != std::end(wantedStates)) {
-    canState = fleet_state;
-  }
-
-  spdlog::trace(FleetAction_Format, actionText, actionType.flagValue, (int)fleet_id, (int)fleet_state, (int)prev_state,
-                canAction, (int)canState, "[start]");
-
-  if (canState != FleetState::Unknown && canAction) {
-    if (NavigationSectionManager::Instance() && NavigationSectionManager::Instance()->SNavigationManager()) {
-      NavigationSectionManager::Instance()->SNavigationManager()->HideInteraction();
-    }
-
-    didAction = fleet_controller->RequestAction(fleet, actionType, 0, ActionBehaviour::Default);
-  }
-
-  if (helpState != FleetState::Unknown && (didAction || helpState == fleet->CurrentState())) {
-    didAction = didAction || fleet_controller->RequestAction(fleet, actionType, 0, ActionBehaviour::AskHelp);
-  }
-
-  spdlog::trace(FleetAction_Format, actionText, actionType.flagValue, (int)fleet_id, (int)fleet_state, (int)prev_state,
-                canAction, (int)canState, didAction);
-
-  return didAction;
-}
-
-bool DidExecuteRecall(FleetBarViewController* fleet_bar)
-{
-  static constexpr FleetState states[] = {FleetState::IdleInSpace, FleetState::Impulsing, FleetState::Mining,
-                                          FleetState::Capturing};
-
-  auto fleet_controller = fleet_bar->fleetPanelController();
-
-  return DidExecuteFleetAction<RecallRequirement>("Recall", ActionType::Recall, fleet_bar, states);
-}
-
-bool DidExecuteRepair(FleetBarViewController* fleet_bar)
-{
-  static constexpr FleetState states[] = {FleetState::Docked, FleetState::Destroyed};
-
-  return DidExecuteFleetAction<CanRepairRequirement>("Repair", ActionType::Repair, fleet_bar, states,
-                                                     FleetState::Repairing);
-}
-
-void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
-{
-  if (Shortcut::IsDown(GameFunction::ActionPrimary)) {
-    if (auto* navigation = ObjectFinder<NavigationInteractionUIViewController>::Get();
-        navigation && navigation->TryPressJoinWaveDefense()) {
-      return;
-    }
-    // Query active viewers without adding constructor detours for this popup or its subclasses.
-    if (auto* viewers = WaveDefenseObjectViewerWidget::FindActiveViewers()) {
-      for (auto* widget : *viewers) {
-        if (CanHideViewer(widget, true)) {
-          // Use the displayed native action, including its eligibility and confirmation checks.
-          widget->PressPrimaryButton();
-          return;
-        }
-      }
-    }
-  }
-
-  if (!fleet_bar) {
+  if (hotkeys_installed && HandleShortcuts())
     return;
-  }
-
-  auto fleet_controller = fleet_bar->fleetPanelController();
-  auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
-  if (!fleet) {
-    return;
-  }
-
-  auto action_queue = ActionQueueManager::Instance();
-  if (!action_queue) {
-    return;
-  }
-
-  auto has_primary       = Shortcut::IsDown(GameFunction::ActionPrimary) || force_space_action_next_frame;
-  auto has_repair        = Shortcut::IsDown(GameFunction::ActionRepair);
-  auto has_recall_cancel = Shortcut::IsDown(GameFunction::ActionRecallCancel);
-  auto has_secondary     = Shortcut::IsDown(GameFunction::ActionSecondary);
-  auto has_queue         = Shortcut::IsDown(GameFunction::ActionQueue);
-  auto has_queue_clear   = Shortcut::IsDown(GameFunction::ActionQueueClear);
-  auto has_recall =
-      Shortcut::IsDown(GameFunction::ActionRecall) && (!Config::Get().disable_preview_recall || !CanHideViewers());
-  const bool require_visible_target = has_primary && Config::Get().primary_requires_visible_target;
-
-  if (has_queue_clear) {
-    action_queue->ClearQueue(fleet);
-  } else if (has_recall_cancel
-             && (fleet->CurrentState() == FleetState::WarpCharging || fleet->CurrentState() == FleetState::Warping)) {
-    fleet_controller->CancelButtonClicked();
-  } else {
-    auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
-    for (auto pre_scan_widget : all_pre_scan_widgets) {
-      if (CanHideViewer(pre_scan_widget, require_visible_target)) {
-
-        if (auto mine_object_viewer_widget = ObjectFinder<MiningObjectViewerWidget>::Get();
-            CanHideViewer(mine_object_viewer_widget, require_visible_target)) {
-          if (has_secondary && pre_scan_widget->scanEngageButtonsWidget()) {
-            return pre_scan_widget->scanEngageButtonsWidget()->OnScanButtonClicked();
-          } else if (has_primary) {
-            return mine_object_viewer_widget->MineClicked();
-          }
-        }
-
-        if (has_queue && action_queue->IsQueueUnlocked() && pre_scan_widget->addToQueueButtonWidget()
-            && pre_scan_widget->scanEngageButtonsWidget()) {
-          auto context = pre_scan_widget->scanEngageButtonsWidget()->Context();
-          auto type    = GetHullTypeFromBattleTarget(context);
-
-          if (type != HullType::ArmadaTarget && (type != HullType::Any || force_space_action_next_frame)) {
-            if (pre_scan_widget->addToQueueButtonWidget()->isActiveAndEnabled()) {
-              auto listener = pre_scan_widget->addToQueueButtonWidget()->SemaphoreListener();
-              if (listener && !action_queue->IsQueueFull(fleet)) {
-                auto button = listener->TheButton();
-                if (button) {
-                  button->Press();
-                  DidHideViewers();
-                }
-              }
-              return;
-            }
-
-            if (type == HullType::Any) {
-              force_space_action_next_frame = true;
-              return;
-            }
-          }
-        }
-
-        if (has_secondary && pre_scan_widget->scanEngageButtonsWidget()) {
-          return pre_scan_widget->scanEngageButtonsWidget()->OnScanButtonClicked();
-        }
-
-        if (has_primary && pre_scan_widget->scanEngageButtonsWidget()
-            && pre_scan_widget->scanEngageButtonsWidget()->enabled()) {
-          auto context = pre_scan_widget->scanEngageButtonsWidget()->Context();
-          auto type    = GetHullTypeFromBattleTarget(context);
-
-          // Try once more in X frames if we get ANY
-          // in-case of failed to navgitate error?
-          auto armada_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
-          auto armada_state  = VisibilityState::Unknown;
-
-          if (armada_widget) {
-            if (armada_widget->visibilityController()) {
-              armada_state = armada_widget->visibilityController()->State();
-            } else {
-              spdlog::warn("ArmadaWidget has no visibility controller, using default Visible state");
-              armada_state = VisibilityState::Visible;
-            }
-          }
-
-          auto canActionPrimary = type != HullType::Any;
-          if (type == HullType::ArmadaTarget
-              && (armada_state == VisibilityState::Visible || armada_state == VisibilityState::Show)) {
-            canActionPrimary = false;
-          } else if (force_space_action_next_frame) {
-            canActionPrimary = true;
-          }
-
-          // Try once more in X frames if we get ANY
-          // in-case of failed to navgitate error?
-          if (canActionPrimary) {
-            if (type == HullType::ArmadaTarget) {
-              auto* attack_button = pre_scan_widget->armadaAttackButton();
-              if (attack_button && attack_button->isActiveAndEnabled()) {
-                auto listener = attack_button->SemaphoreListener();
-                if (listener) {
-                  auto button = listener->TheButton();
-                  if (button) {
-                    button->Press();
-                  }
-                }
-                return;
-              }
-              pre_scan_widget->scanEngageButtonsWidget()->OnArmadaButtonClicked();
-            } else {
-              pre_scan_widget->scanEngageButtonsWidget()->OnEngageButtonClicked();
-            }
-            return;
-          } else if (type == HullType::Any) {
-            force_space_action_next_frame = true;
-            return;
-          }
-        }
-      }
-    }
-
-    if (auto mine_object_viewer_widget = ObjectFinder<MiningObjectViewerWidget>::Get();
-        CanHideViewer(mine_object_viewer_widget, require_visible_target)) {
-      if (has_secondary && mine_object_viewer_widget->scanEngageButtonsWidget()) {
-        if (mine_object_viewer_widget->scanEngageButtonsWidget()->Context()) {
-          return mine_object_viewer_widget->scanEngageButtonsWidget()->OnScanButtonClicked();
-        }
-      } else if (has_primary) {
-        return mine_object_viewer_widget->MineClicked();
-      }
-    } else if (auto star_node_object_viewer_widget = ObjectFinder<StarNodeObjectViewerWidget>::Get();
-               star_node_object_viewer_widget && star_node_object_viewer_widget->Context()
-               && (!require_visible_target || CanHideViewer(star_node_object_viewer_widget, true))) {
-      if (has_secondary) {
-        star_node_object_viewer_widget->OnViewButtonActivation();
-        return;
-      } else if (has_primary) {
-        star_node_object_viewer_widget->InitiateWarp();
-        return;
-      }
-    } else if (auto navigation_ui_controller = ObjectFinder<NavigationInteractionUIViewController>::Get();
-               navigation_ui_controller && has_primary) {
-      auto armada_widget = ObjectFinder<ArmadaObjectViewerWidget>::Get();
-      auto armada_state  = VisibilityState::Unknown;
-
-      if (armada_widget) {
-        if (armada_widget->visibilityController()) {
-          armada_state = armada_widget->visibilityController()->State();
-        } else {
-          spdlog::warn("ArmadaWidget has no visibility controller, using default Visible state");
-          armada_state = VisibilityState::Visible;
-        }
-      }
-
-      spdlog::info("have armada? {}, State {}", (armada_widget ? "Yes" : "No"), (int)armada_state);
-      if (armada_widget && (armada_state == VisibilityState::Visible || armada_state == VisibilityState::Show)) {
-        auto button = armada_widget->joinContext();
-        if (button && button->Interactable()) {
-          armada_widget->ValidateThenJoinArmada();
-          return;
-        }
-      } else {
-        // Dismissal keeps the native context's last position/path. Preserve that legacy shortcut unless opted out.
-        if (!require_visible_target || navigation_ui_controller->IsSetCourseVisible()) {
-          navigation_ui_controller->OnSetCourseButtonClick();
-        }
-        return;
-      }
-    }
-
-    if (has_recall && DidExecuteRecall(fleet_bar)) {
-      force_space_action_next_frame = false;
-      return;
-    }
-    if (has_repair && DidExecuteRepair(fleet_bar)) {
-      force_space_action_next_frame = false;
-      return;
-    }
-  }
-}
-
-HullType GetHullTypeFromBattleTarget(BattleTargetData* context)
-{
-  if (!context) {
-    return HullType::Any;
-  }
-  auto deployed_data = context->TargetFleetDeployedData();
-  if (!deployed_data) {
-    return HullType::Any;
-  }
-  auto hull_spec = deployed_data->Hull();
-  if (!hull_spec) {
-    return HullType::Any;
-  }
-  return hull_spec->Type();
-}
-
-void ChatMessageListLocalViewController_AboutToShow_Hook(ChatMessageListLocalViewController* _this);
-decltype(ChatMessageListLocalViewController_AboutToShow_Hook)* oChatMessageListLocalViewController_AboutToShow =
-    nullptr;
-void ChatMessageListLocalViewController_AboutToShow_Hook(ChatMessageListLocalViewController* _this)
-{
-  oChatMessageListLocalViewController_AboutToShow(_this);
-  if (_this->inputField()) {
-    _this->inputField()->SendOnFocus();
-  }
-}
-
-void InitializeActions_Hook(auto original, ShortcutsManager* _this)
-{
-  if (Config::Get().use_scopely_hotkeys) {
-    return original(_this);
-  }
-}
-
-bool CheckShowCargo(RewardsButtonWidget* widget)
-{
-  if (!widget || !Config::Get().show_cargo_default) {
-    return false;
-  }
-
-  if (!widget->Context()) {
-    return false;
-  }
-
-  const auto target_fleet_deployed = widget->Context()->TargetFleetDeployedData();
-
-  if (!target_fleet_deployed) {
-    return Config::Get().show_station_cargo;
-  }
-  auto fleet_type = target_fleet_deployed->FleetType();
-  if (fleet_type == DeployedFleetType::Player) {
-    return Config::Get().show_player_cargo;
-  } else if (fleet_type == DeployedFleetType::Marauder) {
-    if (auto hull = target_fleet_deployed->Hull(); hull && hull->Type() == HullType::ArmadaTarget) {
-      return Config::Get().show_armada_cargo;
-    } else {
-      return Config::Get().show_hostile_cargo;
-    }
-  }
-
-  return false;
-}
-
-void OnDidBindContext_Hook(auto original, RewardsButtonWidget* _this)
-{
-  if (!_this) {
-    return original(_this);
-  }
-
-  auto rewards_controller = _this->rewardsController();
-  auto pre_state          = rewards_controller ? rewards_controller->state() : VisibilityState::Unknown;
-  pre_state               = pre_state;
   original(_this);
-
-  rewards_controller = _this->rewardsController();
-  auto post_state    = rewards_controller ? rewards_controller->state() : VisibilityState::Unknown;
-  post_state         = post_state;
-  if (rewards_controller && CheckShowCargo(_this)) {
-    rewards_controller->Show(true);
-    show_info_pending = 1;
-  }
 }
 
-void ShowWithFleet_Hook(auto original, PreScanTargetWidget* _this, void* a1)
+// With Scopely hotkeys off, the game never registers its own input actions, so its shortcuts cannot fire.
+void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _this)
 {
-  original(_this, a1);
-  if (!_this) {
-    return;
-  }
-
-  auto rewards_button_widget = _this->rewardsButtonWidget();
-  auto rewards_controller    = rewards_button_widget ? rewards_button_widget->rewardsController() : nullptr;
-  if (rewards_controller && CheckShowCargo(rewards_button_widget)) {
-    rewards_controller->Show(true);
-    show_info_pending = 1;
-  }
+  if (Config::Get().use_scopely_hotkeys)
+    original(_this);
 }
+} // namespace
 
 bool InstallScreenManagerUpdateHook()
 {
@@ -1738,39 +761,13 @@ bool InstallScreenManagerUpdateHook()
   return installed;
 }
 
-void InstallShortcutHintHooks()
-{
-  // Configuration is fully parsed before hook installation. NONE, empty, and invalid bindings opt out.
-  if (!Shortcut::HasBinding(GameFunction::ToggleShortcutHints)) {
-    return;
-  }
-
-  // Only the detour targets gate the feature. The managed members the hint path calls resolve on first use; a
-  // missing one is reported once and reads as null/false, which leaves the native hint text in place.
-  auto update_text       = ShortcutKeybindHint::Class::Method("UpdateText", 0);
-  auto update_visibility = ShortcutKeybindHint::Class::Method("UpdateVisibility", 1);
-  if (!initialize_actions_hook_ready || !update_text || !update_visibility) {
-    return;
-  }
-
-  original_shortcut_hint_update_text = SPUD_STATIC_DETOUR(update_text.Pointer(), ShortcutKeybindHint_UpdateText_Hook);
-  SPUD_STATIC_DETOUR(update_visibility.Pointer(), ShortcutKeybindHint_UpdateVisibility_Hook);
-  shortcut_hints_ready = true;
-}
-
 void InstallHotkeyHooks()
 {
+  // The badges only make sense when the game's own input actions are under the mod's control.
   if (auto m = ShortcutsManager::Class::Method("InitializeActions")) {
-    SPUD_STATIC_DETOUR(m.Pointer(), InitializeActions_Hook);
-    initialize_actions_hook_ready = true;
+    SPUD_STATIC_DETOUR(m.Pointer(), ShortcutsManager_InitializeActions_Hook);
+    InstallShortcutHintHooks();
   }
-
-  InstallShortcutHintHooks();
-
   hotkeys_installed = InstallScreenManagerUpdateHook();
-
-  if (auto m = RewardsButtonWidget::Class::Method("OnDidBindContext"))
-    SPUD_STATIC_DETOUR(m.Pointer(), OnDidBindContext_Hook);
-  if (auto m = PreScanTargetWidget::Class::Method("ShowWithFleet"))
-    SPUD_STATIC_DETOUR(m.Pointer(), ShowWithFleet_Hook);
+  InstallSpaceActionHooks();
 }

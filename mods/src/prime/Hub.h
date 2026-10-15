@@ -212,16 +212,22 @@ struct Hub {
   static PrimeApp* get_App()
   { return Class::Get<"App", PrimeApp*>(); }
 
+  static SectionID CurrentSection()
+  {
+    auto* manager = get_SectionManager();
+    return manager ? manager->CurrentSection() : SectionID::AppInit;
+  }
+
   static bool IsInChat()
   {
-    auto current_section = get_SectionManager()->CurrentSection();
+    auto current_section = CurrentSection();
     return current_section == SectionID::Chat_Private_Message || current_section == SectionID::Chat_Alliance
            || current_section == SectionID::Chat_Main || current_section == SectionID::Chat_Private_List;
   }
 
   static bool IsInSystemOrGalaxyOrStarbase()
   {
-    auto current_section = get_SectionManager()->CurrentSection();
+    auto current_section = CurrentSection();
     return current_section == SectionID::Navigation_Galaxy || current_section == SectionID::Navigation_System
            || current_section == SectionID::Starbase_Interior || current_section == SectionID::Starbase_Exterior;
   }

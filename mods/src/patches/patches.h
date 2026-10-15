@@ -47,6 +47,17 @@ void FleetSyncUpdate();
 void GalacticAnomalyTimerUpdate();
 void WarpActionLabelUpdate();
 
+// Hotkeys and their helpers in shortcut_hints.cc and space_actions.cc.
+void InstallShortcutHintHooks();
+// Toggles the game's keybind badges. False when the badges are not the mod's, so the key is not used.
+bool ToggleShortcutBadges();
+void HideShortcutBadges();
+void InstallSpaceActionHooks();
+// A target or object viewer card is open in space.
+bool TargetViewerShown();
+// The fleet and viewer half of the shortcut dispatch. True when the key must not reach the game.
+bool SpaceActionsUpdate();
+
 // UI scale hotkeys, implemented in ui_scale.cc.
 void AdjustUiScale(bool up);
 void AdjustUiShipScale(bool up);

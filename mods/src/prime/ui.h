@@ -57,6 +57,13 @@ struct VisibilityController : il2cpp::Object {
   { return Field<"_state", VisibilityState>(); }
   VisibilityState State()
   { return Get<"VisibilityState", VisibilityState>(); }
+
+  // Shown or on its way in.
+  bool IsShown()
+  {
+    const auto current = state();
+    return current == VisibilityState::Visible || current == VisibilityState::Show;
+  }
 };
 
 struct CanvasController : il2cpp::Object {

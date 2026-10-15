@@ -183,6 +183,14 @@ struct NavigationSectionManager : il2cpp::Object {
   // Not NavigationManager(): that would hide the type inside this struct.
   NavigationManager* SNavigationManager()
   { return Get<"NavigationManager", NavigationManager*>(); }
+
+  // Closes whatever interaction menu is open in space before the mod acts on a fleet.
+  static void HideInteraction()
+  {
+    auto* section = Instance();
+    if (auto* navigation = section ? section->SNavigationManager() : nullptr)
+      navigation->HideInteraction();
+  }
 };
 
 struct NavigationInteractionUIContext : il2cpp::Object {

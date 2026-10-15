@@ -426,6 +426,13 @@ struct FleetBarViewController : ViewController<FleetBarContext> {
 
   FleetLocalViewController* fleetPanelController()
   { return Field<"_fleetPanelController", FleetLocalViewController*>(); }
+
+  // The fleet whose panel is open in the bar, or null.
+  FleetPlayerData* SelectedFleet()
+  {
+    auto* panel = fleetPanelController();
+    return panel ? panel->fleet() : nullptr;
+  }
 };
 
 struct FleetsManager : MonoSingleton<FleetsManager> {
