@@ -1,11 +1,11 @@
 #pragma once
 
-#include "patches/notification_audio.h"
-
 // User settings from the settings TOML. Each struct is a TOML section and each member is named after its key,
 // with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale. They are read at
 // startup and again whenever the file changes; a few are also toggled at runtime by hotkeys. Everything runs on
 // the game thread except sync, which only reads.
+
+#include "patches/parts/notification_audio.h"
 
 #include <array>
 #include <map>
@@ -145,7 +145,6 @@ struct SettingsFile;
 class Config final
 {
 public:
-  [[nodiscard]] NotificationSound NotificationSoundForToast(int toast_state) const;
   // The current settings. Call it again rather than keeping the reference: a reload replaces them.
   [[nodiscard]] static Config& Get();
   // Re-reads the settings file and makes it current, rebinding shortcuts. A file that does not parse keeps the
@@ -263,15 +262,14 @@ public:
   } buffs;
 
   struct Audio {
-    bool              disable_all_events       = false;
-    NotificationSound alert_victory            = NotificationSound::None;
-    NotificationSound alert_defeat             = NotificationSound::None;
-    NotificationSound alert_armada_created     = NotificationSound::None;
-    NotificationSound alert_armada_battle_won  = NotificationSound::None;
-    NotificationSound alert_armada_battle_lost = NotificationSound::None;
-
     bool                     trace_events = false;
     std::vector<std::string> disabled_events;
+    bool                     disable_all_events       = false;
+    NotificationSound        alert_victory            = NotificationSound::kNone;
+    NotificationSound        alert_defeat             = NotificationSound::kNone;
+    NotificationSound        alert_armada_created     = NotificationSound::kNone;
+    NotificationSound        alert_armada_battle_won  = NotificationSound::kNone;
+    NotificationSound        alert_armada_battle_lost = NotificationSound::kNone;
   } audio;
 
   struct Ui {

@@ -3,6 +3,7 @@
 // Text handling for toast notifications that does not touch the game, kept apart so it can be tested.
 
 #include <algorithm>
+#include <charconv>
 #include <span>
 #include <string>
 #include <string_view>
@@ -11,39 +12,37 @@ namespace toast_text
 {
 // Replaces {N} with values[N]. The zero-padded form {N:000} pads the value to that width; other formats are
 // filled without padding. Placeholders whose value is empty are left as they are.
-inline std::string FormatPlaceholders(std::string text, std::span<const std::string> values)
+inline std::string FormatPlaceholders(std::string_view text, std::span<const std::string> values)
 {
-  for (size_t i = 0; i < values.size(); ++i) {
-    const auto& value = values[i];
-    if (value.empty())
-      continue;
-    const auto prefix = "{" + std::to_string(i);
-    for (auto pos = text.find(prefix); pos != std::string::npos; pos = text.find(prefix, pos)) {
-      const auto after = pos + prefix.size();
-      const auto end   = text.find('}', after);
-      if (end == std::string::npos)
-        break;
-      auto replacement = value;
-      if (after != end) {
-        // "{1" also starts "{10}"; only "{1}" and "{1:...}" are this placeholder.
-        if (text[after] != ':') {
-          pos = after;
-          continue;
+  std::string result;
+  result.reserve(text.size());
+  for (size_t pos = 0; pos < text.size();) {
+    if (text[pos] == '{') {
+      const auto* first         = text.data() + pos + 1;
+      size_t      index         = 0;
+      const auto [after, error] = std::from_chars(first, text.data() + text.size(), index);
+      if (error == std::errc{} && after != text.data() + text.size() && (*after == '}' || *after == ':')
+          && !(first[0] == '0' && after != first + 1) && index < values.size() && !values[index].empty()) {
+        const auto offset = static_cast<size_t>(after - text.data());
+        const auto end    = text.find('}', offset);
+        if (end == std::string_view::npos) {
+          result += text.substr(pos);
+          break;
         }
-        const auto format = std::string_view(text).substr(after + 1, end - after - 1);
-        if (!format.empty() && format.find_first_not_of('0') == std::string_view::npos
-            && replacement.size() < format.size())
-          replacement.insert(0, format.size() - replacement.size(), '0');
+        const auto& value  = values[index];
+        const auto  format = *after == ':' ? text.substr(offset + 1, end - offset - 1) : std::string_view{};
+        if (format.find_first_not_of('0') == std::string_view::npos && value.size() < format.size())
+          result.append(format.size() - value.size(), '0');
+        // Only the template is scanned; a player name containing "{1}" stays literal.
+        result += value;
+        pos = end + 1;
+        continue;
       }
-      text.replace(pos, end - pos + 1, replacement);
-      pos += replacement.size();
     }
+    result += text[pos++];
   }
-  return text;
+  return result;
 }
-
-inline size_t CountPlaceholders(std::string_view text)
-{ return static_cast<size_t>(std::ranges::count(text, '{')); }
 
 // Removes Unity rich text tags such as <color=#FF0000>, <b> and </size>.
 inline std::string StripRichText(std::string_view text)

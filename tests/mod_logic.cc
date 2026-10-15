@@ -1,5 +1,6 @@
 // Settings parsing and shortcut matching, run against production code with Unity input replaced by a fake.
 #include "patches/chat_startup.h"
+#include "patches/parts/notification_audio.h"
 #include "patches/parts/toast_text.h"
 #include "patches/ship_shortcut_hint.h"
 #include "patches/shortcuts.h"
@@ -110,6 +111,12 @@ void ToastText()
   Check(FormatPlaceholders("{10} and {1}", values) == "{10} and 7", "{1} does not match {10}");
   Check(FormatPlaceholders("{2} stays", values) == "{2} stays", "empty values are left alone");
   Check(FormatPlaceholders("{1:x2}", values) == "7", "other formats are filled unpadded");
+  const std::vector<std::string> literal_values{"{1}", "Enterprise"};
+  Check(FormatPlaceholders("{0} vs {1}", literal_values) == "{1} vs Enterprise",
+        "replacement text stays literal instead of being interpreted as another placeholder");
+  Check(FormatPlaceholders("{00} {+1} {99999999999999999999999999} {0", values)
+            == "{00} {+1} {99999999999999999999999999} {0",
+        "malformed, overflowing and unclosed placeholders remain unchanged");
   Check(StripRichText("<color=#FF0000>Red</color> <b>bold</b>") == "Red bold", "rich text tags removed");
   Check(StripRichText("a < b") == "a < b", "an unclosed '<' is text");
   Check(TitleCase("USS ENTERPRISE-D") == "Uss Enterprise-D", "title case");
@@ -178,6 +185,56 @@ void Loading()
   parsed = Load("", false);
   Check(!Shortcut::HasBinding(Action::kShowBookmarks), "extended shortcuts are skipped otherwise");
   Check(Value(parsed, "shortcuts", "show_bookmarks") == "<missing>", "skipped shortcuts are not recorded");
+}
+
+void NotificationAudio()
+{
+  struct Fixture {
+    NotificationSound sound;
+    std::string_view  name;
+    size_t            bytes;
+  };
+  constexpr Fixture fixtures[] = {
+      {NotificationSound::kNone, "none", 0},           {NotificationSound::kDefault, "default", 17240},
+      {NotificationSound::kInfo, "info", 18918},       {NotificationSound::kSuccess, "success", 26148},
+      {NotificationSound::kWarning, "warning", 31264}, {NotificationSound::kAlarm, "alarm", 37440},
+      {NotificationSound::kArrival, "arrival", 26146}, {NotificationSound::kSoft, "soft", 19976},
+      {NotificationSound::kPing, "ping", 8422},        {NotificationSound::kRepair, "repair", 27912},
+  };
+  for (const auto& fixture : fixtures) {
+    Check(NotificationSoundName(fixture.sound) == fixture.name
+              && ParseNotificationSound(AsciiStrToUpper(fixture.name)) == fixture.sound,
+          "cue names round-trip");
+    const auto data = NotificationSoundBytes(fixture.sound);
+    Check(data.size() == fixture.bytes, "cue length matches the independent pre-refactor fixture");
+    Check(NotificationSoundBytes(fixture.sound).data() == data.data(), "cue data stays cached");
+    if (data.empty())
+      continue;
+    const auto word = [&](size_t at) {
+      return uint32_t(data[at]) | uint32_t(data[at + 1]) << 8 | uint32_t(data[at + 2]) << 16
+             | uint32_t(data[at + 3]) << 24;
+    };
+    Check(std::string_view(reinterpret_cast<const char*>(data.data()), 4) == "RIFF"
+              && std::string_view(reinterpret_cast<const char*>(data.data() + 8), 8) == "WAVEfmt ",
+          "WAV signature");
+    Check(word(4) == data.size() - 8 && word(40) == data.size() - 44, "WAV chunk lengths");
+    Check(word(24) == 44100 && word(28) == 88200 && data[20] == 1 && data[22] == 1 && data[34] == 16,
+          "cue data is 44.1kHz mono 16-bit PCM");
+  }
+  for (const auto& [name, expected] :
+       std::initializer_list<std::pair<std::string_view, NotificationSound>>{{"off", NotificationSound::kNone},
+                                                                             {"silent", NotificationSound::kNone},
+                                                                             {"victory", NotificationSound::kSuccess},
+                                                                             {"warn", NotificationSound::kWarning},
+                                                                             {"attack", NotificationSound::kAlarm},
+                                                                             {"arrive", NotificationSound::kArrival},
+                                                                             {"quiet", NotificationSound::kSoft},
+                                                                             {"repaired", NotificationSound::kRepair}})
+    Check(ParseNotificationSound(name) == expected, "legacy cue aliases remain valid");
+  Check(!ParseNotificationSound("unknown") && !ParseNotificationSound(" none "), "unknown cue names are rejected");
+  Check(NotificationSoundBytes(NotificationSound::kCount).empty()
+            && NotificationSoundBytes(static_cast<NotificationSound>(255)).empty(),
+        "invalid cues have no WAV data");
 }
 
 void Matching()
@@ -261,6 +318,7 @@ int main()
   ShipNames();
   Chords();
   Loading();
+  NotificationAudio();
   Matching();
   ChatStartupGate();
   if (failures)

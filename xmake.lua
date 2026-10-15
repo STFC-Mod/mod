@@ -57,6 +57,12 @@ target("mod-logic-tests")
     set_kind("binary")
     set_default(false)
     set_exceptions("cxx")
-    add_files("tests/mod_logic.cc", "mods/src/patches/shortcuts.cc")
+    add_files("tests/mod_logic.cc", "mods/src/patches/shortcuts.cc", "mods/src/patches/parts/notification_audio.cc")
     add_includedirs("mods/src", "libs/il2cpp/include", "third_party/libil2cpp", "libs/unity/include")
     add_packages("spdlog", "toml++")
+    if is_plat("macosx") then
+        add_frameworks("Cocoa")
+        add_files("mods/src/patches/parts/notification_audio_mac.mm")
+    elseif is_plat("windows") then
+        add_syslinks("shell32", "winmm")
+    end

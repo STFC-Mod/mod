@@ -603,8 +603,6 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("buffs", "use_out_of_dock_power", buffs.use_out_of_dock_power);
 
   r.Read("audio", "trace_events", audio.trace_events);
-  audio.disable_all_events = false;
-  audio.disabled_events.clear();
   for (const auto& event : StrSplit(r.Get<std::string>("audio", "disabled_events", ""), ',')) {
     if (AsciiStrToLower(event) == "all")
       audio.disable_all_events = true;
@@ -619,12 +617,12 @@ void Config::Load(const SettingsFile& file, bool first)
            {"alert_armada_battle_won", &audio.alert_armada_battle_won},
            {"alert_armada_battle_lost", &audio.alert_armada_battle_lost}}) {
     const auto name  = r.Get<std::string>("audio", key, "none");
-    const auto sound = notification_sound_from_name(StripAsciiWhitespace(name));
+    const auto sound = ParseNotificationSound(StripAsciiWhitespace(name));
     if (!sound)
       spdlog::warn("invalid config value audio.{}: '{}'; using none", key, name);
-    *value = sound.value_or(NotificationSound::None);
-    r.Record("audio", key, notification_sound_name(*value));
-    has_audio_alert |= *value != NotificationSound::None;
+    *value = sound.value_or(NotificationSound::kNone);
+    r.Record("audio", key, NotificationSoundName(*value));
+    has_audio_alert |= *value != NotificationSound::kNone;
   }
   if (has_audio_alert && !patches.toastbannerhooks)
     spdlog::warn("audio alerts require patches.toastbannerhooks = true");
@@ -725,22 +723,4 @@ void Config::Load(const SettingsFile& file, bool first)
 #else
             << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << "\n\n";
 #endif
-}
-
-NotificationSound Config::NotificationSoundForToast(int toast_state) const
-{
-  switch (toast_state) {
-    case static_cast<int>(ToastState::Victory):
-      return audio.alert_victory;
-    case static_cast<int>(ToastState::Defeat):
-      return audio.alert_defeat;
-    case static_cast<int>(ToastState::ArmadaCreated):
-      return audio.alert_armada_created;
-    case static_cast<int>(ToastState::ArmadaBattleWon):
-      return audio.alert_armada_battle_won;
-    case static_cast<int>(ToastState::ArmadaBattleLost):
-      return audio.alert_armada_battle_lost;
-    default:
-      return NotificationSound::None;
-  }
 }
