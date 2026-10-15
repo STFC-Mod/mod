@@ -23,7 +23,7 @@ void Install()
   unity::Track<AllianceStarbaseObjectViewerWidget>();
   unity::Track<AnimatedRewardsScreenViewController>();
   unity::Track<ArmadaObjectViewerWidget>();
-  unity::Track<ArtifactHallDetailsViewController>();
+  unity::Track<ArtifactHallDetailsViewController>("OnDidBindCanvasContext", "OnAboutToReleaseCanvasContext");
   unity::Track<AssignShipsWidget>();
   unity::Track<CelestialObjectViewerWidget>();
   unity::Track<EmbassyObjectViewer>();

@@ -11,7 +11,7 @@
 #include <il2cpp/il2cpp.h>
 
 #include <algorithm>
-#include <atomic>
+#include <utility>
 
 namespace
 {
@@ -137,32 +137,31 @@ void InventoryUsePopupViewController_OnDidBindCanvasContext_Hook(auto original, 
     object->SetActive(false);
 }
 
+bool popup_shown = false;
 
-std::atomic_bool popup_shown{false};
-
-bool ShouldSuppressAdditionalPopup()
+bool SuppressPopup()
 {
-  bool expected = false;
-  return !popup_shown.compare_exchange_strong(expected, true);
+  if (!Config::Get().ui.only_show_first_popup)
+    return false;
+  return std::exchange(popup_shown, true);
 }
 
-void InterstitialViewController_AboutToShow_Hook(auto original, InterstitialViewController* _this)
+void InterstitialViewController_AboutToShow_Hook(auto original, void* _this)
 {
-  original(_this);
-  if (Config::Get().ui.only_show_first_popup && _this && ShouldSuppressAdditionalPopup())
-    _this->CloseWhenReady();
+  if (!SuppressPopup())
+    original(_this);
 }
 
 void ShopSceneManager_ShowPlcOfferPopup_Hook(auto original, void* _this)
 {
-  if (!Config::Get().ui.only_show_first_popup || !ShouldSuppressAdditionalPopup())
+  if (!SuppressPopup())
     original(_this);
 }
 
 void InstallSkipRevealSequence()
-{ IL2CPP_HOOK(ShopSceneManager::Method("ShouldShowRevealSequence"), ShopSceneManager_ShouldShowRevealSequence_Hook); 
-  using PopupShop = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;
-  IL2CPP_HOOK(PopupShop::Method("ShowPlcOfferPopup", 0), ShopSceneManager_ShowPlcOfferPopup_Hook);
+{
+  IL2CPP_HOOK(ShopSceneManager::Method("ShouldShowRevealSequence"), ShopSceneManager_ShouldShowRevealSequence_Hook);
+  IL2CPP_HOOK(ShopSceneManager::Method("ShowPlcOfferPopup", 0), ShopSceneManager_ShowPlcOfferPopup_Hook);
   IL2CPP_HOOK(InterstitialViewController::Class::Method("AboutToShow", 0), InterstitialViewController_AboutToShow_Hook);
 }
 

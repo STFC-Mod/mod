@@ -633,7 +633,6 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "disable_escape_exit_timer", u.disable_escape_exit_timer);
   r.Read("ui", "disable_preview_locate", u.disable_preview_locate);
   r.Read("ui", "disable_preview_recall", u.disable_preview_recall);
-  r.Read("ui", "disable_first_popup", u.disable_first_popup);
   r.Read("ui", "only_show_first_popup", u.only_show_first_popup);
   r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "disable_move_keys", u.disable_move_keys);

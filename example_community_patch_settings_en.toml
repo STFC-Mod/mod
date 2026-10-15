@@ -730,8 +730,6 @@ disable_escape_exit = true
 # Maximum gap in milliseconds between Escape presses that opens the exit prompt; 0 disables double-tap exit
 disable_escape_exit_timer = 0
 
-# ⚠️ EXPERIMENTAL: Prevent the first popup advert from appearing
-disable_first_popup = false
 
 # ⚠️ EXPERIMENTAL: Prevent the standard move keys from working
 disable_move_keys = false
