@@ -923,6 +923,11 @@ show_station_cargo = true
 
 [sync]
 
+# Target changes apply on settings reload and receive the latest observed state.
+# Failed uploads retry; pending changes to an entity use its latest value.
+# Up to 300 recent battle journals are retained per session. Journals may replay
+# after restarting or logging in again; the old sent-ID file is no longer used.
+
 # Subgroup: Data
 # --------------
 
@@ -942,6 +947,7 @@ buildings = true
 haven = true
 
 # Do you want to sync live fleet state (mining, docked, warping...)? Opt-in, off by default
+# Every state change is sent; up to 300 recent changes are retained per session.
 fleets = false
 
 # Do you want to sync inventory data?

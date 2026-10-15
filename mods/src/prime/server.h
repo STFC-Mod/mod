@@ -436,6 +436,14 @@ struct UserProfile : il2cpp::Object {
   { return Get<"Level", int32_t>(); }
 };
 
+struct UserProfileManager : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager">;
+  static UserProfileManager* Instance()
+  { return Class::Get<"Instance", UserProfileManager*>(); }
+  UserProfile* GetLocalUserProfile()
+  { return Call<"GetLocalUserProfile", UserProfile*>(); }
+};
+
 enum class BattleType : int32_t {
   Fleet                       = 0,
   Base                        = 1,

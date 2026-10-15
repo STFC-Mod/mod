@@ -1,166 +1,175 @@
-// Uploads to sync targets: one worker thread, HTTP session and bounded queue per target.
-
+// One owner for canonical records, target cursors and session identity. HTTP runs outside its lock.
 #include "patches/parts/sync/sync.h"
 #include "version.h"
-
 #include <cpr/cpr.h>
 #include <curl/curl.h>
-#include <spdlog/fmt/fmt.h>
-
-#include <map>
-#include <memory>
 #include <thread>
 
 namespace data_sync
 {
 namespace
 {
-  // Each entry is one JSON batch. At the 10 s request timeout a dead target falls behind by a few batches a minute,
-  // so 256 covers a long outage before the oldest go.
-  constexpr size_t kTargetQueueCapacity = 256;
-
-  struct Request {
-    SyncConfig::Type type;
-    std::string      body;
-    bool             first_sync;
+  class Target;
+  struct Owner {
+    std::mutex                                     mutex;
+    std::condition_variable                        ready;
+    RecordStore                                    records;
+    GameSession                                    session;
+    std::map<std::string, std::unique_ptr<Target>> targets;
   };
 
   class Target
   {
   public:
-    Target(std::string name, const SyncTargetConfig& config)
-        : name_(std::move(name))
-        , config_(config)
+    Target(Owner& owner, std::string name)
+        : worker_([this, &owner, name = std::move(name)] { Run(owner, name); })
     {
-      Configure();
-      std::thread(&Target::Run, this).detach();
     }
-
-    void Push(Request request)
-    { requests_.Push(std::move(request)); }
-
+    Delivery delivery; // Accessed only under Owner::mutex.
   private:
-    // A fresh session for config_: one that had a proxy or relaxed TLS keeps them otherwise.
-    void Configure()
+    void Run(Owner& owner, const std::string& name)
     {
-      const auto& config = config_;
-      http_              = std::make_unique<cpr::Session>();
-      auto& http         = *http_;
-      http.SetUrl(config.url);
-      http.SetUserAgent("stfc community mod " VER_FILE_VERSION_STR " (libcurl/" LIBCURL_VERSION ")");
-      http.SetAcceptEncoding(cpr::AcceptEncoding{});
-      http.SetHttpVersion(cpr::HttpVersion{cpr::HttpVersionCode::VERSION_1_1});
-      http.SetRedirect(cpr::Redirect{3, true, false, cpr::PostRedirectFlags::POST_ALL});
-#ifndef _MODDBG
-      // Debug builds wait indefinitely so a target can be stepped through in a debugger.
-      http.SetConnectTimeout(cpr::ConnectTimeout{3'000});
-      http.SetTimeout(cpr::Timeout{10'000});
-#endif
-      spdlog::debug("sync target '{}': proxy='{}', verify_ssl={}", name_, config.proxy, config.verify_ssl);
-      if (!config.proxy.empty())
-        http.SetProxies({{"http", config.proxy}, {"https", config.proxy}});
-      if (!config.verify_ssl)
-        http.SetSslOptions(
-            cpr::Ssl(cpr::ssl::VerifyHost{false}, cpr::ssl::VerifyPeer{false}, cpr::ssl::NoRevoke{true}));
-      http.SetHeader({
-          {"Content-Type", "application/json"},
-          {"X-Powered-By", "stfc community mod/" VER_FILE_VERSION_STR},
-          {"stfc-sync-token", config.token},
-      });
-    }
-
-    // A settings reload can change the target's address, token or proxy; the session follows before the next
-    // upload. A target removed from the settings is no longer given uploads.
-    void FollowSettings()
-    {
-      const auto& targets = Config::Get().sync.targets;
-      const auto  it      = targets.find(name_);
-      if (it == targets.end())
-        return;
-      const auto& now = it->second;
-      if (now.url == config_.url && now.token == config_.token && now.proxy == config_.proxy
-          && now.verify_ssl == config_.verify_ssl)
-        return;
-      config_ = now;
-      Configure();
-    }
-
-    void Run()
-    {
+      std::unique_ptr<cpr::Session> http;
+      uint64_t                      configured = 0;
       for (;;) {
-        auto request = requests_.Pop();
-        FollowSettings();
-        const auto label = fmt::format("{} ({})", name_, to_string(request.type));
-        try {
-          Send(label, std::move(request));
-        } catch (const std::exception& error) {
-          spdlog::error("Failed to send {} sync data: {}", label, error.what());
-        } catch (...) {
-          spdlog::error("Failed to send {} sync data: unknown error", label);
+        std::unique_lock lock(owner.mutex);
+        auto             upload = delivery.Next(owner.records, Clock::now());
+        if (!upload) {
+          owner.ready.wait_for(lock, std::chrono::seconds(1));
+          continue;
         }
+        const auto config   = delivery.Config();
+        const auto revision = delivery.Revision();
+        lock.unlock();
+        const auto label   = fmt::format("{} ({})", name, upload->Type());
+        bool       success = false;
+        try {
+          if (!http || configured != revision) {
+            http       = std::make_unique<cpr::Session>();
+            configured = revision;
+            http->SetUrl(config.url);
+            http->SetUserAgent("stfc community mod " VER_FILE_VERSION_STR " (libcurl/" LIBCURL_VERSION ")");
+            http->SetAcceptEncoding(cpr::AcceptEncoding{});
+            http->SetHttpVersion(cpr::HttpVersion{cpr::HttpVersionCode::VERSION_1_1});
+            http->SetRedirect(cpr::Redirect{3, true, false, cpr::PostRedirectFlags::POST_ALL});
+#ifndef _MODDBG
+            http->SetConnectTimeout(cpr::ConnectTimeout{3'000});
+            http->SetTimeout(cpr::Timeout{10'000});
+#endif
+            if (!config.proxy.empty())
+              http->SetProxies({{"http", config.proxy}, {"https", config.proxy}});
+            if (!config.verify_ssl)
+              http->SetSslOptions(
+                  cpr::Ssl(cpr::ssl::VerifyHost{false}, cpr::ssl::VerifyPeer{false}, cpr::ssl::NoRevoke{true}));
+            http->SetHeader({{"Content-Type", "application/json"},
+                             {"X-Powered-By", "stfc community mod/" VER_FILE_VERSION_STR},
+                             {"stfc-sync-token", config.token}});
+          }
+          auto& headers = http->GetHeader();
+          if (upload->first_sync)
+            headers.insert_or_assign("X-PRIME-SYNC", "2");
+          else
+            headers.erase("X-PRIME-SYNC");
+          const auto records = upload->Records();
+          http->SetBody(cpr::Body{records.dump()});
+          const auto response = http->Post();
+          success             = response.status_code >= 200 && response.status_code < 300;
+          if (!success)
+            logging::error("UPLOAD", label, "Upload failed ({}): {}; retained for retry", response.status_code,
+                           response.error.message);
+          else
+            logging::debug("UPLOAD", label, "Uploaded {} records in {:.0f} ms", records.size(),
+                           response.elapsed * 1'000);
+        } catch (const std::exception& e) {
+          spdlog::error("Sync target {}: {}", label, e.what());
+        }
+        // A target took another category's first sync: fleet targets get a fresh fleet snapshot with it.
+        if (success && upload->first_sync && upload->stream != Stream::kFleets)
+          RequestFleetSnapshot();
+        lock.lock();
+        delivery.Complete(std::move(*upload), success, owner.records.generation, Clock::now());
       }
     }
-
-    void Send(const std::string& label, Request request)
-    {
-      auto& headers = http_->GetHeader();
-      if (request.first_sync) {
-        headers.insert_or_assign("X-PRIME-SYNC", "2");
-        logging::trace("UPLOAD", label, "Adding X-Prime-Sync header for initial sync");
-      } else {
-        headers.erase("X-PRIME-SYNC");
-      }
-      http_->SetBody(cpr::Body{std::move(request.body)});
-      logging::debug("UPLOAD", label, "Sending data to {}", http_->GetFullRequestUrl());
-
-      const auto response = http_->Post();
-      const auto elapsed  = response.elapsed * 1'000;
-      if (response.status_code == 0)
-        logging::error("UPLOAD", label, "Failed to send request: {}", response.error.message);
-      else if (response.status_code == 501)
-        logging::error("UPLOAD", label,
-                       "Sync target does not support this operation ({}, after {:.0f} ms). Consider turning off this "
-                       "upload category for the target.",
-                       response.status_line, elapsed);
-      else if (response.status_code >= 400)
-        logging::error("UPLOAD", label, "Failed to communicate with server: {} (after {:.0f} ms)", response.status_line,
-                       elapsed);
-      else
-        logging::debug("UPLOAD", label, "Response: {} ({:.0f} ms elapsed)", response.status_line, elapsed);
-    }
-
-    std::string                   name_;
-    SyncTargetConfig              config_;
-    std::unique_ptr<cpr::Session> http_;
-    BoundedQueue<Request>         requests_{"target", kTargetQueueCapacity};
+    // The owner lives until process exit. Joinable workers belong to it and cannot outlive their storage.
+    std::thread worker_;
   };
-
-  // Started on first use, so a target added to the settings later still gets a worker. Never destroyed, see sync.h.
-  Target& TargetFor(const std::string& name, const SyncTargetConfig& config)
+  Owner& Sync()
   {
-    static auto&     targets = *new std::map<std::string, Target*, std::less<>>;
-    static auto&     mutex   = *new std::mutex;
-    std::scoped_lock lock(mutex);
-    auto&            target = targets[name];
-    if (!target)
-      target = new Target(name, config);
-    return *target;
+    static auto& owner = *new Owner;
+    return owner;
   }
 } // namespace
-
-void Queue(SyncConfig::Type type, const nlohmann::json& records, bool first_sync)
+void Publish(Stream stream, RecordSet records, uint64_t generation, Update mode)
 {
-  // Another category's first sync: the targets get a full fleet snapshot with it.
-  if (first_sync && type != SyncConfig::Type::kFleets)
-    RequestFleetSnapshot();
-  std::string body;
-  for (const auto& [name, config] : Config::Get().sync.targets) {
-    if (!config.enabled(type))
-      continue;
-    if (body.empty())
-      body = records.dump();
-    TargetFor(name, config).Push({type, body, first_sync});
+  auto& owner = Sync();
+  {
+    std::scoped_lock lock(owner.mutex);
+    if (generation != owner.records.generation)
+      return;
+    if (!owner.records.Apply(stream, std::move(records), mode))
+      return;
   }
-  logging::debug("QUEUE", to_string(type), "Added {} entries to sync queue", records.size());
+  owner.ready.notify_all();
+}
+bool HasBattle(uint64_t id, uint64_t generation)
+{
+  auto&            owner = Sync();
+  std::scoped_lock lock(owner.mutex);
+  return generation == owner.records.generation && owner.records.Contains(Stream::kBattles, id);
+}
+void FollowSettings()
+{
+  static const Config* applied = nullptr;
+  const auto&          config  = Config::Get();
+  if (applied == &config)
+    return;
+  applied     = &config;
+  auto& owner = Sync();
+  {
+    std::scoped_lock lock(owner.mutex);
+    for (auto& [name, target] : owner.targets) {
+      const auto now = config.sync.targets.find(name);
+      target->delivery.Configure(now == config.sync.targets.end() ? SyncTargetConfig{} : now->second);
+    }
+    for (const auto& [name, options] : config.sync.targets) {
+      auto& target = owner.targets[name];
+      if (!target)
+        target = std::make_unique<Target>(owner, name);
+      target->delivery.Configure(options);
+    }
+  }
+  owner.ready.notify_all();
+}
+GameSession Session()
+{
+  auto&            owner = Sync();
+  std::scoped_lock lock(owner.mutex);
+  return owner.session;
+}
+void SetGameServer(std::string url, std::string session_id)
+{
+  auto& owner = Sync();
+  {
+    std::scoped_lock lock(owner.mutex);
+    owner.records.Reset();
+    owner.session.generation = owner.records.generation;
+    owner.session.server_url = std::move(url);
+    owner.session.session_id = std::move(session_id);
+    for (const auto& [name, target] : owner.targets)
+      target->delivery.Reset(owner.records.generation);
+  }
+  owner.ready.notify_all();
+}
+void SetGameVersion(std::string version)
+{
+  auto&            owner = Sync();
+  std::scoped_lock lock(owner.mutex);
+  owner.session.version = std::move(version);
+}
+void SetInstanceId(int32_t id)
+{
+  auto&            owner = Sync();
+  std::scoped_lock lock(owner.mutex);
+  owner.session.instance_id = id;
 }
 } // namespace data_sync

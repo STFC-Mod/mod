@@ -66,3 +66,13 @@ target("mod-logic-tests")
     elseif is_plat("windows") then
         add_syslinks("shell32", "winmm")
     end
+
+target("sync-logic-tests")
+    set_kind("binary")
+    set_default(false)
+    set_exceptions("cxx")
+    add_files("tests/sync_logic.cc", "mods/src/patches/parts/sync/records.cc", "mods/src/patches/parts/sync/state.cc")
+    add_includedirs("mods/src", "libs/il2cpp/include", "third_party/libil2cpp", "libs/unity/include")
+    add_packages("protobuf", "spdlog", "toml++", "nlohmann_json")
+    add_rules("protobuf.cpp")
+    add_files("mods/src/prime/proto/*.proto")

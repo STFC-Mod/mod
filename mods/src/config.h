@@ -39,7 +39,6 @@ struct SyncConfig {
 
   struct Option {
     Type             type;
-    std::string_view type_str;   // used in JSON body
     std::string_view option_str; // used in TOML file
     bool SyncConfig::* option;
   };
@@ -66,48 +65,35 @@ struct SyncConfig {
   bool        traits           = false;
 
   [[nodiscard]] bool enabled(Type type) const;
+  bool               operator==(const SyncConfig&) const = default;
 };
 
 constexpr std::array SyncOptions{
-    SyncConfig::Option{SyncConfig::Type::kAwayAssignments, "away_assignment", "away_assignments",
-                       &SyncConfig::away_assignments},
-    SyncConfig::Option{SyncConfig::Type::kBattles, "battlelog", "battlelogs", &SyncConfig::battlelogs},
-    SyncConfig::Option{SyncConfig::Type::kBuffs, "buff", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kBuildings, "module", "buildings", &SyncConfig::buildings},
-    SyncConfig::Option{SyncConfig::Type::kEmeraldChain, "emerald_chain", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kFleets, "fleet", "fleets", &SyncConfig::fleets},
-    SyncConfig::Option{SyncConfig::Type::kHaven, "haven", "haven", &SyncConfig::haven},
-    SyncConfig::Option{SyncConfig::Type::kInventory, "inventory", "inventory", &SyncConfig::inventory},
-    SyncConfig::Option{SyncConfig::Type::kJobs, "job", "jobs", &SyncConfig::jobs},
-    SyncConfig::Option{SyncConfig::Type::kMissions, "mission", "missions", &SyncConfig::missions},
-    SyncConfig::Option{SyncConfig::Type::kOfficer, "officer", "officers", &SyncConfig::officers},
-    SyncConfig::Option{SyncConfig::Type::kProfile, "profile", "profile", &SyncConfig::profile},
-    SyncConfig::Option{SyncConfig::Type::kResearch, "research", "research", &SyncConfig::research},
-    SyncConfig::Option{SyncConfig::Type::kResources, "resource", "resources", &SyncConfig::resources},
-    SyncConfig::Option{SyncConfig::Type::kShips, "ship", "ships", &SyncConfig::ships},
-    SyncConfig::Option{SyncConfig::Type::kSlots, "slot", "slots", &SyncConfig::slots},
-    SyncConfig::Option{SyncConfig::Type::kStoreOffers, "store_offer", "store_offers", &SyncConfig::store_offers},
-    SyncConfig::Option{SyncConfig::Type::kTech, "ft", "tech", &SyncConfig::tech},
-    SyncConfig::Option{SyncConfig::Type::kTraits, "trait", "traits", &SyncConfig::traits},
+    SyncConfig::Option{SyncConfig::Type::kAwayAssignments, "away_assignments", &SyncConfig::away_assignments},
+    SyncConfig::Option{SyncConfig::Type::kBattles, "battlelogs", &SyncConfig::battlelogs},
+    SyncConfig::Option{SyncConfig::Type::kBuffs, "buffs", &SyncConfig::buffs},
+    SyncConfig::Option{SyncConfig::Type::kBuildings, "buildings", &SyncConfig::buildings},
+    SyncConfig::Option{SyncConfig::Type::kEmeraldChain, "buffs", &SyncConfig::buffs},
+    SyncConfig::Option{SyncConfig::Type::kFleets, "fleets", &SyncConfig::fleets},
+    SyncConfig::Option{SyncConfig::Type::kHaven, "haven", &SyncConfig::haven},
+    SyncConfig::Option{SyncConfig::Type::kInventory, "inventory", &SyncConfig::inventory},
+    SyncConfig::Option{SyncConfig::Type::kJobs, "jobs", &SyncConfig::jobs},
+    SyncConfig::Option{SyncConfig::Type::kMissions, "missions", &SyncConfig::missions},
+    SyncConfig::Option{SyncConfig::Type::kOfficer, "officers", &SyncConfig::officers},
+    SyncConfig::Option{SyncConfig::Type::kProfile, "profile", &SyncConfig::profile},
+    SyncConfig::Option{SyncConfig::Type::kResearch, "research", &SyncConfig::research},
+    SyncConfig::Option{SyncConfig::Type::kResources, "resources", &SyncConfig::resources},
+    SyncConfig::Option{SyncConfig::Type::kShips, "ships", &SyncConfig::ships},
+    SyncConfig::Option{SyncConfig::Type::kSlots, "slots", &SyncConfig::slots},
+    SyncConfig::Option{SyncConfig::Type::kStoreOffers, "store_offers", &SyncConfig::store_offers},
+    SyncConfig::Option{SyncConfig::Type::kTech, "tech", &SyncConfig::tech},
+    SyncConfig::Option{SyncConfig::Type::kTraits, "traits", &SyncConfig::traits},
 };
-
-constexpr std::string to_string(const SyncConfig::Type type)
-{
-  for (const auto& opt : SyncOptions)
-    if (opt.type == type)
-      return std::string(opt.type_str);
-  return {};
-}
-
-constexpr std::string operator+(const std::string& prefix, const SyncConfig::Type type)
-{ return prefix + to_string(type); }
-
-constexpr std::string operator+(const SyncConfig::Type type, const std::string& suffix)
-{ return to_string(type) + suffix; }
 
 struct SyncTargetConfig : SyncConfig {
   std::string url;
   std::string token;
+  bool        operator==(const SyncTargetConfig&) const = default;
 };
 
 enum class MissionHudVisibility {

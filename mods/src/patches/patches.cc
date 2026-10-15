@@ -177,7 +177,6 @@ void LogBanner()
   spdlog::info("  Log: {}", File::Log());
   spdlog::info("  Cfg: {}", File::Config());
   spdlog::info("  Var: {}", File::Vars());
-  spdlog::info("   BL: {}", File::Battles());
   spdlog::info("");
   if constexpr (VERSION_PATCH) {
     spdlog::warn("*** NOTE: Beta versions may have unexpected bugs and issues");
