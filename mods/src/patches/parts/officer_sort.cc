@@ -59,7 +59,7 @@ struct OfficerSortGenerators : il2cpp::Object {
 };
 
 // Native code of the static SortingPredicates comparers. The delegates below are bound to the BDA
-// predicates but jump to the wrappers, which chain these directly.
+// predicates but jump to Compare, which chains these directly.
 using SortMethodPtr = int (*)(void* obj1, void* obj2, void* delegatePtr);
 
 il2cpp::Method g_bdaAscMethod;
@@ -75,62 +75,20 @@ Il2CppClass*   g_funcClass        = nullptr;
 SortMethodPtr PointerOf(il2cpp::Method method)
 { return method ? reinterpret_cast<SortMethodPtr>(method.Info()->methodPointer) : nullptr; }
 
-// SortComparer.Compare always calls the _ascending delegate; for Descending
-// direction it negates the result. The _descending delegate is never called.
-// All logic lives in the *Ascending wrappers so that:
-//   direct call  = ascending behavior
-//   negated call = descending behavior
-
-int RosterAscendingWrapper(void* obj1, void* obj2, void* /*delegatePtr*/)
+// SortComparer.Compare always calls the _ascending delegate and negates it for Descending; _descending is never
+// called. So each delegate below is a complete comparator: unlocked officers first, then below-deck ability in the
+// given direction, then roster index (reversed for the roster, whose default direction is Ascending).
+template <SortMethodPtr* kBelowDeck, int kIndexSign> int Compare(void* obj1, void* obj2, void* /*delegatePtr*/)
 {
   if (g_unlockedStatePtr) {
-    int r = g_unlockedStatePtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
+    if (int r = g_unlockedStatePtr(obj1, obj2, nullptr); r != 0)
+      return r;
   }
-  if (g_bdaDescPtr) {
-    int r = g_bdaDescPtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
+  if (*kBelowDeck) {
+    if (int r = (*kBelowDeck)(obj1, obj2, nullptr); r != 0)
+      return r;
   }
-  return g_indexAscPtr ? -g_indexAscPtr(obj1, obj2, nullptr) : 0;
-}
-
-int RosterDescendingWrapper(void* obj1, void* obj2, void* /*delegatePtr*/)
-{
-  if (g_unlockedStatePtr) {
-    int r = g_unlockedStatePtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  if (g_bdaAscPtr) {
-    int r = g_bdaAscPtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  return g_indexAscPtr ? -g_indexAscPtr(obj1, obj2, nullptr) : 0;
-}
-
-int AssignmentAscendingWrapper(void* obj1, void* obj2, void* /*delegatePtr*/)
-{
-  if (g_unlockedStatePtr) {
-    int r = g_unlockedStatePtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  if (g_bdaAscPtr) {
-    int r = g_bdaAscPtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  return g_indexAscPtr ? g_indexAscPtr(obj1, obj2, nullptr) : 0;
-}
-
-int AssignmentDescendingWrapper(void* obj1, void* obj2, void* /*delegatePtr*/)
-{
-  if (g_unlockedStatePtr) {
-    int r = g_unlockedStatePtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  if (g_bdaDescPtr) {
-    int r = g_bdaDescPtr(obj1, obj2, nullptr);
-    if (r != 0) return r;
-  }
-  return g_indexAscPtr ? g_indexAscPtr(obj1, obj2, nullptr) : 0;
+  return g_indexAscPtr ? kIndexSign * g_indexAscPtr(obj1, obj2, nullptr) : 0;
 }
 
 bool InitializePredicates()
@@ -167,10 +125,10 @@ SortFunction* CreateBelowDeckSortFunction(const char* displayKey, bool forRoster
 {
   auto* ascending = il2cpp::NewDelegate(
       g_funcClass, g_bdaAscMethod,
-      reinterpret_cast<Il2CppMethodPointer>(forRoster ? &RosterAscendingWrapper : &AssignmentAscendingWrapper));
+      reinterpret_cast<Il2CppMethodPointer>(forRoster ? &Compare<&g_bdaDescPtr, -1> : &Compare<&g_bdaAscPtr, 1>));
   auto* descending = il2cpp::NewDelegate(
       g_funcClass, g_bdaDescMethod,
-      reinterpret_cast<Il2CppMethodPointer>(forRoster ? &RosterDescendingWrapper : &AssignmentDescendingWrapper));
+      reinterpret_cast<Il2CppMethodPointer>(forRoster ? &Compare<&g_bdaAscPtr, -1> : &Compare<&g_bdaDescPtr, 1>));
   if (!ascending || !descending)
     return nullptr;
 
