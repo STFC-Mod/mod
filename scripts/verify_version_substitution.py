@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 
 def get_version_from_header():
     """Extract version from version.h (mimics the Lua function in xmake.lua)"""
-    version_file = "mods/src/version.h"
+    version_file = "src/mod/version.h"
     
     if not os.path.isfile(version_file):
         return "1.0.0.0"
@@ -39,7 +39,7 @@ def simulate_build_process():
     print(f"1. Extracted version: {version}")
     
     # Step 2: Check template file exists
-    template_file = "macos-launcher/src/Info.plist.template"
+    template_file = "src/launcher/macos/Info.plist.template"
     if not os.path.isfile(template_file):
         print(f"❌ ERROR: Template file not found: {template_file}")
         return False
@@ -56,7 +56,7 @@ def simulate_build_process():
     processed_content = template_content.replace("${VERSION}", version)
     
     # Step 4: Write generated file
-    output_file = "macos-launcher/src/Info.plist"
+    output_file = "src/launcher/macos/Info.plist"
     with open(output_file, 'w') as f:
         f.write(processed_content)
     
@@ -107,7 +107,7 @@ def simulate_build_process():
 
 def cleanup():
     """Clean up generated files"""
-    output_file = "macos-launcher/src/Info.plist"
+    output_file = "src/launcher/macos/Info.plist"
     if os.path.isfile(output_file):
         os.remove(output_file)
         print(f"Cleaned up generated file: {output_file}")

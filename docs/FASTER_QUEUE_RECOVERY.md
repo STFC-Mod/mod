@@ -50,6 +50,6 @@ The older off-screen Kir'Shara combat-completion repair was fixed by Scopely. Th
 
 ## Validation
 
-Run `tests/run-action-queue.ps1` on Windows, or compile `tests/action_queue.cc` with a C++23 compiler and `-Imods/src`. Tests use the production policy and request store with fake weak handles. They cover one-shot recovery, reordered/still-present targets, cross-fleet rejection, stale attempts, replaced/collected queues, expiry, reentrant cancellation, bounded capacity and cleanup. They do not model game ABI or network scheduling.
+Run `tests/run-action-queue.ps1` on Windows, or compile `tests/action_queue.cc` with a C++23 compiler and `-Isrc/mod`. Tests use the production policy and request store with fake weak handles. They cover one-shot recovery, reordered/still-present targets, cross-fleet rejection, stale attempts, replaced/collected queues, expiry, reentrant cancellation, bounded capacity and cleanup. They do not model game ABI or network scheduling.
 
 The prototype produced two observed handoffs with the next target attempted 1–2 ms later and successful responses within 388–532 ms. Those timings are observations, not a latency guarantee. The final adapter requires its own smoke test: normal queued combat; removal of the outstanding target; removal before the first successful course response; queue clear/rebuild; recall; and session restart. Group-wave behavior needs additional coverage when available.

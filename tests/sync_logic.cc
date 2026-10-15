@@ -1,5 +1,5 @@
 // Production encoders against independent wire fixtures, and delivery against controlled HTTP outcomes/time.
-#include "patches/parts/sync/sync.h"
+#include "sync/sync.h"
 #include <Digit.PrimeServer.Models.pb.h>
 #include <iostream>
 #include <stdexcept>

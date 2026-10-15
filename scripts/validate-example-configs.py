@@ -20,7 +20,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older runners
 
 def main() -> int:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    pattern = os.path.join(root, "example_community_patch_settings*.toml")
+    pattern = os.path.join(root, "docs/configuration/example_community_patch_settings*.toml")
     files = sorted(glob.glob(pattern))
     if not files:
         print(f"no example config files matched {pattern!r}", file=sys.stderr)

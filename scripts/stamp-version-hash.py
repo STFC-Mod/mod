@@ -18,7 +18,7 @@ def main() -> None:
     parser.add_argument(
         "--header",
         type=Path,
-        default=Path("mods/src/version.h"),
+        default=Path("src/mod/version.h"),
         help="version header to update",
     )
     args = parser.parse_args()

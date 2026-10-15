@@ -383,7 +383,7 @@ jobs:
       - name: Set protobuf compiler cache identity
         shell: bash
         run: |
-          echo "SCCACHE_C_CUSTOM_CACHE_BUSTER=stfc-protobuf-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-xmake-${{ env.XMAKE_VERSION }}-macos-${{ matrix.arch }}-release-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ hashFiles('mods/src/prime/proto/*.proto', 'mods/xmake.lua', 'xmake.lua', 'xmake-requires.lock', 'xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake/rules/protobuf_sccache.lua') }}" >> "$GITHUB_ENV"
+          echo "SCCACHE_C_CUSTOM_CACHE_BUSTER=stfc-protobuf-${{ env.PROTOBUF_SCCACHE_SCHEMA }}-xmake-${{ env.XMAKE_VERSION }}-macos-${{ matrix.arch }}-release-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ hashFiles('src/mod/prime/proto/*.proto', 'src/mod/xmake.lua', 'xmake.lua', 'xmake-requires.lock', 'xmake/dependencies/common.lua', 'xmake/dependencies/macos.lua', 'xmake/rules/protobuf_sccache.lua') }}" >> "$GITHUB_ENV"
 
       - name: Locate XMake caches
         id: xmake_cache_paths
@@ -434,7 +434,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: build/.swift-module-cache
-          key: macos-${{ matrix.arch }}-release-swift-modules-${{ env.SWIFT_MODULE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.swift_toolchain.outputs.hash }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('macos-launcher/xmake.lua', 'macos-launcher/src/module.modulemap', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/packages/p/PLzmaSDK/**') }}
+          key: macos-${{ matrix.arch }}-release-swift-modules-${{ env.SWIFT_MODULE_CACHE_SCHEMA }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ steps.swift_toolchain.outputs.hash }}-${{ steps.xmake_cache_paths.outputs.plzma_sha }}-${{ hashFiles('src/launcher/macos/xmake.lua', 'src/launcher/macos/module.modulemap', 'xmake/dependencies/macos.lua', 'xmake-requires.lock', 'xmake-packages/packages/p/PLzmaSDK/**') }}
 
       - name: Restore XMake compiler cache
         id: restore_build
@@ -568,9 +568,9 @@ jobs:
 
           test -f build/macosx/arm64/release/macOSLauncher
           test -f "$APP/Contents/Resources/Assets.car"
-          test -f macos-launcher/src/Info.plist
+          test -f src/launcher/macos/Info.plist
 
-          cp macos-launcher/src/Info.plist \
+          cp src/launcher/macos/Info.plist \
             "$APP/Contents/Info.plist"
 
           test -f "$APP/Contents/Info.plist"

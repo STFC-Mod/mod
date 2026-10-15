@@ -58,7 +58,7 @@ Delete the `build/` folder to reset. Also delete `.vs/` for a full Visual Studio
 
 ### Source Layout
 
-- **`mods/src/`** — Core mod code (the main codebase)
+- **`src/mod/`** — Core mod code (the main codebase)
   - `config.h/.cc` — Singleton `Config` class, loads TOML settings, controls which patches are enabled
   - `patches/patches.cc` — Entry point: hooks `il2cpp_init`, then conditionally installs each patch
   - `patches/parts/` — Individual patch implementations (zoom, hotkeys, chat, UI scale, sync, etc.)
@@ -66,9 +66,9 @@ Delete the `build/` folder to reset. Also delete `.vs/` for a full Visual Studio
   - `prime/` — Header-only IL2CPP type definitions mirroring the game's C# classes
   - `prime/proto/` — Protobuf definitions for game data sync
   - `il2cpp/` — IL2CPP helper functions for resolving methods, classes, and icalls at runtime
-- **`win-proxy-dll/src/`** — Windows DLL proxy entry point
-- **`macos-dylib/src/`** — macOS dylib entry point
-- **`macos-loader/src/`** — macOS loader (finds game, injects dylib)
+- **`src/platform/windows/`** — Windows DLL proxy entry point
+- **`src/platform/macos/dylib/`** — macOS dylib entry point
+- **`src/platform/macos/loader/`** — macOS loader (finds game, injects dylib)
 - **`macos-launcher/`** — Swift macOS GUI app
 - **`third_party/libil2cpp/`** — IL2CPP SDK headers
 - **`xmake-packages/`** — Custom xmake package definitions (e.g., `spud`)
@@ -92,7 +92,7 @@ static auto class_helper = il2cpp_get_class_helper("Assembly.Name", "Namespace",
 static auto method = class_helper.GetMethodInfo("MethodName");
 ```
 
-**Adding a new patch** — Create a `.cc` file in `mods/src/patches/parts/`, write an `InstallXxxHooks()` function, declare it in `patches.cc`, add a `bool installXxx` to `Config`, and register it in the `patches[]` array in `patches.cc`. Hook-install toggles are read from the `[patches]` TOML table in all build modes and should default to `true`; they exist as emergency compatibility switches for hook collisions or client drift.
+**Adding a new patch** — Create a `.cc` file in `src/mod/patches/parts/`, write an `InstallXxxHooks()` function, declare it in `patches.cc`, add a `bool installXxx` to `Config`, and register it in the `patches[]` array in `patches.cc`. Hook-install toggles are read from the `[patches]` TOML table in all build modes and should default to `true`; they exist as emergency compatibility switches for hook collisions or client drift.
 
 **Separate hook installation from feature enablement** — Do not use a user-facing feature setting to decide whether its hooks are installed. Normally install all supported hooks, then have each hook check the feature setting and immediately preserve native behavior (usually by calling `original`) when the feature is disabled. Keep hook-install switches under `[patches]` and feature settings in their relevant sections such as `[ui]`, `[graphics]`, or `[audio]`; never place a feature-only toggle under `[patches]`. If an installer contains an early return based on a feature setting, or a `patches[]` entry points directly at a feature setting, treat that as a design error. Helpers that install no hooks, such as shortcut-only behavior, do not belong in `patches[]` at all.
 
@@ -113,7 +113,7 @@ static auto method = class_helper.GetMethodInfo("MethodName");
 ## Code Style
 
 - Uses `.clang-format` — 2-space indent, 120 column limit, Linux brace style, aligned assignments/declarations
-- Version is defined in `mods/src/version.h` (VERSION_MAJOR/MINOR/REVISION/PATCH)
+- Version is defined in `src/mod/version.h` (VERSION_MAJOR/MINOR/REVISION/PATCH)
 - Prefer narrow platform guards such as `#if _WIN32`, `#if !_WIN32`, and `#if __APPLE__`; do not assume every non-Windows path is macOS.
 - Logging via `spdlog::info()`, `spdlog::debug()`, etc.
 

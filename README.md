@@ -51,11 +51,11 @@ This project is maintained solely at my own cost of time, energy and money. Any 
 - Create parsed toml file to show what settings have been applied
 - Customise your keyboard shortcuts
 
-For a full list of features see our [FEATURES.md](FEATURES.md)
+For a full list of features see our [FEATURES.md](docs/FEATURES.md)
 
 ## Installing
 
-Please see the [INSTALL.md](INSTALL.md) instructions which has steps on how to use this mod with Star Trek Fleet Command.
+Please see the [INSTALL.md](docs/INSTALL.md) instructions which has steps on how to use this mod with Star Trek Fleet Command.
 
 For the Windows DLL identity marker, artifact-attestation trust boundary, and verification command, see
 [Windows DLL provenance](docs/WINDOWS_DLL_PROVENANCE.md).
@@ -66,7 +66,7 @@ Please note, that whilst Mac support was added in this version, it's supported o
 
 Most keyboard shortcuts can be modified by updated your TOML file. If your
 file is empty, see the VARS file which has all the runtime settings that have
-been applied. Valid values for any short can be found in [KEYMAPPING.md](KEYMAPPING.md)
+been applied. Valid values for any short can be found in [KEYMAPPING.md](docs/KEYMAPPING.md)
 
 ### UI shortcuts
 

@@ -21,7 +21,7 @@ import os
 import re
 from collections import defaultdict
 
-SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src')
 
 TYPE_HEAD = re.compile(
     r'^(?:\[.*\]\s*)?(?:(?:public|private|protected|internal|static|sealed|abstract|readonly|ref|unsafe|partial)\s+)*'
@@ -161,8 +161,7 @@ def call_arity(text):
 def scan_source(root):
     """Returns ({binding name: (asm, ns, class)}, [(file, owner, kind, member, static, arity)])."""
     classes, uses = {}, []
-    for dirpath, _, files in (entry for directory in ('mods/src', 'libs')
-                              for entry in os.walk(os.path.join(root, directory))):
+    for dirpath, _, files in os.walk(root):
         if os.sep + 'proto' in dirpath:
             continue
         for f in files:
