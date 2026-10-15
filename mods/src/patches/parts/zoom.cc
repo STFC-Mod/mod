@@ -1,588 +1,452 @@
-#include "config.h"
+// System view camera: the extended zoom range, keyboard zoom and presets, planet flat-renderable scaling, and how
+// much detail fleet labels show at a given zoom.
 
+#include "config.h"
 #include "patches/input.h"
 #include "patches/shortcuts.h"
-
-#include <il2cpp/il2cpp.h>
 
 #include <prime/navigation.h>
 #include <prime/unity.h>
 
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
-#include <cstdint>
+#include <cmath>
+#include <ranges>
 #include <unordered_map>
 
 namespace
 {
-std::unordered_map<NavigationLOD *, NavigationFleetWidget *> fleet_label_widgets;
-bool                                                         fleet_label_hooks_installed         = false;
-uintptr_t                                                    active_system_zoom_id               = 0;
-bool                                                         system_zoom_state_valid             = false;
-ZoomLevels                                                   system_zoom_level                   = ZoomLevels::None;
-float                                                        system_normalized_zoom              = 0.0f;
-bool                                                         threshold_state_valid               = false;
-bool                                                         player_threshold_state_expanded     = false;
-bool                                                         non_player_threshold_state_expanded = false;
-
-bool FleetLabelProfilesEnabled()
+// Fleet label detail. The game picks each fleet label's LOD from the camera's zoom level; the zoom_label_*
+// settings override that per fleet kind: always expanded, always compact, or expanded below a zoom threshold.
+class FleetLabels
 {
-  const auto &config = Config::Get();
-  return config.zoom_label_player.detail != FleetLabelDetail::Native
-         || config.zoom_label_non_player.detail != FleetLabelDetail::Native;
-}
+public:
+  bool installed = false;
 
-bool FleetLabelThresholdEnabled()
-{
-  const auto &config = Config::Get();
-  return config.zoom_label_player.detail == FleetLabelDetail::Threshold
-         || config.zoom_label_non_player.detail == FleetLabelDetail::Threshold;
-}
-
-const FleetLabelProfile *FleetLabelProfileFor(NavigationFleetWidget *widget)
-{
-  if (widget == nullptr) {
-    return nullptr;
+  static bool Enabled()
+  {
+    const auto& config = Config::Get();
+    return config.zoom_label_player.detail != FleetLabelDetail::Native
+           || config.zoom_label_non_player.detail != FleetLabelDetail::Native;
   }
 
-  const auto &config  = Config::Get();
-  auto       *context = widget->Context();
-  if (context == nullptr) {
-    return &config.zoom_label_non_player;
+  // The level `lod` should show instead of `native`, or `native` when its fleet is not tracked.
+  ZoomLevels LevelFor(NavigationLOD* lod, ZoomLevels native) const
+  {
+    const auto* profile = Profile(lod);
+    if (!profile)
+      return native;
+    // Expanded keeps Near where the game would show it, and lifts everything else to Middle.
+    const auto expanded = native == ZoomLevels::Near ? ZoomLevels::Near : ZoomLevels::Middle;
+    switch (profile->detail) {
+      case FleetLabelDetail::Expanded:
+        return expanded;
+      case FleetLabelDetail::Compact:
+        return ZoomLevels::Far;
+      case FleetLabelDetail::Threshold:
+        if (!zoom_known_)
+          return native;
+        return ExpandedAt(profile->zoom_threshold) ? expanded : ZoomLevels::Far;
+      default:
+        return native;
+    }
   }
 
-  // A missing FleetType property reads as Nonexistent.
-  switch (context->FleetType()) {
-    case DeployedFleetType::Player:
-      return &config.zoom_label_player;
-    case DeployedFleetType::Marauder:
-    case DeployedFleetType::NpcInstantiated:
-    case DeployedFleetType::Sentinel:
-    case DeployedFleetType::Alliance:
-    case DeployedFleetType::Challenge:
-      return &config.zoom_label_non_player;
-    case DeployedFleetType::Nonexistent:
-    default:
-      return &config.zoom_label_non_player;
-  }
-}
+  bool Tracks(NavigationLOD* lod) const
+  { return Profile(lod) != nullptr; }
 
-const FleetLabelProfile *FleetLabelProfileFor(NavigationLOD *lod)
-{
-  const auto widget = fleet_label_widgets.find(lod);
-  if (widget == fleet_label_widgets.end() || widget->second == nullptr || widget->second->Context() == nullptr) {
-    return nullptr;
-  }
-  return FleetLabelProfileFor(widget->second);
-}
-
-ZoomLevels ExpandedFleetLabelZoomLevel(ZoomLevels native_level)
-{ return native_level == ZoomLevels::Near ? ZoomLevels::Near : ZoomLevels::Middle; }
-
-bool FleetLabelsExpandedAt(float normalized_zoom, float threshold)
-{
-  if (threshold <= 0.0f) {
-    return false;
-  }
-  if (threshold >= 1.0f) {
-    return true;
-  }
-  return normalized_zoom <= threshold;
-}
-
-ZoomLevels FleetLabelZoomLevel(ZoomLevels native_level, const FleetLabelProfile &profile)
-{
-  switch (profile.detail) {
-    case FleetLabelDetail::Expanded:
-      return ExpandedFleetLabelZoomLevel(native_level);
-    case FleetLabelDetail::Compact:
-      return ZoomLevels::Far;
-    case FleetLabelDetail::Threshold:
-      if (!system_zoom_state_valid) {
-        return native_level;
-      }
-      return FleetLabelsExpandedAt(system_normalized_zoom, profile.zoom_threshold)
-                 ? ExpandedFleetLabelZoomLevel(native_level)
-                 : ZoomLevels::Far;
-    case FleetLabelDetail::Native:
-    default:
-      return native_level;
-  }
-}
-
-void ApplyFleetLabelDetail(NavigationLOD *lod, ZoomLevels native_level)
-{
-  if (lod == nullptr || !system_zoom_state_valid || FleetLabelProfileFor(lod) == nullptr) {
-    return;
+  void Track(NavigationFleetWidget* widget)
+  {
+    // Fresh pooled widgets are enabled before BindDataContext assigns their context; forcing an LOD before then
+    // fires OnLODChanged callbacks that dereference the unbound fleet data.
+    auto* lod = widget && widget->Context() ? widget->lod() : nullptr;
+    if (!lod)
+      return;
+    widgets_.insert_or_assign(lod, widget);
+    if (zoom_known_)
+      lod->UpdateLOD(zoom_level_);
   }
 
-  lod->UpdateLOD(native_level);
-}
-
-void ApplyAllFleetLabelDetails()
-{
-  for (const auto &[lod, widget] : fleet_label_widgets) {
-    (void)widget;
-    ApplyFleetLabelDetail(lod, system_zoom_level);
-  }
-}
-
-void RestoreNativeFleetLabelDetail(NavigationLOD *lod)
-{
-  if (lod == nullptr || !system_zoom_state_valid) {
-    return;
+  void Untrack(NavigationFleetWidget* widget)
+  {
+    auto* lod = widget ? widget->lod() : nullptr;
+    if (!lod)
+      return;
+    widgets_.erase(lod);
+    // Give a reused widget back to the game at the game's own level.
+    if (widget->Context() && zoom_known_) {
+      lod->SetTargetLevel(zoom_level_);
+      lod->UpdateLOD(zoom_level_);
+      lod->SetTargetLevel(zoom_level_);
+    }
   }
 
-  lod->SetTargetLevel(system_zoom_level);
-  lod->UpdateLOD(system_zoom_level);
-  lod->SetTargetLevel(system_zoom_level);
-}
-
-void ResetFleetLabelSystemState()
-{
-  active_system_zoom_id   = 0;
-  system_zoom_state_valid = false;
-  system_zoom_level       = ZoomLevels::None;
-  system_normalized_zoom  = 0.0f;
-  threshold_state_valid   = false;
-}
-
-void BeginFleetLabelSystemState(NavigationZoom *zoom)
-{
-  const auto zoom_id = reinterpret_cast<uintptr_t>(zoom);
-  if (active_system_zoom_id != zoom_id) {
-    ResetFleetLabelSystemState();
-    active_system_zoom_id = zoom_id;
-  }
-}
-
-void UpdateFleetLabelThreshold()
-{
-  if (!system_zoom_state_valid || !FleetLabelThresholdEnabled()) {
-    threshold_state_valid = false;
-    return;
+  // The camera `zoom` is about to show `depth`. Labels only apply in a solar system, and a new camera starts over.
+  void OnDepth(NavigationZoom* zoom, NodeDepth depth)
+  {
+    if (!installed)
+      return;
+    if (depth == NodeDepth::SolarSystem) {
+      Follow(zoom);
+    } else if (camera_ == zoom) {
+      Forget();
+    }
   }
 
-  const auto &config                    = Config::Get();
-  const auto  player_uses_threshold     = config.zoom_label_player.detail == FleetLabelDetail::Threshold;
-  const auto  non_player_uses_threshold = config.zoom_label_non_player.detail == FleetLabelDetail::Threshold;
-  const auto  player_expanded =
-      player_uses_threshold && FleetLabelsExpandedAt(system_normalized_zoom, config.zoom_label_player.zoom_threshold);
-  const auto non_player_expanded =
-      non_player_uses_threshold
-      && FleetLabelsExpandedAt(system_normalized_zoom, config.zoom_label_non_player.zoom_threshold);
-  if (threshold_state_valid && (!player_uses_threshold || player_expanded == player_threshold_state_expanded)
-      && (!non_player_uses_threshold || non_player_expanded == non_player_threshold_state_expanded)) {
-    return;
+  // After the camera's own update: picks up the zoom level and re-applies labels when they change.
+  void OnZoomed(NavigationZoom* zoom)
+  {
+    if (!installed || zoom->depth() != NodeDepth::SolarSystem)
+      return;
+    Follow(zoom);
+    const bool was_known = zoom_known_;
+    zoom_level_          = zoom->zoomLevel();
+    zoom_known_          = true;
+    if (UsesThreshold()) {
+      normalized_zoom_ = zoom->NormalizedZoom();
+      UpdateThreshold();
+    } else if (!was_known) {
+      ApplyAll();
+    }
   }
 
-  threshold_state_valid               = true;
-  player_threshold_state_expanded     = player_expanded;
-  non_player_threshold_state_expanded = non_player_expanded;
-  ApplyAllFleetLabelDetails();
+private:
+  const FleetLabelProfile* Profile(NavigationLOD* lod) const
+  {
+    const auto it     = widgets_.find(lod);
+    auto*      widget = it == widgets_.end() ? nullptr : it->second;
+    auto*      fleet  = widget ? widget->Context() : nullptr;
+    if (!fleet)
+      return nullptr;
+    // A missing FleetType property reads as Nonexistent, which counts as non-player.
+    const auto& config = Config::Get();
+    return fleet->FleetType() == DeployedFleetType::Player ? &config.zoom_label_player : &config.zoom_label_non_player;
+  }
 
+  static bool UsesThreshold()
+  {
+    const auto& config = Config::Get();
+    return config.zoom_label_player.detail == FleetLabelDetail::Threshold
+           || config.zoom_label_non_player.detail == FleetLabelDetail::Threshold;
+  }
+
+  // Labels expand when zoomed in at least as far as the threshold. 0 never expands, 1 always does.
+  bool ExpandedAt(float threshold) const
+  { return threshold > 0.0f && (threshold >= 1.0f || normalized_zoom_ <= threshold); }
+
+  void Follow(NavigationZoom* zoom)
+  {
+    if (camera_ != zoom) {
+      Forget();
+      camera_ = zoom;
+    }
+  }
+
+  void Forget()
+  {
+    camera_          = nullptr;
+    zoom_known_      = false;
+    zoom_level_      = ZoomLevels::None;
+    normalized_zoom_ = 0.0f;
+    threshold_known_ = false;
+  }
+
+  void ApplyAll()
+  {
+    for (auto* lod : widgets_ | std::views::keys)
+      if (Tracks(lod))
+        lod->UpdateLOD(zoom_level_);
+  }
+
+  // Re-applies labels only when a threshold profile crosses its threshold, not on every zoom step.
+  void UpdateThreshold()
+  {
+    const auto& config     = Config::Get();
+    const bool  player     = config.zoom_label_player.detail == FleetLabelDetail::Threshold
+                             && ExpandedAt(config.zoom_label_player.zoom_threshold);
+    const bool  non_player = config.zoom_label_non_player.detail == FleetLabelDetail::Threshold
+                             && ExpandedAt(config.zoom_label_non_player.zoom_threshold);
+    if (threshold_known_ && player == player_expanded_ && non_player == non_player_expanded_)
+      return;
+    threshold_known_     = true;
+    player_expanded_     = player;
+    non_player_expanded_ = non_player;
+    ApplyAll();
 #ifdef _MODDBG
-  spdlog::info("Fleet label detail threshold state updated at normalized zoom {:.4f}", system_normalized_zoom);
+    spdlog::info("Fleet label detail threshold state updated at normalized zoom {:.4f}", normalized_zoom_);
 #endif
-}
-} // namespace
-
-vec3 GetMouseWorldPos(Camera *cam, vec3 *pos)
-{
-  using MathUtils = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils">;
-
-  if (cam == nullptr || pos == nullptr) {
-    return {0.0f, 0.0f, 0.0f};
   }
 
-  return MathUtils::Call<"GetMouseWorldPos", vec3>(cam, *pos);
+  std::unordered_map<NavigationLOD*, NavigationFleetWidget*> widgets_;
+  // The system camera the zoom state below belongs to.
+  NavigationZoom* camera_              = nullptr;
+  bool            zoom_known_          = false;
+  ZoomLevels      zoom_level_          = ZoomLevels::None;
+  float           normalized_zoom_     = 0.0f;
+  bool            threshold_known_     = false;
+  bool            player_expanded_     = false;
+  bool            non_player_expanded_ = false;
+} fleet_labels;
+
+// Entering a system jumps to default_system_zoom on the next camera update.
+bool zoom_to_default = false;
+
+// Camera distance as a share of the zoom range, scaled to the configured maximum (the unit the presets use).
+float CurrentZoom(NavigationZoom* zoom)
+{ return (zoom->Distance() - zoom->minimum()) / (zoom->maximum() - zoom->minimum()) * Config::Get().zoom; }
+
+void StorePreset(const char* label, float& preset, NavigationZoom* zoom)
+{
+  const auto old = preset;
+  preset         = CurrentZoom(zoom);
+  spdlog::info("Changing {} from {} to {}", label, old, preset);
 }
 
-auto do_default_zoom = false;
+struct Preset {
+  GameFunction store;
+  GameFunction go;
+  float Config::* value;
+  const char*     label;
+};
 
-inline void StoreZoom(std::string label, float &zoom, NavigationZoom *_this)
+constexpr Preset kPresets[] = {
+    {GameFunction::SetZoomPreset1, GameFunction::ZoomPreset1, &Config::system_zoom_preset_1, "System Preset 1"},
+    {GameFunction::SetZoomPreset2, GameFunction::ZoomPreset2, &Config::system_zoom_preset_2, "System Preset 2"},
+    {GameFunction::SetZoomPreset3, GameFunction::ZoomPreset3, &Config::system_zoom_preset_3, "System Preset 3"},
+    {GameFunction::SetZoomPreset4, GameFunction::ZoomPreset4, &Config::system_zoom_preset_4, "System Preset 4"},
+    {GameFunction::SetZoomPreset5, GameFunction::ZoomPreset5, &Config::system_zoom_preset_5, "System Preset 5"},
+};
+
+// Widens the system view's zoom range to the configured maximum and pushes the far clip plane out with it.
+void ApplyZoomRange(NavigationZoom* zoom, float radius)
 {
-  auto old_zoom = zoom;
-  zoom          = (_this->Distance() - _this->minimum()) / (_this->maximum() - _this->minimum()) * Config::Get().zoom;
-  spdlog::info("Changing {} from {} to {}", label, old_zoom, zoom);
-}
-
-static float s_expectedScale = 0;
-
-static void ApplySystemZoomRange(NavigationZoom *_this, float radius)
-{
-  if (!_this || radius <= 0.0f) {
-    return;
-  }
-
-  auto ratio = (Config::Get().zoom / radius);
-  _this->SetFarRatioSystemNormal(0.55f * ratio);
-  _this->SetFarRatioSystemExtended(ratio);
-}
-
-static void SetSceneCameraFarClip(NavigationZoom *_this)
-{
-  if (!_this) {
-    return;
-  }
-
-  auto *cam = _this->sceneCamera();
-  if (!cam) {
-    return;
-  }
-
-  cam->SetFarClipPlane(Config::Get().zoom * 3.75f);
-  cam->SetClearFlags(2);
-  cam->SetBackgroundColor({0, 0, 0, 0});
-}
-
-static void EnsureSystemZoomRange(NavigationZoom *_this)
-{
-  if (!_this || _this->depth() != NodeDepth::SolarSystem) {
-    return;
-  }
-
   const auto max_zoom = Config::Get().zoom;
-  if (max_zoom <= 0.0f) {
-    return;
+  if (radius > 0.0f) {
+    zoom->SetFarRatioSystemNormal(0.55f * max_zoom / radius);
+    zoom->SetFarRatioSystemExtended(max_zoom / radius);
   }
-
-  ApplySystemZoomRange(_this, _this->viewRadius());
-  if (_this->maximum() < max_zoom) {
-    _this->SetMaximum(max_zoom);
+  if (auto* camera = zoom->sceneCamera()) {
+    camera->SetFarClipPlane(max_zoom * 3.75f);
+    camera->SetClearFlags(2); // CameraClearFlags.SolidColor
+    camera->SetBackgroundColor({0, 0, 0, 0});
   }
-
-  const auto zoom_total = _this->maximum() - _this->minimum();
-  if (zoom_total > 0.0f) {
-    _this->SetZoomtotal(zoom_total);
-  }
-
-  SetSceneCameraFarClip(_this);
 }
 
-static void ScaleFR(il2cpp::Object *fr)
+// The game resets the range now and then; reapply it around every update.
+void KeepZoomRange(NavigationZoom* zoom)
 {
-  if (!fr) {
+  const auto max_zoom = Config::Get().zoom;
+  if (zoom->depth() != NodeDepth::SolarSystem || max_zoom <= 0.0f)
     return;
-  }
-
-  float factor = Config::Get().fr_scale;
-  if (factor <= 0.0f || factor == 1.0f) {
-    return;
-  }
-
-  // FlatRenderable is a Component; transform resolves on its runtime class.
-  auto *t = fr->Get<"transform", Transform *>();
-  if (t == nullptr) {
-    return;
-  }
-
-  auto scale = t->localScale();
-  if (s_expectedScale > 0 && fabsf(scale.x - s_expectedScale) < 0.1f) {
-    return;
-  }
-
-  Vector3 newScale = {scale.x * factor, scale.y * factor, scale.z * factor};
-  t->SetLocalScale(newScale);
-  s_expectedScale  = newScale.x;
+  ApplyZoomRange(zoom, zoom->viewRadius());
+  if (zoom->maximum() < max_zoom)
+    zoom->SetMaximum(max_zoom);
+  if (const auto total = zoom->maximum() - zoom->minimum(); total > 0.0f)
+    zoom->SetZoomtotal(total);
 }
 
-void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
+// Zooms around the mouse pointer, either by `delta` or (with `absolute`) to a preset value.
+void ZoomAtMouse(NavigationZoom* zoom, float value, bool absolute)
 {
   static auto GetMousePosition =
-      il2cpp::ResolveICall<void(vec3 *)>("UnityEngine.Input::get_mousePosition_Injected(UnityEngine.Vector3&)");
+      il2cpp::ResolveICall<void(vec3*)>("UnityEngine.Input::get_mousePosition_Injected(UnityEngine.Vector3&)");
+  using MathUtils = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils">;
+
+  vec3 mouse;
+  GetMousePosition(&mouse);
+  zoom->SetZoomLocation(vec2{.x = mouse.x, .y = mouse.y});
+  if (absolute) {
+    zoom->SetDistance(zoom->minimum() + (zoom->maximum() - zoom->minimum()) * (value / Config::Get().zoom));
+  } else {
+    zoom->SetZoomDelta(value);
+    zoom->SetLastZoomDelta(value);
+  }
+  auto* camera = zoom->sceneCamera();
+  zoom->SetWorldPoint(camera ? MathUtils::Call<"GetMouseWorldPos", vec3>(camera, mouse) : vec3{});
+  zoom->ZoomCameraAtWorldPoint();
+}
+
+// Keyboard zoom: Q/E zoom by keyboard_zoom_speed per second, presets jump, SHIFT-F1.. store the current zoom.
+// Returns false when a preset was stored, which skips the game's update for that frame.
+bool KeyboardZoom(NavigationZoom* zoom)
+{
   static auto GetDeltaTime = il2cpp::ResolveICall<float()>("UnityEngine.Time::get_deltaTime()");
+  auto&       config       = Config::Get();
+  const bool  shortcuts    = config.hotkeys_enabled && !config.use_scopely_hotkeys;
 
-  if (fleet_label_hooks_installed) {
-    const auto zoom_id = reinterpret_cast<uintptr_t>(_this);
-    if (_this->depth() == NodeDepth::SolarSystem) {
-      BeginFleetLabelSystemState(_this);
-    } else if (active_system_zoom_id == zoom_id) {
-      ResetFleetLabelSystemState();
-    }
-  }
-
-  const auto dt               = GetDeltaTime();
-  auto       zoomDelta        = 0.0f;
-  bool       do_absolute_zoom = false;
-  bool       do_store_zoom    = false;
-  auto       config           = &Config::Get();
-
-  EnsureSystemZoomRange(_this);
-
-  const auto camera_shortcuts_enabled = config->hotkeys_enabled && !config->use_scopely_hotkeys;
-
-  if (!Key::IsInputFocused()) {
-    if (camera_shortcuts_enabled) {
-      if (Shortcut::IsDown(GameFunction::SetZoomPreset1)) {
-        return StoreZoom("System Preset 1", config->system_zoom_preset_1, _this);
-      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset2)) {
-        return StoreZoom("System Preset 2", config->system_zoom_preset_2, _this);
-      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset3)) {
-        return StoreZoom("System Preset 3", config->system_zoom_preset_3, _this);
-      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset4)) {
-        return StoreZoom("System Preset 4", config->system_zoom_preset_4, _this);
-      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset5)) {
-        return StoreZoom("System Preset 5", config->system_zoom_preset_5, _this);
-      } else if (Shortcut::IsDown(GameFunction::SetZoomDefault)) {
-        return StoreZoom("System Default", config->default_system_zoom, _this);
-      }
-
-      do_absolute_zoom = true;
-      if (Shortcut::IsDown(GameFunction::ZoomPreset1)) {
-        zoomDelta     = config->system_zoom_preset_1;
-        do_store_zoom = true;
-      } else if (Shortcut::IsDown(GameFunction::ZoomPreset2)) {
-        zoomDelta     = config->system_zoom_preset_2;
-        do_store_zoom = true;
-      } else if (Shortcut::IsDown(GameFunction::ZoomPreset3)) {
-        zoomDelta     = config->system_zoom_preset_3;
-        do_store_zoom = true;
-      } else if (Shortcut::IsDown(GameFunction::ZoomPreset4)) {
-        zoomDelta     = config->system_zoom_preset_4;
-        do_store_zoom = true;
-      } else if (Shortcut::IsDown(GameFunction::ZoomPreset5)) {
-        zoomDelta     = config->system_zoom_preset_5;
-        do_store_zoom = true;
-      }
-
-      if (config->hotkeys_extended) {
-        if (Shortcut::IsDown(GameFunction::ZoomReset)) {
-          do_absolute_zoom = false;
-          do_default_zoom  = true;
-        } else if (Shortcut::IsDown(GameFunction::ZoomMin)) {
-          zoomDelta = config->zoom;
-        } else if (Shortcut::IsDown(GameFunction::ZoomMax)) {
-          zoomDelta = 100;
-        }
+  float target      = 0.0f;
+  bool  from_preset = false;
+  if (shortcuts) {
+    for (const auto& preset : kPresets) {
+      if (Shortcut::IsDown(preset.store)) {
+        StorePreset(preset.label, config.*preset.value, zoom);
+        return false;
       }
     }
-
-    if (do_default_zoom) {
-      do_absolute_zoom = true;
-      zoomDelta        = config->default_system_zoom;
+    if (Shortcut::IsDown(GameFunction::SetZoomDefault)) {
+      StorePreset("System Default", config.default_system_zoom, zoom);
+      return false;
     }
-
-    if (zoomDelta == 0.0f) {
-      do_absolute_zoom = false;
-      zoomDelta        = config->keyboard_zoom_speed * dt;
-    }
-
-    if ((camera_shortcuts_enabled && Shortcut::IsPressed(GameFunction::ZoomIn)) || do_absolute_zoom) {
-      vec3 mousePos;
-      GetMousePosition(&mousePos);
-      _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});
-      if (do_absolute_zoom) {
-        auto zoom_distance = _this->minimum() + (_this->maximum() - _this->minimum()) * (zoomDelta / config->zoom);
-        _this->SetDistance(zoom_distance);
-      } else {
-        _this->SetZoomDelta(zoomDelta);
-        _this->SetLastZoomDelta(zoomDelta);
-      }
-      _this->SetWorldPoint(GetMouseWorldPos(_this->sceneCamera(), &mousePos));
-      _this->ZoomCameraAtWorldPoint();
-    } else if (camera_shortcuts_enabled && Shortcut::IsPressed(GameFunction::ZoomOut)) {
-      vec3 mousePos;
-      GetMousePosition(&mousePos);
-      _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});
-      _this->SetZoomDelta(-1.0f * zoomDelta);
-      _this->SetLastZoomDelta(-1.0f * zoomDelta);
-      _this->SetWorldPoint(GetMouseWorldPos(_this->sceneCamera(), &mousePos));
-      _this->ZoomCameraAtWorldPoint();
-    }
-  }
-
-  if (zoomDelta > 0.0f && config->use_presets_as_default && do_store_zoom) {
-    StoreZoom("System Preset Default from Preset", config->default_system_zoom, _this);
-  }
-
-  do_default_zoom = false;
-
-  original(_this);
-
-  EnsureSystemZoomRange(_this);
-  if (fleet_label_hooks_installed && _this->depth() == NodeDepth::SolarSystem) {
-    BeginFleetLabelSystemState(_this);
-    const auto state_was_valid   = system_zoom_state_valid;
-    const auto threshold_enabled = FleetLabelThresholdEnabled();
-    system_zoom_level            = _this->zoomLevel();
-    if (threshold_enabled) {
-      system_normalized_zoom = _this->NormalizedZoom();
-    }
-    system_zoom_state_valid = true;
-    if (threshold_enabled) {
-      UpdateFleetLabelThreshold();
-    } else if (!state_was_valid) {
-      ApplyAllFleetLabelDetails();
-    }
-  }
-}
-
-void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD *_this, ZoomLevels level)
-{
-  const auto *profile         = FleetLabelProfileFor(_this);
-  const auto  effective_level = profile != nullptr ? FleetLabelZoomLevel(level, *profile) : level;
-  if (profile != nullptr) {
-    _this->SetTargetLevel(effective_level);
-  }
-  original(_this, effective_level);
-  if (profile != nullptr) {
-    _this->SetTargetLevel(effective_level);
-  }
-}
-
-void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_this)
-{
-  original(_this);
-  if (!_this) {
-    return;
-  }
-
-  // Fresh pooled widgets are enabled before BindDataContext assigns m_context. Forcing an LOD in that window can fire
-  // OnLODChanged callbacks that dereference the not-yet-bound fleet data.
-  if (_this->Context() == nullptr) {
-    return;
-  }
-
-  auto *lod = _this->lod();
-  if (lod) {
-    fleet_label_widgets.insert_or_assign(lod, _this);
-    if (FleetLabelThresholdEnabled() && !system_zoom_state_valid) {
-      threshold_state_valid = false;
-    }
-    ApplyFleetLabelDetail(lod, system_zoom_level);
-  }
-}
-
-void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget *_this)
-{
-  if (_this) {
-    auto *lod = _this->lod();
-    fleet_label_widgets.erase(lod);
-    if (_this->Context() != nullptr) {
-      RestoreNativeFleetLabelDetail(lod);
-    }
-  }
-  original(_this);
-}
-
-void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetWidget *_this)
-{
-  original(_this);
-  if (_this == nullptr) {
-    return;
-  }
-
-  auto *lod = _this->lod();
-  if (lod != nullptr) {
-    fleet_label_widgets.insert_or_assign(lod, _this);
-    ApplyFleetLabelDetail(lod, system_zoom_level);
-  }
-}
-
-void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, NavigationFleetWidget *_this)
-{
-  if (_this != nullptr) {
-    auto *lod = _this->lod();
-    if (lod != nullptr) {
-      fleet_label_widgets.erase(lod);
-      if (_this->Context() != nullptr) {
-        RestoreNativeFleetLabelDetail(lod);
+    for (const auto& preset : kPresets) {
+      if (Shortcut::IsDown(preset.go)) {
+        target      = config.*preset.value;
+        from_preset = true;
+        break;
       }
     }
-  }
-  original(_this);
-}
-
-void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtils *_this, float zoomDistance,
-                                                   float normalizedZoom)
-{
-  original(_this, zoomDistance, normalizedZoom);
-
-  if (_this != nullptr) {
-    _this->GetFlatRenderable(); // probe: triggers get_FlatRenderable_Hook, which scales the FR; game often reads the
-                                // field directly so our detour needs this call-path
-  }
-}
-
-void NavigationZoom_SetViewParameters_Hook(auto original, NavigationZoom *_this, float radius, NodeDepth depth)
-{
-  if (fleet_label_hooks_installed && depth != NodeDepth::SolarSystem) {
-    if (active_system_zoom_id == reinterpret_cast<uintptr_t>(_this)) {
-      ResetFleetLabelSystemState();
+    if (config.hotkeys_extended) {
+      if (Shortcut::IsDown(GameFunction::ZoomReset))
+        zoom_to_default = true;
+      else if (Shortcut::IsDown(GameFunction::ZoomMin))
+        target = config.zoom;
+      else if (Shortcut::IsDown(GameFunction::ZoomMax))
+        target = 100.0f;
     }
-  } else if (fleet_label_hooks_installed) {
-    BeginFleetLabelSystemState(_this);
   }
+  if (zoom_to_default)
+    target = config.default_system_zoom;
 
-  if (depth == NodeDepth::SolarSystem) {
-    ApplySystemZoomRange(_this, radius);
-    SetSceneCameraFarClip(_this);
-
-    original(_this, radius, depth);
-
-    SetSceneCameraFarClip(_this);
-    do_default_zoom = true;
+  if (target != 0.0f) {
+    ZoomAtMouse(zoom, target, true);
   } else {
-    original(_this, radius, depth);
+    const float step = config.keyboard_zoom_speed * GetDeltaTime();
+    if (shortcuts && Shortcut::IsPressed(GameFunction::ZoomIn))
+      ZoomAtMouse(zoom, step, false);
+    else if (shortcuts && Shortcut::IsPressed(GameFunction::ZoomOut))
+      ZoomAtMouse(zoom, -step, false);
   }
+
+  // With use_presets_as_default, jumping to a preset also makes it the zoom used on entering a system.
+  if (from_preset && target > 0.0f && config.use_presets_as_default)
+    StorePreset("System Preset Default from Preset", config.default_system_zoom, zoom);
+  return true;
 }
 
-void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom *_this, NodeDepth depth)
+void NavigationZoom_Update_Hook(auto original, NavigationZoom* _this)
 {
-  if (fleet_label_hooks_installed && depth != NodeDepth::SolarSystem) {
-    if (active_system_zoom_id == reinterpret_cast<uintptr_t>(_this)) {
-      ResetFleetLabelSystemState();
-    }
-  } else if (fleet_label_hooks_installed) {
-    BeginFleetLabelSystemState(_this);
-  }
+  fleet_labels.OnDepth(_this, _this->depth());
+  KeepZoomRange(_this);
 
-  if (depth == NodeDepth::SolarSystem) {
-    ApplySystemZoomRange(_this, _this->viewRadius());
-    SetSceneCameraFarClip(_this);
+  const bool run_game_update = Key::IsInputFocused() || KeyboardZoom(_this);
+  zoom_to_default            = false;
+  if (!run_game_update)
+    return;
 
-    original(_this, depth);
-
-    SetSceneCameraFarClip(_this);
-    do_default_zoom = true;
-  } else {
-    original(_this, depth);
-  }
+  original(_this);
+  KeepZoomRange(_this);
+  fleet_labels.OnZoomed(_this);
 }
 
-void *PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils *_this)
+// Entering a system: widen the range before and after the game sets it up, and zoom to the default next update.
+template <typename Original, typename... Args>
+void EnterDepth(Original original, NavigationZoom* zoom, NodeDepth depth, float radius, Args... args)
 {
-  auto *fr = original(_this);
-  if (!fr) {
-    return fr;
-  }
-
-  ScaleFR(static_cast<il2cpp::Object *>(fr));
-  return fr;
+  fleet_labels.OnDepth(zoom, depth);
+  if (depth != NodeDepth::SolarSystem)
+    return original(zoom, args...);
+  ApplyZoomRange(zoom, radius);
+  original(zoom, args...);
+  ApplyZoomRange(zoom, 0.0f);
+  zoom_to_default = true;
 }
+
+void NavigationZoom_SetViewParameters_Hook(auto original, NavigationZoom* _this, float radius, NodeDepth depth)
+{ EnterDepth(original, _this, depth, radius, radius, depth); }
+
+void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom* _this, NodeDepth depth)
+{ EnterDepth(original, _this, depth, _this->viewRadius(), depth); }
+
+void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevels level)
+{
+  // The target level is set on both sides of the update so the game's own bookkeeping agrees with ours.
+  if (!fleet_labels.Tracks(_this))
+    return original(_this, level);
+  const auto effective = fleet_labels.LevelFor(_this, level);
+  _this->SetTargetLevel(effective);
+  original(_this, effective);
+  _this->SetTargetLevel(effective);
+}
+
+void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget* _this)
+{
+  original(_this);
+  fleet_labels.Track(_this);
+}
+
+void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetWidget* _this)
+{
+  original(_this);
+  fleet_labels.Track(_this);
+}
+
+void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget* _this)
+{
+  fleet_labels.Untrack(_this);
+  original(_this);
+}
+
+void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, NavigationFleetWidget* _this)
+{
+  fleet_labels.Untrack(_this);
+  original(_this);
+}
+
+// Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them, so a renderable
+// already at the scaled size is left alone.
+void ScaleFlatRenderable(il2cpp::Object* renderable)
+{
+  static float scaled = 0.0f;
+  const float  factor = Config::Get().fr_scale;
+  // FlatRenderable is a Component; transform resolves on its runtime class.
+  auto* transform =
+      renderable && factor > 0.0f && factor != 1.0f ? renderable->Get<"transform", Transform*>() : nullptr;
+  if (!transform)
+    return;
+  const auto scale = transform->localScale();
+  if (scaled > 0.0f && std::fabs(scale.x - scaled) < 0.1f)
+    return;
+  transform->SetLocalScale({scale.x * factor, scale.y * factor, scale.z * factor});
+  scaled = scale.x * factor;
+}
+
+void* PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils* _this)
+{
+  auto* renderable = original(_this);
+  ScaleFlatRenderable(static_cast<il2cpp::Object*>(renderable));
+  return renderable;
+}
+
+// The game mostly reads the renderable field directly; asking through the getter routes it via the hook above.
+void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtils* _this, float distance,
+                                                   float normalized)
+{
+  original(_this, distance, normalized);
+  if (_this)
+    _this->GetFlatRenderable();
+}
+} // namespace
 
 void InstallZoomHooks()
 {
   auto update = NavigationZoom::Class::Method("Update");
 
-  if (FleetLabelProfilesEnabled()) {
-    // Installed as a set. Missing fields and properties (_lod, Context, FleetType) read as null or zero, which the hooks
-    // treat as native labels, so only the methods gate installation.
-    auto update_lod                  = NavigationLOD::Class::Method("UpdateLOD");
-    auto on_enable                   = NavigationFleetWidget::Class::Method("OnEnable");
-    auto on_disable                  = NavigationFleetWidget::Class::Method("OnDisable");
-    auto on_did_bind_context         = NavigationFleetWidget::Class::Method("OnDidBindContext");
-    auto on_about_to_release_context = NavigationFleetWidget::Class::Method("OnAboutToReleaseContext");
-
-    if (update && update_lod && on_enable && on_disable && on_did_bind_context && on_about_to_release_context) {
-      fleet_label_hooks_installed = true;
+  if (FleetLabels::Enabled()) {
+    // Installed as a set. Missing fields and properties (_lod, Context, FleetType) read as null or zero, which the
+    // hooks treat as native labels, so only the methods gate installation.
+    auto update_lod = NavigationLOD::Class::Method("UpdateLOD");
+    auto on_enable  = NavigationFleetWidget::Class::Method("OnEnable");
+    auto on_disable = NavigationFleetWidget::Class::Method("OnDisable");
+    auto on_bind    = NavigationFleetWidget::Class::Method("OnDidBindContext");
+    auto on_release = NavigationFleetWidget::Class::Method("OnAboutToReleaseContext");
+    if (update && update_lod && on_enable && on_disable && on_bind && on_release) {
+      fleet_labels.installed = true;
       SPUD_STATIC_DETOUR(update_lod.Pointer(), NavigationLOD_UpdateLOD_Hook);
       SPUD_STATIC_DETOUR(on_enable.Pointer(), NavigationFleetWidget_OnEnable_Hook);
       SPUD_STATIC_DETOUR(on_disable.Pointer(), NavigationFleetWidget_OnDisable_Hook);
-      SPUD_STATIC_DETOUR(on_did_bind_context.Pointer(), NavigationFleetWidget_OnDidBindContext_Hook);
-      SPUD_STATIC_DETOUR(on_about_to_release_context.Pointer(), NavigationFleetWidget_OnAboutToReleaseContext_Hook);
+      SPUD_STATIC_DETOUR(on_bind.Pointer(), NavigationFleetWidget_OnDidBindContext_Hook);
+      SPUD_STATIC_DETOUR(on_release.Pointer(), NavigationFleetWidget_OnAboutToReleaseContext_Hook);
     } else {
       spdlog::error("Fleet label detail hooks were not installed; using native fleet labels");
     }
@@ -592,15 +456,14 @@ void InstallZoomHooks()
     SPUD_STATIC_DETOUR(method.Pointer(), PlanetViewUtils_CameraZoomedEventHandler_Hook);
   if (auto method = PlanetViewUtils::Class::Method("get_FlatRenderable"))
     SPUD_STATIC_DETOUR(method.Pointer(), PlanetViewUtils_get_FlatRenderable_Hook);
-
   if (update)
     SPUD_STATIC_DETOUR(update.Pointer(), NavigationZoom_Update_Hook);
-
+  // TODO: SetDepth has only ever been detoured on Windows and the reason was not recorded; check its prologue
+  // against SPUD's overwrite size before enabling it on macOS.
 #if _WIN32
   if (auto method = NavigationZoom::Class::Method("SetDepth"))
     SPUD_STATIC_DETOUR(method.Pointer(), NavigationZoom_SetDepth_Hook);
 #endif
-
   if (auto method = NavigationZoom::Class::Method("SetViewParameters"))
     SPUD_STATIC_DETOUR(method.Pointer(), NavigationZoom_SetViewParameters_Hook);
 }
