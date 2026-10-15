@@ -24,7 +24,7 @@ struct Subscription {
   // Optional. Runs on the game thread each time a stable baseline is established while the fleet service is available
   // (after login, and again after any fleet-slot topology change). Transitions are only dispatched after a baseline, so
   // a consumer that needs the complete fleet list reads FleetsManager here.
-  BaselineCallback   on_baseline   = nullptr;
+  BaselineCallback on_baseline = nullptr;
 };
 
 // Registers a process-lifetime fleet-state observer. The first subscription asks for the ScreenManager.Update tick;

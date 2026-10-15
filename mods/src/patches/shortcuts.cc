@@ -323,6 +323,7 @@ constexpr Setting kSettings[] = {
     {"log_error", GameFunction::LogLevelError, "CTRL-SHIFT-F11"},
     {"log_off", GameFunction::LogLevelOff, "CTRL-SHIFT-F12"},
     {"restart", GameFunction::Restart, "F9"},
+    {"reload_settings", GameFunction::ReloadSettings, "CTRL-SHIFT-F6"},
     {"show_awayteam", GameFunction::ShowAwayTeam, "T"},
     {"show_gifts", GameFunction::ShowGifts, "/"},
     {"show_artifacts", GameFunction::ShowArtifacts, "SHIFT-I"},
@@ -536,6 +537,8 @@ namespace Shortcut
 {
 void Load(const toml::table& config, toml::table& parsed, bool extended, bool experimental)
 {
+  // A reload replaces every binding.
+  Clear();
   const auto* shortcuts = config["shortcuts"].as_table();
   auto&       out       = *parsed.emplace<toml::table>("shortcuts").first->second.as_table();
   auto&       source    = *parsed.emplace<toml::table>("shortcuts_source").first->second.as_table();

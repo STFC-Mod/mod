@@ -2,9 +2,10 @@
 
 #include "patches/notification_audio.h"
 
-// User settings, loaded once from the settings TOML at startup. Each struct is a TOML section and each member is
-// named after its key, with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale.
-// A few are toggled at runtime by hotkeys. Everything runs on the game thread except sync, which only reads.
+// User settings from the settings TOML. Each struct is a TOML section and each member is named after its key,
+// with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale. They are read at
+// startup and again whenever the file changes; a few are also toggled at runtime by hotkeys. Everything runs on
+// the game thread except sync, which only reads.
 
 #include <array>
 #include <map>
@@ -139,11 +140,20 @@ struct ShipFilter {
   bool                     all = false;
 };
 
+struct SettingsFile;
+
 class Config final
 {
 public:
   [[nodiscard]] NotificationSound NotificationSoundForToast(int toast_state) const;
+  // The current settings. Call it again rather than keeping the reference: a reload replaces them.
   [[nodiscard]] static Config& Get();
+  // Re-reads the settings file and makes it current, rebinding shortcuts. A file that does not parse keeps the
+  // current settings. [patches] decides which hooks are installed, so its changes wait for a restart. Game thread.
+  static bool Reload();
+  // The frame tick's check: reloads once the settings file has changed and then stayed unchanged for a second.
+  static void ReloadIfChanged();
+
   Config(const Config&)            = delete;
   Config& operator=(const Config&) = delete;
 
@@ -189,6 +199,8 @@ public:
     bool officersorthooks           = true;
     bool pinnedshiphooks            = true;
     bool artifactexchangehooks      = true;
+
+    bool operator==(const Patches&) const = default;
   } patches;
 
   struct Control {
@@ -352,6 +364,7 @@ public:
   } game;
 
 private:
-  Config();
-  void Load();
+  Config() = default;
+  // Applies `file`. The first load also creates the settings file if it is missing.
+  void Load(const SettingsFile& file, bool first);
 };

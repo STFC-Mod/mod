@@ -86,6 +86,7 @@ constexpr Patch kPatches[] = {
     {"ForbiddenTechShipName", InstallForbiddenTechShipNameHooks,
      [](const Config& c) { return c.patches.forbiddentechshipnamehooks; }},
     {"AudioEvents", InstallAudioEventHooks, [](const Config& c) { return c.patches.audioeventhooks; }},
+    {"SettingsReload", InstallSettingsReload, [](const Config&) { return true; }},
 };
 
 void StartLogging()

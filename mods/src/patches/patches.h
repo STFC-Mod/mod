@@ -40,6 +40,8 @@ void InstallZoomHooks();
 // ScreenManager.Update is the mod's per-frame tick. Hotkeys own the detour; features that poll every frame ask
 // for it with this, and hotkeys.cc calls their Update functions in order. Safe to call more than once.
 bool InstallScreenManagerUpdateHook();
+// Reloads the settings when the settings file changes.
+void InstallSettingsReload();
 void AllianceGamesStoreUpdate();
 void AssignShipEnterKeyUpdate();
 void ChatOptionsUpdate();

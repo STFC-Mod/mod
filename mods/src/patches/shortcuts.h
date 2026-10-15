@@ -110,6 +110,7 @@ enum GameFunction {
   LogLevelWarn,
   LogLevelOff,
   Restart,
+  ReloadSettings,
   Quit,
   FocusSearch,
   ShowShipConstruction,
@@ -144,8 +145,9 @@ bool    IsModifierKey(KeyCode key);
 
 namespace Shortcut
 {
-// Reads every [shortcuts] entry from `config`, binds it, and records the effective bindings and where each came
-// from in `parsed` ([shortcuts] and [shortcuts_source]). `extended` and `experimental` gate the optional actions.
+// Replaces every binding with the [shortcuts] entries from `config`, and records the effective bindings and where
+// each came from in `parsed` ([shortcuts] and [shortcuts_source]). `extended` and `experimental` gate the optional
+// actions.
 void Load(const toml::table& config, toml::table& parsed, bool extended, bool experimental);
 
 // Adds a binding directly. Load uses this; tests use it to set up bindings.

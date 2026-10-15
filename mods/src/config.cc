@@ -12,9 +12,13 @@
 #include <toml++/toml.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <ranges>
 #include <tuple>
 
@@ -350,13 +354,110 @@ bool SyncConfig::enabled(SyncConfig::Type type) const
   return false;
 }
 
-Config::Config()
-{ Load(); }
+// The settings file as parsed. `loaded` is false when it was missing or did not parse and defaults are used.
+struct SettingsFile {
+  toml::table table;
+  bool        loaded = false;
+};
+
+namespace
+{
+// The current settings. Replaced settings are never freed: a sync thread may still be reading them, and they only
+// pile up as fast as someone edits the file.
+std::atomic<Config*> current_config{nullptr};
+
+toml::table ParseSettingsFile()
+{
+  const auto path = File::Path(File::Config()).u8string();
+  return toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
+}
+} // namespace
 
 Config& Config::Get()
 {
-  static Config config;
-  return config;
+  if (auto* config = current_config.load(std::memory_order_acquire))
+    return *config;
+  // First use, inside il2cpp_init on the game thread. A broken file falls back to the defaults here.
+  static Config* const first = [] {
+    File::MigrateLegacyFiles();
+    SettingsFile file;
+    try {
+      file.table  = ParseSettingsFile();
+      file.loaded = true;
+    } catch (const toml::parse_error& e) {
+      spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
+    } catch (...) {
+      spdlog::warn("Failed to load config file, falling back to default settings");
+    }
+    auto* config = new Config;
+    config->Load(file, true);
+    current_config.store(config, std::memory_order_release);
+    return config;
+  }();
+  return *first;
+}
+
+bool Config::Reload()
+{
+  SettingsFile file;
+  try {
+    file.table  = ParseSettingsFile();
+    file.loaded = true;
+  } catch (const toml::parse_error& e) {
+    spdlog::warn("Settings not reloaded, {} does not parse: {}", File::Config(), e.description());
+    return false;
+  } catch (const std::exception& e) {
+    spdlog::warn("Settings not reloaded, {} could not be read: {}", File::Config(), e.what());
+    return false;
+  }
+
+  spdlog::info("Reloading settings from {}", File::Config());
+  auto* next = new Config;
+  try {
+    next->Load(file, false);
+  } catch (const std::exception& e) {
+    // Shortcuts may already be rebound from the new file; everything else keeps the current settings.
+    spdlog::error("Settings not reloaded: {}", e.what());
+    delete next;
+    return false;
+  }
+  // Hooks are installed once, so the startup hook groups stay in force.
+  if (!(next->patches == Get().patches))
+    spdlog::warn("Changes to [patches] take effect after a restart");
+  next->patches = Get().patches;
+  current_config.store(next, std::memory_order_release);
+  return true;
+}
+
+void Config::ReloadIfChanged()
+{
+  // Editors save in steps (truncate, then write) and an empty file is valid TOML, so a change is only applied once
+  // the file has kept the same modification time for a whole check.
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point                              next_check{};
+  static std::optional<std::filesystem::file_time_type> applied, pending;
+
+  const auto now = Clock::now();
+  if (now < next_check)
+    return;
+  next_check = now + std::chrono::seconds(1);
+
+  std::error_code error;
+  const auto      time = std::filesystem::last_write_time(File::Path(File::Config()), error);
+  if (error)
+    return;
+  if (!applied || time == *applied) {
+    applied = time;
+    pending.reset();
+    return;
+  }
+  if (pending != time) {
+    pending = time;
+    return;
+  }
+  applied = time;
+  pending.reset();
+  Reload();
 }
 
 MissionHudVisibility Config::Ui::MissionHudButtonVisibility(std::string_view button) const
@@ -365,25 +466,11 @@ MissionHudVisibility Config::Ui::MissionHudButtonVisibility(std::string_view but
   return it == mission_hud_buttons.end() ? MissionHudVisibility::Auto : it->second;
 }
 
-void Config::Load()
+void Config::Load(const SettingsFile& file, bool first)
 {
-  File::MigrateLegacyFiles();
-
-  const auto  config_path = File::Path(File::Config());
-  toml::table config;
-  bool        loaded = false;
-  try {
-    const auto path = config_path.u8string();
-    config          = toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
-    loaded          = true;
-  } catch (const toml::parse_error& e) {
-    spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
-  } catch (...) {
-    spdlog::warn("Failed to load config file, falling back to default settings");
-  }
-
+  const auto& config = file.table;
   toml::table parsed;
-  Reader      r(config, parsed, loaded);
+  Reader      r(config, parsed, file.loaded);
   r.Read("graphics", "interior_zoom_scale", graphics.interior_zoom_scale);
   if (!std::isfinite(graphics.interior_zoom_scale) || graphics.interior_zoom_scale < 1.0f) {
     spdlog::warn("invalid graphics.interior_zoom_scale {}; using 2", graphics.interior_zoom_scale);
@@ -617,13 +704,15 @@ void Config::Load()
 
   Shortcut::Load(config, parsed, control.hotkeys_extended, control.enable_experimental);
 
-  if (!std::filesystem::exists(config_path)) {
+  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
     spdlog::warn("Creating {} (default config file)", File::Config());
     Save(parsed, File::Config(), false);
   }
   spdlog::info("Creating {} (final config file)", File::Vars());
   Save(parsed, File::Vars(), true);
 
+  if (!first)
+    return;
   std::cout << "\n\n-----------------------------\n\n"
             << parsed << "\n\n-----------------------------\n"
 #if VERSION_PATCH

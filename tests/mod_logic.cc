@@ -159,6 +159,9 @@ void Loading()
   Check(Value(parsed, "shortcuts_source", "set_hotkeys_disabled") == "alias:set_hotkeys_disble", "alias source");
 
   Check(Shortcut::HasBinding(GameFunction::ShowBookmarks), "extended shortcuts load when extended");
+  Shortcut::Bind(GameFunction::Quit, KeyChord::Parse("F1"));
+  Shortcut::Load(toml::table{}, parsed, true, false);
+  Check(Shortcut::Describe(GameFunction::Quit) == "F10", "loading again replaces earlier bindings");
   Check(!Shortcut::HasBinding(GameFunction::ShowLookup), "experimental shortcuts need experimental");
   parsed = Load("", false);
   Check(!Shortcut::HasBinding(GameFunction::ShowBookmarks), "extended shortcuts are skipped otherwise");

@@ -471,6 +471,10 @@ quit = "F10"
 # F9
 restart = "F9"
 
+# Re-read this settings file now. It is also re-read by itself about a second after it is saved; changes to
+# [patches] still need a restart.
+reload_settings = "CTRL-SHIFT-F6"
+
 # CTRL-ALT-MINUS
 set_hotkeys_disabled = "CTRL-ALT-MINUS"
 
