@@ -1,4 +1,7 @@
+// auto_open_bulk_claim_flyout: opens the gifts screen's bulk claim drawer once each time the screen is shown.
+
 #include "config.h"
+#include "patches/patches.h"
 
 #include <prime/ui.h>
 
