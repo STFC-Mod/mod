@@ -13,8 +13,10 @@
 #include <spud/detour.h>
 
 #include <cmath>
+#include <optional>
 #include <ranges>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -32,12 +34,12 @@ public:
            || config.graphics.zoom_label_non_player.detail != FleetLabelDetail::Native;
   }
 
-  // The level `lod` should show instead of `native`, or `native` when its fleet is not tracked.
-  ZoomLevels LevelFor(NavigationLOD* lod, ZoomLevels native) const
+  // The level `lod` should show instead of `native`, or nothing when its fleet is not tracked or labels are native.
+  std::optional<ZoomLevels> LevelFor(NavigationLOD* lod, ZoomLevels native) const
   {
-    const auto* profile = Profile(lod);
+    const auto* profile = Enabled() ? Profile(lod) : nullptr;
     if (!profile)
-      return native;
+      return std::nullopt;
     // Expanded keeps Near where the game would show it, and lifts everything else to Middle.
     const auto expanded = native == ZoomLevels::Near ? ZoomLevels::Near : ZoomLevels::Middle;
     switch (profile->detail) {
@@ -54,9 +56,6 @@ public:
     }
   }
 
-  bool Tracks(NavigationLOD* lod) const
-  { return Profile(lod) != nullptr; }
-
   void Track(NavigationFleetWidget* widget)
   {
     // Fresh pooled widgets are enabled before BindDataContext assigns their context; forcing an LOD before then
@@ -65,7 +64,7 @@ public:
     if (!lod)
       return;
     widgets_.insert_or_assign(lod, widget);
-    if (zoom_known_)
+    if (zoom_known_ && Enabled())
       lod->UpdateLOD(zoom_level_);
   }
 
@@ -76,7 +75,7 @@ public:
       return;
     widgets_.erase(lod);
     // Give a reused widget back to the game at the game's own level.
-    if (widget->Context() && zoom_known_) {
+    if (widget->Context() && zoom_known_ && Enabled()) {
       lod->SetTargetLevel(zoom_level_);
       lod->UpdateLOD(zoom_level_);
       lod->SetTargetLevel(zoom_level_);
@@ -154,10 +153,13 @@ private:
     threshold_known_ = false;
   }
 
+  // UpdateLOD goes through the hook, which picks each label's level.
   void ApplyAll()
   {
-    for (auto* lod : widgets_ | std::views::keys)
-      if (Tracks(lod))
+    if (!Enabled())
+      return;
+    for (const auto& [lod, widget] : widgets_)
+      if (widget->Context())
         lod->UpdateLOD(zoom_level_);
   }
 
@@ -304,16 +306,13 @@ bool KeyboardZoom(NavigationZoom* zoom)
     }
     if (config.control.hotkeys_extended) {
       if (Shortcut::IsDown(GameFunction::ZoomReset))
-        zoom_to_default = true;
+        target = config.graphics.default_system_zoom;
       else if (Shortcut::IsDown(GameFunction::ZoomMin))
         target = config.graphics.zoom;
       else if (Shortcut::IsDown(GameFunction::ZoomMax))
         target = 100.0f;
     }
   }
-  if (zoom_to_default)
-    target = config.graphics.default_system_zoom;
-
   if (target != 0.0f) {
     ZoomAtMouse(zoom, target, true);
   } else {
@@ -336,8 +335,12 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom* _this)
   fleet_labels.OnDepth(_this, _this->depth());
   KeepZoomRange(_this);
 
-  const bool run_game_update = Key::IsInputFocused() || KeyboardZoom(_this);
-  zoom_to_default            = false;
+  // The jump on entering a system is not keyboard input, so it happens even while a text field has focus.
+  bool run_game_update = true;
+  if (std::exchange(zoom_to_default, false))
+    ZoomAtMouse(_this, Config::Get().graphics.default_system_zoom, true);
+  else if (!Key::IsInputFocused())
+    run_game_update = KeyboardZoom(_this);
   if (!run_game_update)
     return;
 
@@ -367,13 +370,13 @@ void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom* _this, NodeDept
 
 void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevels level)
 {
-  // The target level is set on both sides of the update so the game's own bookkeeping agrees with ours.
-  if (!fleet_labels.Tracks(_this))
-    return original(_this, level);
   const auto effective = fleet_labels.LevelFor(_this, level);
-  _this->SetTargetLevel(effective);
-  original(_this, effective);
-  _this->SetTargetLevel(effective);
+  if (!effective)
+    return original(_this, level);
+  // The target level is set on both sides of the update so the game's own bookkeeping agrees with ours.
+  _this->SetTargetLevel(*effective);
+  original(_this, *effective);
+  _this->SetTargetLevel(*effective);
 }
 
 void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget* _this)
@@ -400,22 +403,27 @@ void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, Navigatio
   original(_this);
 }
 
-// Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them, so a renderable
-// already at the scaled size is left alone.
+// Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them and asks for them on
+// every zoom, so each transform remembers the size it was scaled to and is left alone while it still has it.
+// Planets differ in base size, so this is per transform: one shared value made two planets rescale each other.
 void ScaleFlatRenderable(il2cpp::Object* renderable)
 {
-  static float scaled = 0.0f;
-  const float  factor = Config::Get().graphics.fr_scale;
+  // A system has a handful of planets; past this, entries from earlier systems are dropped.
+  constexpr size_t                             kRemembered = 256;
+  static std::unordered_map<Transform*, float> scaled;
+  const float                                  factor = Config::Get().graphics.fr_scale;
   // FlatRenderable is a Component; transform resolves on its runtime class.
   auto* transform =
       renderable && factor > 0.0f && factor != 1.0f ? renderable->Get<"transform", Transform*>() : nullptr;
   if (!transform)
     return;
   const auto scale = transform->localScale();
-  if (scaled > 0.0f && std::fabs(scale.x - scaled) < 0.1f)
+  if (const auto it = scaled.find(transform); it != scaled.end() && std::fabs(scale.x - it->second) < 0.1f)
     return;
+  if (scaled.size() >= kRemembered)
+    scaled.clear();
   transform->SetLocalScale({scale.x * factor, scale.y * factor, scale.z * factor});
-  scaled = scale.x * factor;
+  scaled.insert_or_assign(transform, scale.x * factor);
 }
 
 void* PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils* _this)
@@ -439,9 +447,10 @@ void InstallZoomHooks()
 {
   auto update = NavigationZoom::Class::Method("Update");
 
-  if (FleetLabels::Enabled()) {
-    // Installed as a set. Missing fields and properties (_lod, Context, FleetType) read as null or zero, which the
-    // hooks treat as native labels, so only the methods gate installation.
+  {
+    // Installed as a set, whether or not zoom_label_* is set, so labels can be switched at runtime. Missing fields
+    // and properties (_lod, Context, FleetType) read as null or zero, which the hooks treat as native labels, so
+    // only the methods gate installation.
     auto update_lod = NavigationLOD::Class::Method("UpdateLOD");
     auto on_enable  = NavigationFleetWidget::Class::Method("OnEnable");
     auto on_disable = NavigationFleetWidget::Class::Method("OnDisable");
