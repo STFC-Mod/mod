@@ -89,6 +89,7 @@ do
         add_rules("stfc.cxx.sccache", {override = true})
     end
     add_files("src/**.cc")
+    add_deps("il2cpp", {public = true})
     add_headerfiles("src/**.h")
     add_includedirs("src", { public = true })
 
@@ -115,12 +116,12 @@ do
     -- Platform-specific settings
     if is_plat("windows") then
         add_cxflags("/bigobj")
-        add_linkdirs("src/il2cpp")
+        add_linkdirs("../libs/il2cpp", {public = true})
         add_syslinks("winmm")
     elseif is_plat("macosx") then
         add_cxflags("-fms-extensions")
         -- Add Objective-C++ source
-        add_files("src/*.mm")
+        add_files("src/**.mm")
         -- Link Cocoa framework
         add_frameworks("Cocoa")
     end
