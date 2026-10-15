@@ -1,78 +1,73 @@
-#include "folder_manager.h"
+// Launches the game with the community mod dylib injected. The game's install path comes from the Xsolla
+// launcher's settings; the dylib sits next to this executable.
 
 #include <inicpp.h>
 
-#include <cstdio>
-#include <dlfcn.h>
-#include <errno.h>
-#include <libgen.h>
 #include <mach-o/dyld.h>
 #include <unistd.h>
 
+#include <cerrno>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <string>
 
-#include <CoreServices/CoreServices.h>
+std::filesystem::path LibraryDirectory(); // library_dir.mm
 
-#define LD_LIBRARY_PATH_ENV "DYLD_LIBRARY_PATH"
-#define LD_PRELOAD_ENV "DYLD_INSERT_LIBRARIES"
-
-static char **appArgs = NULL;
-
-static void die(const char *op)
+namespace
 {
-  fprintf(stderr, "cliloader Error: %s\n", op);
-  exit(1);
+constexpr auto kAppPath = "Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command";
+
+int Fail(const std::string& message)
+{
+  fprintf(stderr, "stfc-community-mod-loader: %s\n", message.c_str());
+  return 1;
 }
+
+// `value` prefixed to the variable's current value, colon-separated.
+void Prepend(const char* variable, const std::string& value)
+{
+  std::string combined = value;
+  if (const char* old = getenv(variable)) {
+    combined += ":";
+    combined += old;
+  }
+  setenv(variable, combined.c_str(), 1);
+}
+} // namespace
 
 int main()
 {
-  constexpr auto kAppPath = R"(Star Trek Fleet Command.app/Contents/MacOS/Star Trek Fleet Command)";
+  const auto settings_path = LibraryDirectory() / "Preferences" / "Star Trek Fleet Command" / "launcher_settings.ini";
+  std::ifstream settings_stream(settings_path);
+  if (!settings_stream)
+    return Fail("cannot read " + settings_path.string() + "; install the game with the Xsolla launcher first");
+  ini::IniFile settings(settings_stream);
 
-  auto ApplicationSupportPath =
-      (char *)fm::FolderManager::pathForDirectory(fm::NSApplicationSupportDirectory, fm::NSUserDomainMask);
-  auto LibraryPath = (char *)fm::FolderManager::pathForDirectory(fm::NSLibraryDirectory, fm::NSUserDomainMask);
+  const auto install_dir = settings["General"]["152033..GAME_PATH"].as<std::string>();
+  if (install_dir.empty())
+    return Fail("no game path (152033..GAME_PATH) in " + settings_path.string());
+  const auto game = (std::filesystem::path(install_dir) / kAppPath).string();
 
-  std::filesystem::path launcher_settings_ini_path =
-      std::filesystem::path(LibraryPath) / "Preferences" / "Star Trek Fleet Command" / "launcher_settings.ini";
+  // Resolve symlinks so the dylib path is the real one next to this binary.
+  char     executable[PATH_MAX];
+  uint32_t size = sizeof(executable);
+  if (_NSGetExecutablePath(executable, &size) != 0)
+    return Fail("executable path does not fit");
+  char resolved[PATH_MAX];
+  if (!realpath(executable, resolved))
+    return Fail(std::string("cannot resolve executable path: ") + strerror(errno));
+  const auto loader_dir = std::filesystem::path(resolved).parent_path().string();
 
-  std::ifstream launcher_settings_ini_stream(launcher_settings_ini_path);
-  ini::IniFile  launcher_settings_ini(launcher_settings_ini_stream);
+  Prepend("DYLD_INSERT_LIBRARIES", loader_dir + "/libstfc-community-mod.dylib");
+  // TODO: likely unnecessary since the inserted path is absolute, but it leaks into every lookup the game makes.
+  // Remove once someone confirms the game still starts without it.
+  Prepend("DYLD_LIBRARY_PATH", loader_dir);
 
-  std::filesystem::path game_install_path = launcher_settings_ini["General"]["152033..GAME_PATH"].as<std::string>();
-  game_install_path /= kAppPath;
-  auto game_install_path_str = game_install_path.string();
-
-  char     buf[PATH_MAX];
-  uint32_t bufsize = PATH_MAX;
-  _NSGetExecutablePath(buf, &bufsize);
-
-  std::string path = dirname(buf);
-
-#define SETENV(_name, _value) setenv(_name, _value, 1)
-  std::string ld_library_path     = path;
-  const char *old_ld_library_path = getenv(LD_LIBRARY_PATH_ENV);
-  if (old_ld_library_path) {
-    ld_library_path += ":";
-    ld_library_path += old_ld_library_path;
-  }
-  std::string ld_preload     = path + "/libstfc-community-mod.dylib";
-  const char *old_ld_preload = getenv(LD_PRELOAD_ENV);
-  if (old_ld_preload) {
-    ld_preload += ":";
-    ld_preload += old_ld_preload;
-  }
-
-  SETENV(LD_PRELOAD_ENV, ld_preload.c_str());
-  SETENV(LD_LIBRARY_PATH_ENV, ld_library_path.c_str());
-
-  char *const argument_list[] = {(char *)game_install_path_str.c_str(), NULL};
-
-  if (execvp(argument_list[0], argument_list) == -1) {
-    printf("Failed to launch app %d %s\n", errno, game_install_path_str.c_str());
-    return -1;
-  }
-
-  return 0;
+  char* const arguments[] = {const_cast<char*>(game.c_str()), nullptr};
+  execv(arguments[0], arguments);
+  return Fail("failed to launch " + game + ": " + strerror(errno));
 }
