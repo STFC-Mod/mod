@@ -1,78 +1,45 @@
-
-#include <spud/arch.h>
-#include <spud/signature.h>
-
-#include <bit>
-#include <span>
-#include <string_view>
-#include <vector>
+#define SPUD_SCAN_ISA "avx2"
+#include "scan.h"
 
 #include <immintrin.h>
-#if SPUD_OS_WIN
-#include <intrin.h>
-#endif
 
-namespace spud {
-namespace detail {
+namespace spud::detail {
 
-void find_matches_avx2(std::string_view mask, std::string_view data,
-                       size_t buffer_end, std::span<uint8_t> search_buffer,
-                       std::vector<signature_result> &results) {
-  __m256i first = _mm256_set1_epi8(0);
-  __m256i second = _mm256_set1_epi8(0);
+namespace {
 
-  const auto signature_size = std::min(mask.size(), size_t(32));
+struct avx2 {
+  using vec = __m256i;
+  static constexpr size_t kWidth = 32;
 
-  size_t spread = 0;
-  size_t first_i = 0;
-
-  for (size_t i = 0; i < signature_size; ++i) {
-    if (mask[i] != '?') {
-      first = _mm256_set1_epi8(data[i]);
-      first_i = i;
-      break;
-    }
+  SPUD_TARGET("avx2") static vec splat(uint8_t b) {
+    return _mm256_set1_epi8(static_cast<char>(b));
   }
-
-  for (size_t i = signature_size - 1; i >= 0; --i) {
-    if (mask[i] != '?') {
-      second = _mm256_set1_epi8(data[i]);
-      spread = i - first_i;
-      break;
-    }
+  SPUD_TARGET("avx2") static vec load(const uint8_t *p) {
+    return _mm256_loadu_si256(reinterpret_cast<const __m256i *>(p));
   }
-
-  const auto end = buffer_end - spread - ((buffer_end - spread) % 32);
-
-  for (size_t offset = 0; offset < end; offset += 32) {
-    const auto first_block = _mm256_loadu_si256(
-        reinterpret_cast<const __m256i *>(search_buffer.data() + offset));
-    const auto second_block =
-        _mm256_loadu_si256(reinterpret_cast<const __m256i *>(
-            search_buffer.data() + offset + spread));
-
-    const __m256i eq_first = _mm256_cmpeq_epi8(first, first_block);
-    const __m256i eq_second = _mm256_cmpeq_epi8(second, second_block);
-
-    uint32_t mm_mask =
-        _mm256_movemask_epi8(_mm256_and_si256(eq_first, eq_second));
-
-    while (mm_mask != 0) {
-      const auto bit_pos = std::countr_zero(mm_mask);
-      if (signature_does_match(offset + bit_pos, mask, data, search_buffer)) {
-        results.emplace_back(signature_result{search_buffer, offset + bit_pos});
-      }
-      mm_mask = mm_mask & (mm_mask - 1);
-    }
+  SPUD_TARGET("avx2") static vec match(vec a, vec x, vec b, vec y) {
+    return _mm256_and_si256(_mm256_cmpeq_epi8(a, x), _mm256_cmpeq_epi8(b, y));
   }
-
-  // Scan the remainder
-  for (size_t offset = end; offset < buffer_end; ++offset) {
-    if (signature_does_match(offset, mask, data, search_buffer)) {
-      results.emplace_back(signature_result{search_buffer, offset});
-    }
+  SPUD_TARGET("avx2") static vec either(vec v, vec w) {
+    return _mm256_or_si256(v, w);
   }
+  SPUD_TARGET("avx2") static bool any(vec v) {
+    return _mm256_testz_si256(v, v) == 0;
+  }
+  SPUD_TARGET("avx2") static uint64_t step_bits(const vec *m) {
+    return static_cast<uint32_t>(_mm256_movemask_epi8(m[0])) |
+           static_cast<uint64_t>(
+               static_cast<uint32_t>(_mm256_movemask_epi8(m[1])))
+               << 32;
+  }
+};
+
+} // namespace
+
+SPUD_TARGET("avx2")
+size_t scan_anchors_avx2(const pattern_scan &scan, match_fn on_match,
+                         void *ctx) {
+  return scan_anchors<avx2>(scan, on_match, ctx);
 }
 
-} // namespace detail
-} // namespace spud
+} // namespace spud::detail

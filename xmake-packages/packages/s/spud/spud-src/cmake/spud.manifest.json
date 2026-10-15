@@ -1,0 +1,148 @@
+{
+  "name": "spud",
+  "version": "0.1.0",
+  "cxx_standard": 20,
+  "unsupported": [
+    "32-bit x86",
+    "Windows ARM64",
+    "ARM32",
+    "MIPS",
+    "PowerPC",
+    "universal macOS binaries"
+  ],
+  "options": {
+    "SPUD_UNWIND_SUPPORT": {
+      "help": "Describe generated code for stack walks and exception handling",
+      "default": true,
+      "define": "SPUD_UNWIND_SUPPORT"
+    },
+    "SPUD_AARCH64_SUPPORT": {
+      "help": "Build the ARM64 relocation backend (Capstone)",
+      "default": "SPUD_AARCH64_DEFAULT",
+      "define": "SPUD_AARCH64_SUPPORT"
+    },
+    "SPUD_DETOUR_TRACING": {
+      "help": "Embed source locations in installed hooks",
+      "default": false,
+      "define": "SPUD_DETOUR_TRACING"
+    },
+    "SPUD_INSTALL": {
+      "help": "Generate install rules",
+      "default": "PROJECT_IS_TOP_LEVEL"
+    },
+    "SPUD_WARNINGS_AS_ERRORS": {
+      "help": "Treat warnings in spud's own targets as errors (CI)",
+      "default": false
+    }
+  },
+  "public_headers": [
+    "include/spud/arch.h",
+    "include/spud/detour.h",
+    "include/spud/diagnostics.h",
+    "include/spud/error.h",
+    "include/spud/utils.h",
+    "include/spud/signature.h",
+    "include/spud/pointer.h",
+    "include/spud/memory.h",
+    "include/spud/memory/protection.h"
+  ],
+  "sources": {
+    "common": [
+      "src/utils.cc",
+      "src/detour/x86_64/x86_64.cc",
+      "src/detour/x86_64/x86_64.h",
+      "src/detour/chain.cc",
+      "src/detour/chain.h",
+      "src/detour/control_flow.cc",
+      "src/detour/control_flow.h",
+      "src/detour/import.cc",
+      "src/detour/pointer.cc",
+      "src/detour/detour.cc",
+      "src/detour/detour_impl.h",
+      "src/detour/detour_stub.h",
+      "src/detour/fwd.h",
+      "src/memory/protection.cc",
+      "src/memory/safe_patch.cc",
+      "src/memory/safe_patch.h",
+      "src/memory/executable_pool.cc",
+      "src/memory/executable_pool.h",
+      "src/memory/unwind.cc",
+      "src/memory/unwind.h",
+      "src/memory/unwind/apple.cc",
+      "src/memory/unwind/compact.cc",
+      "src/memory/unwind/dwarf.cc",
+      "src/memory/unwind/dwarf.h",
+      "src/memory/unwind/linux.cc",
+      "src/memory/unwind/windows.cc",
+      "src/memory/unwind/windows.h",
+      "src/memory/unwind/windows_handler.cc",
+      "src/signature/signature.cc",
+      "src/signature/scan.h"
+    ],
+    "aarch64_backend": [
+      "src/detour/aarch64/aarch64.cc",
+      "src/detour/aarch64/aarch64.h"
+    ],
+    "asm": {
+      "x86_64_masm": [
+        "src/detour/x86_64/detour_context_support.masm"
+      ]
+    },
+    "simd": {
+      "sse": [
+        "src/signature/signature_sse.cc"
+      ],
+      "avx2": [
+        "src/signature/signature_avx2.cc"
+      ],
+      "neon": [
+        "src/signature/signature_neon.cc"
+      ]
+    }
+  },
+  "deps": {
+    "zydis": {
+      "url": "https://github.com/zyantific/zydis/archive/refs/tags/v4.1.0.tar.gz",
+      "sha256": "31f23de8abb4cc2efa0fd0e827bbabcaa0f3d00fcaed8598e05295ba7b3806ad",
+      "strip": 1,
+      "vendor_dir": "zydis",
+      "cmake_target": "Zydis",
+      "defines": [
+        "ZYDIS_STATIC_BUILD",
+        "ZYCORE_STATIC_BUILD",
+        "ZYAN_STATIC_BUILD"
+      ]
+    },
+    "zycore": {
+      "url": "https://github.com/zyantific/zycore-c/archive/74620eefd233bec20daeb66e78e744ff06e273b7.tar.gz",
+      "sha256": "51717e66bc94966ecc8ae415b2d90aae5e624d8da9198332a1e81aa898f82a55",
+      "strip": 1,
+      "vendor_dir": "zycore",
+      "cmake_target": "Zycore",
+      "defines": [
+        "ZYCORE_STATIC_BUILD",
+        "ZYAN_STATIC_BUILD"
+      ]
+    },
+    "capstone": {
+      "url": "https://github.com/capstone-engine/capstone/archive/refs/tags/6.0.0-Alpha5.tar.gz",
+      "sha256": "a909a0ea9cd9da5a55fb498b4bd54507469dafe80eadc2e1928c80c8773ed7c5",
+      "strip": 1,
+      "vendor_dir": "capstone",
+      "optional": "SPUD_AARCH64_SUPPORT",
+      "cmake_target": "capstone",
+      "defines": [
+        "CAPSTONE_USE_SYS_DYN_MEM",
+        "CAPSTONE_HAS_AARCH64"
+      ]
+    },
+    "catch2": {
+      "url": "https://github.com/catchorg/Catch2/archive/refs/tags/v3.8.0.tar.gz",
+      "sha256": "1ab2de20460d4641553addfdfe6acd4109d871d5531f8f519a52ea4926303087",
+      "strip": 1,
+      "vendor_dir": "catch2",
+      "tests_only": true,
+      "cmake_target": "Catch2"
+    }
+  }
+}

@@ -784,18 +784,10 @@ notify_banner_types = ""
 auto_open_chat = false
 
 # Initial side-chat width in canvas units; 0 preserves the native width. Positive values are clamped to available space and the minimum width. Requires mod 1.1.10 or newer.
-default_chat_width = 0
+default_chat_width = 0.0
 
 # Change to true to remove Galaxy Chat from the game
 disable_galaxy_chat = false
-
-# Initial side-chat width in canvas units. 0 keeps the game default.
-# The game clamps positive values to the available screen space and minimum width.
-default_chat_width = 0.0
-
-# Open alliance side chat once per login, after station and chat initialization.
-# Waits for section completion and three continuous seconds of readiness.
-auto_open_chat = false
 
 # Change to true to remove Veil Chat from the game
 disable_veil_chat = false
@@ -812,7 +804,7 @@ extend_chest_purchase_max = 160
 # Subgroup: Daily Goals
 # ---------------------
 
-# Comma-separated factions (federation, klingon, romulan) for which the Daily Goals bulk-claim toggle applies; leave blank to preserve the game's default behaviour
+# Comma-separated factions for Daily Goals bulk claim. Missing or blank uses the default below; "none" skips all three main-faction dailies. Other dailies remain eligible.
 daily_bulk_claim_factions = "federation,klingon,romulan"
 
 # Force the Daily Goals Claim All toggle back on the first time the screen is shown each session

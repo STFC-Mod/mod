@@ -1,6 +1,10 @@
 #pragma once
 
-namespace spud {
+// Build systems set this for the library and its consumers. Direct builds
+// retain unwind support unless explicitly disabled.
+#ifndef SPUD_UNWIND_SUPPORT
+#define SPUD_UNWIND_SUPPORT 1
+#endif
 
 #if defined(__APPLE__)
 #include <TargetConditionals.h>
@@ -30,12 +34,12 @@ namespace spud {
 #define SPUD_ARCH_X86_FAMILY 1
 #define SPUD_ARCH_X86 1
 #define SPUD_ARCH_32_BITS 1
-#define SPUD_ARCH_LE 1
+#define SPUD_ARCH_LITTLE_ENDIAN 1
 #elif defined(_M_X64) || defined(__x86_64__)
 #define SPUD_ARCH_X86_FAMILY 1
 #define SPUD_ARCH_X86_64 1
 #define SPUD_ARCH_64_BITS 1
-#define SPUD_ARCH_LE 1
+#define SPUD_ARCH_LITTLE_ENDIAN 1
 #elif defined(__ARMEL__)
 #define SPUD_ARCH_ARM_FAMILY 1
 #define SPUD_ARCH_ARMEL 1
@@ -44,13 +48,19 @@ namespace spud {
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #define SPUD_ARCH_ARM_FAMILY 1
 #define SPUD_ARCH_ARM64 1
+#if defined(__arm64e__)
+// arm64e signs code pointers; spud cannot emit a validly signed stub.
+#define SPUD_ARCH_ARM64E 1
+#endif
 #define SPUD_ARCH_64_BITS 1
 #define SPUD_ARCH_LITTLE_ENDIAN 1
 #else
 #error "Add support for this architecture"
 #endif
 
-enum Arch {
+namespace spud {
+
+enum class Arch {
   kX86_64 = 0,
   kX86,
   kArm64,

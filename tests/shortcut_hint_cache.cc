@@ -1,7 +1,7 @@
 // Link against the built mods library. Only Unity-dependent Key operations are stubbed;
 // MapKey parsing, ModifierKey parsing, binding detection, and hint caching are production code.
-#include "patches/mapkey.h"
 #include "defaultconfig.h"
+#include "patches/mapkey.h"
 #include "patches/ship_shortcut_hint.h"
 #include <array>
 
@@ -44,7 +44,7 @@ int main()
 {
   // A locked dock F leaves native G at the sixth selectable position (the reported 1,2,3,4,5,7 layout).
   const std::array gapped_fleets{0, 1, 2, 3, 4, 6};
-  auto ship_hint = [&](GameFunction action) {
+  auto             ship_hint = [&](GameFunction action) {
     return ShipShortcutHintAction(action, gapped_fleets.size(), [&](std::size_t i) { return gapped_fleets[i]; });
   };
   Check(ship_hint(GameFunction::SelectShip7) == GameFunction::SelectShip6,
@@ -60,7 +60,7 @@ int main()
           "Contiguous eight-dock hints must keep their original shortcuts");
   }
   const std::array reordered_fleets{7, 0, 2, -1, 6, 4, 1, 3, 5};
-  auto reordered_hint = [&](GameFunction action) {
+  auto             reordered_hint = [&](GameFunction action) {
     return ShipShortcutHintAction(action, reordered_fleets.size(), [&](std::size_t i) { return reordered_fleets[i]; });
   };
   Check(reordered_hint(GameFunction::SelectShip8) == GameFunction::SelectShip1, "Ship hints must follow bar order");

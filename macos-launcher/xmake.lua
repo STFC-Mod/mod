@@ -30,7 +30,7 @@ target("macOSLauncher")
     add_files("src/*.cc")
     add_includedirs("deps/PLzmaSDK")
     add_packages("librsync", "PLzmaSDK")
-    add_ldflags("-lc++")
+    add_ldflags("-lc++", {force = true})
 
     add_values("xcode.bundle_identifier", "com.stfcmod.startrekpatch")
     add_values("xcode.codesign_identity", "-")

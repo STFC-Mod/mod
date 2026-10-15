@@ -1,80 +1,52 @@
-#include <spud/arch.h>
-#include <spud/signature.h>
-
-#include <bit>
-#include <span>
-#include <string_view>
-#include <vector>
+#include "scan.h"
 
 #include <arm_neon.h>
 
-namespace spud {
-namespace detail {
+namespace spud::detail {
 
-void find_matches_neon(std::string_view mask, std::string_view data,
-                       size_t buffer_end, std::span<uint8_t> search_buffer,
-                       std::vector<signature_result> &results) {
-  uint8x16_t first = vdupq_n_u8(0);
-  uint8x16_t second = vdupq_n_u8(0);
+namespace {
 
-  const auto signature_size = std::min(mask.size(), size_t(16));
+// NEON is part of AArch64, so this kernel needs no target attribute.
+struct neon {
+  using vec = uint8x16_t;
+  static constexpr size_t kWidth = 16;
 
-  size_t spread = 0;
-  size_t first_i = 0;
-
-  for (size_t i = 0; i < signature_size; ++i) {
-    if (mask[i] != '?') {
-      first = vdupq_n_u8(static_cast<uint8_t>(data[i]));
-      first_i = i;
-      break;
-    }
+  static vec splat(uint8_t b) {
+    return vdupq_n_u8(b);
   }
-
-  for (size_t i = signature_size - 1; i >= 0; --i) {
-    if (mask[i] != '?') {
-      second = vdupq_n_u8(static_cast<uint8_t>(data[i]));
-      spread = i - first_i;
-      break;
-    }
+  static vec load(const uint8_t *p) {
+    return vld1q_u8(p);
   }
-
-  const auto end = buffer_end - spread - ((buffer_end - spread) % 16);
-
-  for (size_t offset = 0; offset < end; offset += 16) {
-    const uint8x16_t first_block = vld1q_u8(search_buffer.data() + offset);
-    const uint8x16_t second_block = vld1q_u8(search_buffer.data() + offset + spread);
-
-    const uint8x16_t eq_first = vceqq_u8(first, first_block);
-    const uint8x16_t eq_second = vceqq_u8(second, second_block);
-
-    const uint8x16_t input = vandq_u8(eq_first, eq_second);
-    const uint16x8_t high_bits = vreinterpretq_u16_u8(vshrq_n_u8(input, 7));
-    const uint32x4_t paired16 =
-        vreinterpretq_u32_u16(vsraq_n_u16(high_bits, high_bits, 7));
-    const uint64x2_t paired32 =
-        vreinterpretq_u64_u32(vsraq_n_u32(paired16, paired16, 14));
-    const uint8x16_t paired64 =
-        vreinterpretq_u8_u64(vsraq_n_u64(paired32, paired32, 28));
-    uint32_t mm_mask =
-        vgetq_lane_u8(paired64, 0) | ((int)vgetq_lane_u8(paired64, 8) << 8);
-
-    while (mm_mask != 0) {
-      const auto bit_pos = std::countr_zero(mm_mask);
-      if (signature_does_match(offset + bit_pos, mask, data, search_buffer)) {
-        results.emplace_back(
-            signature_result{search_buffer, uintptr_t(offset + bit_pos)});
-      }
-      mm_mask = mm_mask & (mm_mask - 1);
-    }
+  static vec match(vec a, vec x, vec b, vec y) {
+    return vandq_u8(vceqq_u8(a, x), vceqq_u8(b, y));
   }
-
-  // Scan the remainder
-  for (size_t offset = end; offset < buffer_end; ++offset) {
-    if (signature_does_match(offset, mask, data, search_buffer)) {
-      results.emplace_back(signature_result{search_buffer, offset});
-    }
+  static vec either(vec v, vec w) {
+    return vorrq_u8(v, w);
   }
+  static bool any(vec v) {
+    return vmaxvq_u8(v) != 0;
+  }
+  // NEON has no movemask. Keep one weight bit per lane, 1 to 0x80 across
+  // each 8 lanes, and three rounds of pairwise adds fold the four vectors
+  // into 64 bits in lane order.
+  static uint64_t step_bits(const vec *m) {
+    const uint8x16_t weights = {1, 2, 4, 8, 16, 32, 64, 128,
+                                1, 2, 4, 8, 16, 32, 64, 128};
+    const uint8x16_t low =
+        vpaddq_u8(vandq_u8(m[0], weights), vandq_u8(m[1], weights));
+    const uint8x16_t high =
+        vpaddq_u8(vandq_u8(m[2], weights), vandq_u8(m[3], weights));
+    uint8x16_t sum = vpaddq_u8(low, high);
+    sum = vpaddq_u8(sum, sum);
+    return vgetq_lane_u64(vreinterpretq_u64_u8(sum), 0);
+  }
+};
+
+} // namespace
+
+size_t scan_anchors_neon(const pattern_scan &scan, match_fn on_match,
+                         void *ctx) {
+  return scan_anchors<neon>(scan, on_match, ctx);
 }
 
-} // namespace detail
-} // namespace spud
+} // namespace spud::detail
