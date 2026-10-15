@@ -1,5 +1,4 @@
 #include "config.h"
-#include "errormsg.h"
 
 #include <il2cpp/il2cpp-functions.h>
 #include <il2cpp/il2cpp_helper.h>

@@ -8,8 +8,6 @@
 #include <array>
 #include <charconv>
 #include <chrono>
-#include <ctime>
-#include <sstream>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -82,23 +80,33 @@ inline std::string to_string(const Il2CppString* str)
   return result;
 }
 
-inline std::optional<std::chrono::time_point<std::chrono::system_clock>> parse_timestamp(const std::string& timestamp)
+// Seconds since the Unix epoch for a "YYYY-MM-DDTHH:MM:SS" server timestamp, which is UTC. A fraction or
+// zone suffix after the seconds is ignored.
+inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
 {
-#ifdef _WIN32
-  std::istringstream ss(timestamp);
-  std::chrono::system_clock::time_point time_point;
-
-  if (!std::chrono::from_stream(ss, "%Y-%m-%dT%H:%M:%S", time_point)) {
-    return std::nullopt;
+  using namespace std::chrono;
+  // Field widths and the separator that follows each one.
+  constexpr std::array<std::pair<size_t, char>, 6> kFields{{{4, '-'}, {2, '-'}, {2, 'T'}, {2, ':'}, {2, ':'}, {2, 0}}};
+  std::array<int, 6>                               values{};
+  for (size_t i = 0; i < kFields.size(); ++i) {
+    const auto [width, separator] = kFields[i];
+    if (timestamp.size() < width)
+      return std::nullopt;
+    const auto [end, error] = std::from_chars(timestamp.data(), timestamp.data() + width, values[i]);
+    if (error != std::errc{} || end != timestamp.data() + width)
+      return std::nullopt;
+    timestamp.remove_prefix(width);
+    if (separator) {
+      if (timestamp.empty() || timestamp.front() != separator)
+        return std::nullopt;
+      timestamp.remove_prefix(1);
+    }
   }
-
-  return time_point;
-#else
-  std::tm tm = {};
-  if (strptime(timestamp.c_str(), "%Y-%m-%dT%H:%M:%S", &tm) == nullptr) {
+  const auto [year_, month_, day_, hour, minute, second] = values;
+  const year_month_day date{std::chrono::year{year_}, std::chrono::month(static_cast<unsigned>(month_)),
+                            std::chrono::day(static_cast<unsigned>(day_))};
+  if (!date.ok() || hour > 23 || minute > 59 || second > 60)
     return std::nullopt;
-  }
-
-  return std::chrono::system_clock::from_time_t(std::mktime(&tm));
-#endif
+  const auto time = sys_days{date} + hours{hour} + minutes{minute} + seconds{second};
+  return time.time_since_epoch() / seconds{1};
 }

@@ -1,7 +1,6 @@
 #include "ship_tile_click.h"
 
 #include "config.h"
-#include "errormsg.h"
 
 #include "double_click_assign_ship.h"
 #include "pinned_ship_click.h"

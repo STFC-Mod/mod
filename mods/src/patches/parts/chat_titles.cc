@@ -3,7 +3,6 @@
 #include "prime/chat.h"
 
 #include "config.h"
-#include "errormsg.h"
 #include "patches/native_hook_extent.h"
 
 #include <il2cpp/il2cpp-functions.h>

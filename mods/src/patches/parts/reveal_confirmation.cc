@@ -1,5 +1,4 @@
 #include "config.h"
-#include "errormsg.h"
 
 #include <il2cpp/il2cpp_helper.h>
 #include <il2cpp/method_contract.h>

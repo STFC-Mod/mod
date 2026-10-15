@@ -93,6 +93,16 @@ void StringHelpers()
   Check(AsciiStrToLower("FeDeRaTiOn") == "federation", "lower-casing");
 }
 
+void Timestamps()
+{
+  Check(ParseUtcTimestamp("1970-01-01T00:00:00") == 0, "epoch");
+  Check(ParseUtcTimestamp("2024-05-01T12:34:56Z") == 1714566896, "UTC with zone suffix");
+  Check(ParseUtcTimestamp("2024-05-01T12:34:56.789Z") == 1714566896, "fraction ignored");
+  Check(ParseUtcTimestamp("2024-02-30T00:00:00") == std::nullopt, "invalid date");
+  Check(ParseUtcTimestamp("2024-05-01 12:34:56") == std::nullopt, "wrong separator");
+  Check(ParseUtcTimestamp("") == std::nullopt, "empty");
+}
+
 void Chords()
 {
   const auto chord = KeyChord::Parse("ctrl-shift-f1");
@@ -211,6 +221,7 @@ int main()
 {
   ShipHints();
   StringHelpers();
+  Timestamps();
   Chords();
   Loading();
   Matching();
