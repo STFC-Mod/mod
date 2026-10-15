@@ -1,24 +1,81 @@
+// Instant warp: confirms the warp/jump prompt per the configured ship filters, and previews the choice on the
+// system card's visit button.
+
 #include "config.h"
 #include "patches/object_tracker.h"
-
-#include "patches/instant_warp_policy.h"
 #include "patches/patches.h"
-#include "prime/fleet.h"
-#include "prime/viewers.h"
-#include "prime/ui.h"
+#include "ship_name_match.h"
 #include "str_utils.h"
+
+#include <prime/fleet.h>
+#include <prime/navigation.h>
+#include <prime/ui.h>
+#include <prime/viewers.h>
+
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
+#include <spud/detour.h>
 
+#include <algorithm>
 #include <chrono>
 #include <stdexcept>
 
 namespace
 {
-bool installed = false;
+// The action auto-confirm takes for `fleet`: always-ask wins, then auto-jump, then auto-warp, then the default.
+InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
+{
+  const auto& cfg           = Config::Get();
+  const auto  display_words = ShipNameMatch::DisplayWords(fleet);
+  const auto  matches       = [&display_words](const std::vector<std::string>& names, bool all) {
+    return all || (!display_words.empty() && std::ranges::any_of(names, [&](const auto& configured) {
+             return ShipNameMatch::MatchesDisplay(display_words, ShipNameMatch::SplitWords(configured));
+           }));
+  };
+  if (matches(cfg.instant_warp_always_ask, cfg.instant_warp_always_ask_all))
+    return InstantWarpConfirmation::None;
+  if (matches(cfg.instant_warp_auto_jump, cfg.instant_warp_auto_jump_all))
+    return InstantWarpConfirmation::Jump;
+  if (matches(cfg.instant_warp_auto_warp, cfg.instant_warp_auto_warp_all))
+    return InstantWarpConfirmation::Warp;
+  return cfg.auto_confirm_instant_warp;
+}
 
-// Runs on the ScreenManager.Update tick, not another UI detour.
-// Never mutate the button context, timer, resource cost, or click handler.
+void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromptPopupViewController* _this)
+{
+  original(_this);
+
+  const auto widget  = _this == nullptr ? nullptr : _this->PopupWidget();
+  const auto context = widget == nullptr ? nullptr : widget->Context();
+  if (context == nullptr || !context->HasInstantWarp()) {
+    return;
+  }
+
+  FleetPlayerData* fleet = nullptr;
+  if (const auto course = context->GetCourseData(); course != nullptr)
+    fleet = course->PlayerFleet();
+  const auto action = ResolveConfirmation(fleet);
+  spdlog::debug("InstantWarpConfirmation: resolved action {}", static_cast<int>(action));
+  switch (action) {
+    case InstantWarpConfirmation::Warp:
+      widget->InitiateRegularWarp();
+      break;
+    case InstantWarpConfirmation::Jump:
+      widget->OnInstantWarpButtonClick();
+      break;
+    case InstantWarpConfirmation::None:
+      break;
+  }
+}
+} // namespace
+
+namespace
+{
+// The system card's visit button reads WARP or JUMP when auto-confirm would pick one. This runs on the frame
+// tick rather than another UI detour, and only overrides the label text: never the button's context, timer,
+// resource cost, or click handler.
+bool label_installed = false;
+
 // Unity's `bool(UnityEngine.Object)`: false for null and for destroyed native objects.
 bool Alive(il2cpp::Object* object)
 {
@@ -80,7 +137,7 @@ struct OwnedLabel {
 };
 OwnedLabel action_label;
 
-void Update()
+void UpdateLabel()
 {
   static auto next = std::chrono::steady_clock::time_point{};
   const auto  now  = std::chrono::steady_clock::now();
@@ -101,7 +158,7 @@ void Update()
       auto* deployment = DeploymentManger::Instance();
       auto* fleet      = Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
       if (fleet && Alive(deployment) && deployment->HasInstantWarpAbility(fleet)) {
-        switch (ResolveInstantWarpConfirmation(fleet)) {
+        switch (ResolveConfirmation(fleet)) {
           case InstantWarpConfirmation::Warp:
             desired = "WARP";
             break;
@@ -131,13 +188,22 @@ void Update()
 
 void WarpActionLabelUpdate()
 {
-  if (installed)
-    Update();
+  if (label_installed)
+    UpdateLabel();
 }
 
-void InstallWarpActionLabel()
+void InstallInstantWarpConfirmationHooks()
 {
-  installed = InstallScreenManagerUpdateHook();
-  if (installed)
+  // The hook is useless without both popup actions, so skip it (and the label) when either has drifted.
+  const auto about_to_show = CoursePromptPopupViewController::Class::Method("AboutToShow", 0);
+  if (!about_to_show || !CoursePromptPopupWidget::Class::Method("InitiateRegularWarp", 0)
+      || !CoursePromptPopupWidget::Class::Method("OnInstantWarpButtonClick", 0)) {
+    return;
+  }
+
+  if (!SPUD_STATIC_DETOUR(about_to_show.Pointer(), CoursePromptPopupViewController_AboutToShow_Hook))
+    return;
+  label_installed = InstallScreenManagerUpdateHook();
+  if (label_installed)
     spdlog::info("[WarpActionLabel] system-card action labels enabled");
 }

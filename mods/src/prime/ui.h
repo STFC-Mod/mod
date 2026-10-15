@@ -6,6 +6,8 @@
 
 #include <il2cpp/il2cpp.h>
 
+#include <string_view>
+
 #include <cstdint>
 
 // Unity singletons expose a static Instance on their MonoSingleton`1<T> base.
@@ -104,6 +106,17 @@ struct TextLocalizer : il2cpp::Object {
   // Declared on GraphicLocalizer<,>.
   Il2CppString* identifier()
   { return Field<"m_identifier", Il2CppString*>(); }
+  // Compares the identifier to an ASCII name without allocating; these localizers render on every UI update.
+  bool IdentifierIs(std::string_view name)
+  {
+    auto* id = identifier();
+    if (!id || static_cast<size_t>(id->length) != name.size())
+      return false;
+    for (size_t i = 0; i < name.size(); ++i)
+      if (id->chars[i] != static_cast<Il2CppChar>(name[i]))
+        return false;
+    return true;
+  }
   // The backing field, not the SignificantDecimals property.
   int32_t significantDecimals()
   { return Field<"m_significantDecimals", int32_t>(); }
