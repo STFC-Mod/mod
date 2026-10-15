@@ -14,123 +14,23 @@
 
 // What a shortcut does. Each [shortcuts] setting binds key chords to one action.
 enum class Action : uint8_t {
-  kMoveLeft,
-  kMoveRight,
-  kMoveUp,
-  kMoveDown,
-  kSelectChatAlliance,
-  kSelectChatGlobal,
-  kSelectChatPrivate,
-  kSelectShip1,
-  kSelectShip2,
-  kSelectShip3,
-  kSelectShip4,
-  kSelectShip5,
-  kSelectShip6,
-  kSelectShip7,
-  kSelectShip8,
-  kSelectCurrent,
-  kShowAlliance,
-  kShowAllianceArmada,
-  kShowAllianceHelp,
-  kShowArtifacts,
-  kShowOfficers,
-  kShowOfficerPresets,
-  kShowCommander,
-  kShowRefinery,
-  kShowQTrials,
-  kShowBookmarks,
-  kShowLookup,
-  kShowExoComp,
-  kShowFactions,
-  kShowGifts,
-  kShowDaily,
-  kShowAwayTeam,
-  kShowMissions,
-  kShowResearch,
-  kShowScrapYard,
-  kShowShips,
-  kShowInventory,
-  kShowStationInterior,
-  kShowHaven,
-  kShowStationExterior,
-  kShowGalaxy,
-  kNativeShortcutGalaxy,
-  kShowSystem,
-  kShowChat,
-  kShowChatSide1,
-  kShowChatSide2,
-  kShowEvents,
-  kNativeShortcutEvents,
-  kShowSettings,
-  kToggleShortcutHints,
-  kZoomPreset1,
-  kZoomPreset2,
-  kZoomPreset3,
-  kZoomPreset4,
-  kZoomPreset5,
-  kZoomIn,
-  kZoomOut,
-  kZoomMin,
-  kZoomMax,
-  kZoomReset,
-  kUiScaleUp,
-  kUiScaleDown,
-  kUiShipScaleUp,
-  kUiShipScaleDown,
-  kUiViewerScaleUp,
-  kUiViewerScaleDown,
-  kActionPrimary,
-  kActionSecondary,
-  kActionQueue,
-  kActionQueueClear,
-  kActionView,
-  kActionRecall,
-  kActionRecallCancel,
-  kActionRepair,
-  kSetZoomPreset1,
-  kSetZoomPreset2,
-  kSetZoomPreset3,
-  kSetZoomPreset4,
-  kSetZoomPreset5,
-  kSetZoomDefault,
-  kDisableHotKeys,
-  kEnableHotKeys,
-  kToggleQueue,
-  kToggleAutoConfirmInstantWarp,
-  kTogglePreviewLocate,
-  kTogglePreviewRecall,
-  kToggleCargoDefault,
-  kToggleCargoPlayer,
-  kToggleCargoStation,
-  kToggleCargoHostile,
-  kToggleCargoArmada,
-  kLogLevelDebug,
-  kLogLevelInfo,
-  kLogLevelTrace,
-  kLogLevelError,
-  kLogLevelWarn,
-  kLogLevelOff,
-  kRestart,
-  kReloadSettings,
-  kQuit,
-  kFocusSearch,
-  kShowShipConstruction,
-  kShowOfficerSwap,
-  kShowShipSwap,
-  kShowShields,
-  kShowBattlelogs,
-
+#define SHORTCUT(action, ...) action,
+#include "shortcuts.def"
+#undef SHORTCUT
   kCount
 };
 
 // One key with its required modifiers, such as CTRL-SHIFT-F1.
 struct KeyChord {
   unity::KeyCode key = unity::KeyCode::None;
-  // Each group is satisfied by either of its keys: SHIFT is {LeftShift, RightShift}, LSHIFT is LeftShift twice.
-  std::vector<std::array<unity::KeyCode, 2>> modifiers;
-  // The upper-cased tokens for display, modifiers first and the key last: {"CTRL", "SHIFT", "F1"}.
-  std::vector<std::string> tokens;
+  struct Modifier {
+    std::string_view name;
+    // SHIFT accepts either side; LSHIFT stores LeftShift twice.
+    std::array<unity::KeyCode, 2> keys;
+    std::string_view              hint;
+  };
+  // Points into the immutable modifier catalog; spelling, matching and badge text share one definition.
+  std::vector<const Modifier*> modifiers;
 
   // Parses one chord. Unknown tokens are ignored; a chord without a non-modifier key has key == None. With two
   // keys, the last one counts.
@@ -140,18 +40,19 @@ struct KeyChord {
   std::string Text() const;
   // Compact form for the game's keybind badges: "^+F1".
   std::string Hint() const;
+
+private:
+  std::string key_name_;
 };
 
 namespace Shortcut
 {
-// Replaces every binding with the [shortcuts] entries from `config`, and records the effective bindings and where
-// each came from in `parsed` ([shortcuts] and [shortcuts_source]). `extended` and `experimental` gate the optional
-// actions.
-void Load(const toml::table& config, toml::table& parsed, bool extended, bool experimental);
+using Bindings = std::array<std::vector<KeyChord>, static_cast<size_t>(Action::kCount)>;
 
-// Adds a binding directly. Load uses this; tests use it to set up bindings.
-void Bind(Action action, KeyChord chord);
-void Clear();
+// Parses [shortcuts] without changing live input. Records effective bindings and their sources in `parsed`.
+Bindings Parse(const toml::table& config, toml::table& parsed, bool extended, bool experimental);
+// Activates a complete set of bindings and releases keys owned by the previous set. Game thread only.
+void Set(Bindings bindings) noexcept;
 
 bool HasBinding(Action action);
 // Any binding of `action` is held with its modifiers. A binding without modifiers needs none held; one with

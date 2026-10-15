@@ -6,6 +6,7 @@
 // the game thread except sync, which only reads.
 
 #include "patches/parts/notification_audio.h"
+#include "patches/shortcuts.h"
 
 #include <toml++/toml.h>
 
@@ -345,10 +346,11 @@ public:
 
   // Settings from a parsed settings file; an empty table gives the defaults. `effective` receives every value
   // used, which becomes the runtime vars file. Logs what it rejects, and each value at debug level when
-  // `log_values`. Also rebinds the shortcuts.
+  // `log_values`. Does not change the live settings or shortcuts.
   static std::unique_ptr<Config> Parse(const toml::table& file, toml::table& effective, bool log_values);
 
 private:
+  Shortcut::Bindings shortcuts_;
   Config() = default;
   void Read(const toml::table& file, toml::table& effective, bool log_values);
 };

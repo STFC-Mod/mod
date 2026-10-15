@@ -413,6 +413,7 @@ Config& Config::Get()
               << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
               << "\n\n";
 #endif
+    Shortcut::Set(std::move(config->shortcuts_));
     current_config.store(config, std::memory_order_release);
     return config;
   }();
@@ -439,7 +440,6 @@ bool Config::Reload()
     next = Parse(file, effective, true);
     SaveEffective(effective, false);
   } catch (const std::exception& e) {
-    // Shortcuts may already be rebound from the new file; everything else keeps the current settings.
     spdlog::error("Settings not reloaded: {}", e.what());
     return false;
   }
@@ -447,6 +447,7 @@ bool Config::Reload()
   if (!(next->patches == Get().patches))
     spdlog::warn("Changes to [patches] take effect after a restart");
   next->patches = Get().patches;
+  Shortcut::Set(std::move(next->shortcuts_));
   // Never freed, see current_config.
   current_config.store(next.release(), std::memory_order_release);
   return true;
@@ -722,5 +723,5 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   r.Read("config", "settings_url", game.settings_url);
   r.Read("config", "assets_url_override", game.assets_url_override);
 
-  Shortcut::Load(config, parsed, control.hotkeys_extended, control.enable_experimental);
+  shortcuts_ = Shortcut::Parse(config, parsed, control.hotkeys_extended, control.enable_experimental);
 }

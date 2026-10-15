@@ -40,9 +40,8 @@ void Hold(std::initializer_list<unity::KeyCode> keys)
 
 toml::table Load(std::string_view settings, bool extended = true, bool experimental = false)
 {
-  Shortcut::Clear();
   toml::table parsed;
-  Shortcut::Load(toml::parse(settings), parsed, extended, experimental);
+  Shortcut::Set(Shortcut::Parse(toml::parse(settings), parsed, extended, experimental));
   return parsed;
 }
 
@@ -51,7 +50,7 @@ std::string Value(const toml::table& parsed, std::string_view section, std::stri
 
 void ShipHints()
 {
-  Shortcut::Clear();
+  Shortcut::Set({});
   // A locked dock F leaves native G at the sixth selectable position (the reported 1,2,3,4,5,7 layout).
   const std::array gapped_fleets{0, 1, 2, 3, 4, 6};
   auto             ship_hint = [&](Action action) {
@@ -80,7 +79,9 @@ void ShipHints()
         "Fleet beyond the eight supported mod shortcuts must not advertise a shortcut");
   Check(Shortcut::Hint(ship_hint(Action::kSelectShip7)).empty(),
         "Unbound ship selection must not advertise a working shortcut");
-  Shortcut::Bind(Action::kSelectShip6, KeyChord::Parse("CTRL-F8"));
+  Shortcut::Bindings custom{};
+  custom[static_cast<size_t>(Action::kSelectShip6)].push_back(KeyChord::Parse("CTRL-F8"));
+  Shortcut::Set(std::move(custom));
   Check(Shortcut::Hint(ship_hint(Action::kSelectShip7)) == "^F8",
         "Gapped ship hint must use the actual custom binding, not a hardcoded number");
 }
@@ -155,6 +156,42 @@ void Chords()
   Check(KeyChord::Parse("pgup-lshift").Hint() == "<+PU", "modifiers come first in the badge");
 }
 
+void KeyRanges()
+{
+  for (const auto [name, key] : {std::pair{"A", unity::KeyCode::A},
+                                 {"Z", unity::KeyCode::Z},
+                                 {"0", unity::KeyCode::Alpha0},
+                                 {"9", unity::KeyCode::Alpha9},
+                                 {"F1", unity::KeyCode::F1},
+                                 {"F9", unity::KeyCode::F9},
+                                 {"F10", unity::KeyCode::F10},
+                                 {"F15", unity::KeyCode::F15},
+                                 {"KEY0", unity::KeyCode::Keypad0},
+                                 {"KEY9", unity::KeyCode::Keypad9}}) {
+    const auto chord = KeyChord::Parse(name);
+    Check(chord.key == key && chord.Text() == name && chord.Hint() == name, "key range and display compatibility");
+  }
+  for (const auto name : {"F0", "F16", "F01", "F1X", "KEY00", "KEY10", "KEY", "KEY1X", "F999999999999"})
+    Check(KeyChord::Parse(name).key == unity::KeyCode::None, "out-of-range and noncanonical names stay invalid");
+}
+void DefaultBindings()
+{
+  const auto fixture = toml::parse_file(STFC_SHORTCUT_DEFAULTS);
+  for (const auto [extended, experimental] : {std::pair{false, false}, {false, true}, {true, false}, {true, true}}) {
+    const auto parsed = Load("", extended, experimental);
+    for (const auto& [tier, entries] : fixture) {
+      const bool enabled = tier == "always" || (extended && (tier == "extended" || experimental));
+      for (const auto& [key, expected] : *entries.as_table()) {
+        if (enabled) {
+          Check(Value(parsed, "shortcuts", key.str()) == expected.value_or(std::string{}),
+                "default chord compatibility");
+          Check(Value(parsed, "shortcuts_source", key.str()) == "default", "default binding source compatibility");
+        } else
+          Check(!parsed["shortcuts"][key.str()], "optional shortcut gates stay unchanged");
+      }
+    }
+  }
+}
 void Loading()
 {
   auto parsed = Load(R"(
@@ -182,8 +219,7 @@ void Loading()
   Check(Value(parsed, "shortcuts_source", "set_hotkeys_disabled") == "alias:set_hotkeys_disble", "alias source");
 
   Check(Shortcut::HasBinding(Action::kShowBookmarks), "extended shortcuts load when extended");
-  Shortcut::Bind(Action::kQuit, KeyChord::Parse("F1"));
-  Shortcut::Load(toml::table{}, parsed, true, false);
+  parsed = Load("");
   Check(Shortcut::Describe(Action::kQuit) == "F10", "loading again replaces earlier bindings");
   Check(!Shortcut::HasBinding(Action::kShowLookup), "experimental shortcuts need experimental");
   parsed = Load("", false);
@@ -406,6 +442,15 @@ void RenamedSettings()
   Check(both->graphics.ui_scale_step == 0.2f, "the new name wins over the old one");
 }
 
+void ParseDoesNotActivateSettings()
+{
+  Load("[shortcuts]\nquit = \"F1\"");
+  toml::table effective;
+  const auto  candidate = Config::Parse(toml::parse("[shortcuts]\nquit = \"F2\""), effective, false);
+  Check(Shortcut::Describe(Action::kQuit) == "F1", "parsing settings leaves the live bindings alone");
+  Check(Value(effective, "shortcuts", "quit") == "F2", "the candidate records its own bindings");
+}
+
 void Matching()
 {
   Load(""); // defaults: move_down = "S|DOWN", toggle_shortcut_hints = "HOME"
@@ -434,7 +479,7 @@ void Matching()
   Check(Shortcut::IsPressed(Action::kUiScaleUp), "plain chord after a release");
 
   // A modified movement binding keeps moving while its modifier is held.
-  Shortcut::Bind(Action::kMoveDown, KeyChord::Parse("CTRL-DOWN"));
+  Load("[shortcuts]\nmove_down = \"CTRL-DOWN\"");
   Hold({unity::KeyCode::LeftControl, unity::KeyCode::DownArrow});
   Check(Shortcut::IsDown(Action::kMoveDown) && Shortcut::IsDown(Action::kMoveDown),
         "explicit movement chord keeps matching");
@@ -486,12 +531,15 @@ int main()
   ToastText();
   ShipNames();
   Chords();
+  KeyRanges();
+  DefaultBindings();
   Loading();
   ExampleSettings();
   NotificationAudio();
   DailyFactionSettings();
   UpstreamSettings();
   RenamedSettings();
+  ParseDoesNotActivateSettings();
   Matching();
   ChatStartupGate();
   if (failures)

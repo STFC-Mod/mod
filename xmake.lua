@@ -70,6 +70,7 @@ target("mod-logic-tests")
         add_syslinks("shell32", "winmm")
     end
     add_defines('STFC_EXAMPLE_SETTINGS="' .. path.translate(path.absolute("example_community_patch_settings_en.toml"), "/") .. '"')
+    add_defines('STFC_SHORTCUT_DEFAULTS="' .. path.translate(path.absolute("tests/shortcut_defaults.toml"), "/") .. '"')
 
 target("sync-logic-tests")
     set_kind("binary")
