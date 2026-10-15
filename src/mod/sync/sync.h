@@ -137,9 +137,13 @@ enum class Stream {
   kTraits,
   kCount
 };
-using RecordSet = std::map<nlohmann::json, nlohmann::json>;
+// Keep recursive JSON ordering out of each record producer's translation unit.
+struct RecordKeyLess {
+  bool operator()(const nlohmann::json& a, const nlohmann::json& b) const;
+};
+using RecordSet = std::map<nlohmann::json, nlohmann::json, RecordKeyLess>;
 // Records are immutable and shared by current state and target cursors, so targets do not copy whole JSON trees.
-using Snapshot                         = std::map<nlohmann::json, std::shared_ptr<const nlohmann::json>>;
+using Snapshot                         = std::map<nlohmann::json, std::shared_ptr<const nlohmann::json>, RecordKeyLess>;
 using Clock                            = std::chrono::steady_clock;
 inline constexpr size_t kRecentBattles = 300;
 // Fleet changes are a journal too, bounded like battles.

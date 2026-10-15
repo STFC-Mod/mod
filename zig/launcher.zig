@@ -29,6 +29,8 @@ pub fn add(ctx: *const Ctx) void {
     });
     const bridge = ctx.staticLib("launcher-bridge", bridge_module);
 
+    // Compile all Swift sources as one module into one object. This needs only headers, so it runs while the
+    // native archives build; only the link waits for them.
     const src = b.path("src/launcher/macos");
     const swift = b.addSystemCommand(&.{ "xcrun", "swiftc", "-parse-as-library" });
     swift.addArgs(&.{ "-module-name", "macOSLauncher" });
@@ -38,7 +40,10 @@ pub fn add(ctx: *const Ctx) void {
     swift.addArgs(&.{ "-Xcc", "-fmodules", "-Xcc" });
     swift.addPrefixedFileArg("-fmodule-map-file=", src.path(b, "module.modulemap"));
     swift.addArgs(&.{ if (ctx.optimize == .Debug) "-Onone" else "-O", "-g" });
+    swift.addArgs(&.{ "-emit-object", "-whole-module-optimization" });
     for (globFiles(b, src, "", &.{".swift"}, &.{})) |file| swift.addFileArg(src.path(b, file));
+    swift.addArg("-o");
+    const object = swift.addOutputFileArg("macOSLauncher.o");
 
     const extractor = b.addExecutable(.{
         .name = "extract-macho-archive",
@@ -48,10 +53,12 @@ pub fn add(ctx: *const Ctx) void {
             .optimize = .Debug,
         }),
     });
-    swift.addFileArg(appleArchive(b, extractor, "liblauncher-bridge.a", bridge));
-    swift.addFileArg(appleArchive(b, extractor, "librsync.a", rsync.artifact.?));
-    swift.addArgs(&.{ "-lc++", "-o" });
-    const exe = swift.addOutputFileArg("macOSLauncher");
+    const link = b.addSystemCommand(&.{ "xcrun", "swiftc", "-sdk", sdk, "-target", swift_target, "-g" });
+    link.addFileArg(object);
+    link.addFileArg(appleArchive(b, extractor, "liblauncher-bridge.a", bridge));
+    link.addFileArg(appleArchive(b, extractor, "librsync.a", rsync.artifact.?));
+    link.addArgs(&.{ "-lc++", "-o" });
+    const exe = link.addOutputFileArg("macOSLauncher");
     step.dependOn(&b.addInstallFile(exe, "macOSLauncher.app/Contents/MacOS/macOSLauncher").step);
 
     installBundleResources(ctx, step);

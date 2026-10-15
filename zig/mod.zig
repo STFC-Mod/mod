@@ -105,7 +105,20 @@ pub fn add(ctx: *const Ctx, libs: []const Lib) void {
 fn addModSources(ctx: *const Ctx, module: *std.Build.Module, flags: []const []const u8) void {
     const b = ctx.b;
     const root = b.path("src/mod");
-    module.addCSourceFiles(.{ .root = root, .files = globFiles(b, root, "", &.{".cc"}, &.{}), .flags = flags });
+    if (ctx.isMacos() and ctx.optimize == .ReleaseFast) {
+        // Release builds on macOS spend most of their time parsing game headers. Batches of four features share
+        // that work; the heavy sync units stay separate so they keep compiling in parallel.
+        const features = globFiles(b, root, "features", &.{".cc"}, &.{});
+        var start: usize = 0;
+        while (start < features.len) : (start += 4) {
+            const batch = features[start..@min(start + 4, features.len)];
+            ctx.addCxxBatch(module, b.fmt("features-{d}", .{start}), root, batch, flags);
+        }
+        const rest = globFiles(b, root, "", &.{".cc"}, &.{"features/"});
+        module.addCSourceFiles(.{ .root = root, .files = rest, .flags = flags });
+    } else {
+        module.addCSourceFiles(.{ .root = root, .files = globFiles(b, root, "", &.{".cc"}, &.{}), .flags = flags });
+    }
 
     if (ctx.isMacos()) {
         module.addCSourceFiles(.{ .root = root, .files = globFiles(b, root, "", &.{".mm"}, &.{}), .flags = flags });
