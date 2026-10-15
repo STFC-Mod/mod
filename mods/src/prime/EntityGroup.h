@@ -1,45 +1,22 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
 #include <cstdint>
 
-struct System_Byte_array {
-  Il2CppObject        obj;
-  Il2CppArrayBounds*  bounds;
-  il2cpp_array_size_t max_length;
-  uint8_t             m_Items[65535];
+struct ByteString : il2cpp::Object {
+  using Class = il2cpp::Class<"Google.Protobuf", "Google.Protobuf", "ByteString">;
+
+  il2cpp::Array<uint8_t>* bytes()
+  { return Field<"bytes", il2cpp::Array<uint8_t>*>(); }
+  int32_t Length()
+  { return Get<"Length", int32_t>(); }
 };
 
-struct ByteString {
-public:
-  __declspec(property(get = __get_bytes)) System_Byte_array* bytes;
-  __declspec(property(get = __get_Length)) int32_t           Length;
+struct EntityGroup : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntityGroup">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Google.Protobuf", "Google.Protobuf", "ByteString");
-    return class_helper;
-  }
-
-public:
-  System_Byte_array* __get_bytes()
-  {
-    static auto field = get_class_helper().GetField("bytes");
-    return *(System_Byte_array**)((ptrdiff_t)this + field.offset());
-  }
-
-  int32_t __get_Length()
-  {
-    static auto prop = get_class_helper().GetProperty("Length");
-    return *prop.Get<int32_t>(this);
-  }
-};
-
-struct EntityGroup {
-public:
-  enum Type {
+  enum Type : int32_t {
     UserProfiles                             = 0,   // 0x00000000
     HullSpecs                                = 1,   // 0x00000001
     ResourceSpecs                            = 2,   // 0x00000002
@@ -290,27 +267,8 @@ public:
     ResearchConfig       = 91100, // 0x000163DC
   };
 
-  __declspec(property(get = __get_Type)) Type Type_;
-  __declspec(property(get = __get_ByteString)) ByteString* Group;
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntityGroup");
-    return class_helper;
-  }
-
-public:
-  ByteString* __get_ByteString()
-  {
-    static auto prop = get_class_helper().GetProperty("Group");
-    return prop.GetRaw<ByteString>(this);
-  }
-
-  Type __get_Type()
-  {
-    static auto prop = get_class_helper().GetProperty("Type");
-    return *prop.Get<Type>(this);
-  }
+  Type Type_()
+  { return Get<"Type", Type>(); }
+  ByteString* Group()
+  { return Get<"Group", ByteString*>(); }
 };

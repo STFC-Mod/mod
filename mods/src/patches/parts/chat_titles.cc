@@ -40,7 +40,7 @@ bool IsChatRow(void* profile_widget)
     if (!gameObject) {
       return false;
     }
-    if (reinterpret_cast<GameObject*>(gameObject)->GetComponentFastPath2<ChatMessageWidget>()) {
+    if (reinterpret_cast<GameObject*>(gameObject)->GetComponent<ChatMessageWidget>()) {
       return true;
     }
     transform = InvokeSelf(transform, "get_parent");
@@ -64,7 +64,7 @@ void ApplyTitleDisplay(void* profile_widget)
   }
 
   const auto show  = Config::Get().show_player_title;
-  auto*      title = widget->_playerTitleWidget;
+  auto*      title = widget->playerTitleWidget();
   if (show || title == nullptr) {
     return;
   }
@@ -97,7 +97,7 @@ void PlayerTitleWidget_BindPath_Hook(auto original, void* _this)
     for (int hops = 0; hops < 32 && transform && !owner; ++hops) {
       auto* gameObject = reinterpret_cast<GameObject*>(InvokeSelf(transform, "get_gameObject"));
       if (gameObject) {
-        owner = gameObject->GetComponentFastPath2<UserProfileWidget>();
+        owner = gameObject->GetComponent<UserProfileWidget>();
       }
       transform = InvokeSelf(transform, "get_parent");
     }
@@ -141,21 +141,21 @@ void InstallChatTitleDisplayHooks()
   if (auto profile_widget =
           il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileWidget");
       !profile_widget.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.PlayerProfile", "UserProfileWidget");
+    spdlog::warn("Missing class {}.{}", "Digit.Prime.PlayerProfile", "UserProfileWidget");
   } else if ((update_player_title = profile_widget.GetMethod("UpdatePlayerTitle", 0)) == nullptr) {
-    ErrorMsg::MissingMethod("UserProfileWidget", "UpdatePlayerTitle");
+    spdlog::warn("Missing method {}.{}", "UserProfileWidget", "UpdatePlayerTitle");
   }
 
   void* set_widget_data     = nullptr;
   void* on_did_bind_context = nullptr;
   if (auto title_widget = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget");
       !title_widget.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.PlayerAvatars", "PlayerTitleWidget");
+    spdlog::warn("Missing class {}.{}", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget");
   } else {
     set_widget_data     = title_widget.GetMethod("SetWidgetData", 0);
     on_did_bind_context = title_widget.GetMethod("OnDidBindContext", 0);
     if (!set_widget_data || !on_did_bind_context) {
-      ErrorMsg::MissingMethod("PlayerTitleWidget", set_widget_data ? "OnDidBindContext" : "SetWidgetData");
+      spdlog::warn("Missing method {}.{}", "PlayerTitleWidget", set_widget_data ? "OnDidBindContext" : "SetWidgetData");
       set_widget_data     = nullptr;
       on_did_bind_context = nullptr;
     }

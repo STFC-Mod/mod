@@ -1,9 +1,12 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
 #include "HullSpec.h"
 
-enum class DeployedFleetType {
+#include <il2cpp/il2cpp.h>
+
+#include <cstdint>
+
+enum class DeployedFleetType : int32_t {
   Nonexistent,
   Player,
   Marauder,
@@ -13,48 +16,14 @@ enum class DeployedFleetType {
   Challenge,
 };
 
-struct FleetDeployedData {
-public:
-  __declspec(property(get = __get_ID)) long ID;
-  __declspec(property(get = __get_Hull)) HullSpec* Hull;
-  __declspec(property(get = __get_FleetType)) DeployedFleetType FleetType;
+struct FleetDeployedData : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData");
-    return class_helper;
-  }
-
-public:
-  long __get_ID()
-  {
-    static auto field = get_class_helper().GetProperty("ID");
-    return *field.Get<long>(this);
-  }
-
-  HullSpec* __get_Hull()
-  {
-    static auto field = get_class_helper().GetProperty("Hull");
-    return field.GetRaw<HullSpec>(this);
-  }
-
-  DeployedFleetType __get_FleetType()
-  {
-    static auto field = get_class_helper().GetProperty("FleetType");
-    return *field.Get<DeployedFleetType>(this);
-  }
-
-  bool TryGetFleetType(DeployedFleetType& fleet_type)
-  {
-    static auto property = get_class_helper().GetProperty("FleetType");
-    const auto* value    = property.Get<DeployedFleetType>(this);
-    if (value == nullptr) {
-      return false;
-    }
-
-    fleet_type = *value;
-    return true;
-  }
+  int64_t ID()
+  { return Get<"ID", int64_t>(); }
+  HullSpec* Hull()
+  { return Get<"Hull", HullSpec*>(); }
+  // Nonexistent when the property is missing.
+  DeployedFleetType FleetType()
+  { return Get<"FleetType", DeployedFleetType>(); }
 };

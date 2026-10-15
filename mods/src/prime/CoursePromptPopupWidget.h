@@ -2,78 +2,36 @@
 
 #include "CourseData.h"
 #include "GenericButtonWidget.h"
+#include "ViewController.h"
 #include "Widget.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class CoursePromptPopupDataContext
-{
-public:
-  __declspec(property(get = __get_HasInstantWarp)) bool HasInstantWarp;
+struct CoursePromptPopupDataContext : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "CoursePromptPopupDataContext">;
 
-  bool __get_HasInstantWarp()
-  {
-    static auto field = get_class_helper().GetField("HasInstantWarp");
-    return *(bool*)((char*)this + field.offset());
-  }
-
+  bool HasInstantWarp()
+  { return Field<"HasInstantWarp", bool>(); }
   CourseData* GetCourseData()
-  {
-    static auto field = get_class_helper().GetField("CourseData");
-    return *(CourseData**)((char*)this + field.offset());
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "CoursePromptPopupDataContext");
-    return class_helper;
-  }
+  { return Field<"CourseData", CourseData*>(); }
 };
 
-struct CoursePromptPopupWidget : public Widget<CoursePromptPopupDataContext, CoursePromptPopupWidget> {
-public:
-  __declspec(property(get = __get_LeftButton)) GenericButtonWidget* LeftButton;
-  __declspec(property(get = __get_RightButton)) GenericButtonWidget* RightButton;
+struct CoursePromptPopupWidget : Widget<CoursePromptPopupDataContext> {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "CoursePromptPopupWidget">;
 
-  GenericButtonWidget* __get_LeftButton()
-  {
-    static auto field = get_class_helper().GetField("_leftButton");
-    return *(GenericButtonWidget**)((char*)this + field.offset());
-  }
-
-  GenericButtonWidget* __get_RightButton()
-  {
-    static auto field = get_class_helper().GetField("_rightButton");
-    return *(GenericButtonWidget**)((char*)this + field.offset());
-  }
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "CoursePromptPopupWidget");
-    return class_helper;
-  }
-
-private:
-  friend struct Widget<CoursePromptPopupDataContext, CoursePromptPopupWidget>;
+  GenericButtonWidget* LeftButton()
+  { return Field<"_leftButton", GenericButtonWidget*>(); }
+  GenericButtonWidget* RightButton()
+  { return Field<"_rightButton", GenericButtonWidget*>(); }
+  void InitiateRegularWarp()
+  { Call<"InitiateRegularWarp">(); }
+  void OnInstantWarpButtonClick()
+  { Call<"OnInstantWarpButtonClick">(); }
 };
 
-struct CoursePromptPopupViewController {
-public:
-  __declspec(property(get = __get_PopupWidget)) CoursePromptPopupWidget* PopupWidget;
+struct CoursePromptPopupViewController : ViewController<CoursePromptPopupDataContext> {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "CoursePromptPopupViewController">;
 
-  CoursePromptPopupWidget* __get_PopupWidget()
-  {
-    static auto field = get_class_helper().GetField("_coursePromptPopupWidget");
-    return *(CoursePromptPopupWidget**)((char*)this + field.offset());
-  }
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ObjectViewer", "CoursePromptPopupViewController");
-    return class_helper;
-  }
+  CoursePromptPopupWidget* PopupWidget()
+  { return Field<"_coursePromptPopupWidget", CoursePromptPopupWidget*>(); }
 };

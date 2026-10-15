@@ -28,23 +28,23 @@ struct FakeClass {
   bool                           is_enum    = false;
 };
 
-std::deque<FakeClass>                         classes;
-std::deque<MethodInfo>                        methods;
-std::deque<std::vector<const Il2CppType*>>    parameter_lists;
-std::deque<Il2CppType>                        field_types;
+std::deque<FakeClass>                              classes;
+std::deque<MethodInfo>                             methods;
+std::deque<std::vector<const Il2CppType*>>         parameter_lists;
+std::deque<Il2CppType>                             field_types;
 std::unordered_map<const Il2CppClass*, FakeClass*> registry;
-std::vector<std::string>                      errors;
-std::vector<const Il2CppClass*>               initialized;
-int                                           method_lookups = 0;
+std::vector<std::string>                           errors;
+std::vector<const Il2CppClass*>                    initialized;
+int                                                method_lookups = 0;
 
 FakeClass& Define(const char* namespaze, const char* name, Il2CppTypeEnum type, FakeClass* parent = nullptr,
                   int32_t value_size = 0)
 {
-  auto& fake               = classes.emplace_back();
-  fake.klass.name          = name;
-  fake.klass.namespaze     = namespaze;
-  fake.klass.parent        = parent ? &parent->klass : nullptr;
-  fake.klass.byval_arg.type = type;
+  auto& fake                      = classes.emplace_back();
+  fake.klass.name                 = name;
+  fake.klass.namespaze            = namespaze;
+  fake.klass.parent               = parent ? &parent->klass : nullptr;
+  fake.klass.byval_arg.type       = type;
   fake.klass.byval_arg.data.dummy = &fake.klass;
   fake.klass.byval_arg.valuetype  = value_size > 0;
   fake.byref                      = fake.klass.byval_arg;
@@ -104,28 +104,28 @@ struct Vec3 {
 };
 
 // Runtime classes.
-FakeClass& void_class   = Define("System", "Void", IL2CPP_TYPE_VOID);
-FakeClass& object_class = Define("System", "Object", IL2CPP_TYPE_OBJECT);
-FakeClass& int_class    = Define("System", "Int32", IL2CPP_TYPE_I4, nullptr, 4);
-FakeClass& bool_class   = Define("System", "Boolean", IL2CPP_TYPE_BOOLEAN, nullptr, 1);
-FakeClass& float_class  = Define("System", "Single", IL2CPP_TYPE_R4, nullptr, 4);
-FakeClass& string_class = Define("System", "String", IL2CPP_TYPE_STRING, &object_class);
-FakeClass& type_class   = Define("System", "Type", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& vec3_class   = Define("UnityEngine", "Vector3", IL2CPP_TYPE_VALUETYPE, nullptr, sizeof(Vec3));
-FakeClass& state_class  = Define("Game", "State", IL2CPP_TYPE_VALUETYPE, nullptr, 4);
-FakeClass& base_class   = Define("Game", "Base", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& void_class    = Define("System", "Void", IL2CPP_TYPE_VOID);
+FakeClass& object_class  = Define("System", "Object", IL2CPP_TYPE_OBJECT);
+FakeClass& int_class     = Define("System", "Int32", IL2CPP_TYPE_I4, nullptr, 4);
+FakeClass& bool_class    = Define("System", "Boolean", IL2CPP_TYPE_BOOLEAN, nullptr, 1);
+FakeClass& float_class   = Define("System", "Single", IL2CPP_TYPE_R4, nullptr, 4);
+FakeClass& string_class  = Define("System", "String", IL2CPP_TYPE_STRING, &object_class);
+FakeClass& type_class    = Define("System", "Type", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& vec3_class    = Define("UnityEngine", "Vector3", IL2CPP_TYPE_VALUETYPE, nullptr, sizeof(Vec3));
+FakeClass& state_class   = Define("Game", "State", IL2CPP_TYPE_VALUETYPE, nullptr, 4);
+FakeClass& base_class    = Define("Game", "Base", IL2CPP_TYPE_CLASS, &object_class);
 FakeClass& derived_class = Define("Game", "Derived", IL2CPP_TYPE_CLASS, &base_class);
-FakeClass& other_class  = Define("Game", "Other", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& outer_class  = Define("Game", "Outer", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& inner_class  = Define("", "Inner", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& list_a_class = Define("Game", "ListA", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& list_b_class = Define("Game", "ListB", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& other_class   = Define("Game", "Other", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& outer_class   = Define("Game", "Outer", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& inner_class   = Define("", "Inner", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& list_a_class  = Define("Game", "ListA", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& list_b_class  = Define("Game", "ListB", IL2CPP_TYPE_CLASS, &object_class);
 FakeClass& delegate_base = Define("System", "Delegate", IL2CPP_TYPE_CLASS, &object_class);
-FakeClass& action_class = Define("System", "Action", IL2CPP_TYPE_CLASS, &delegate_base);
-FakeClass& intptr_class = Define("System", "IntPtr", IL2CPP_TYPE_I, nullptr, sizeof(void*));
+FakeClass& action_class  = Define("System", "Action", IL2CPP_TYPE_CLASS, &delegate_base);
+FakeClass& intptr_class  = Define("System", "IntPtr", IL2CPP_TYPE_I, nullptr, sizeof(void*));
 
-TestObject base_object{}, derived_object{}, other_object{}, list_a{}, list_b{}, allocated{};
-Il2CppObject string_object{}, type_object{};
+TestObject     base_object{}, derived_object{}, other_object{}, list_a{}, list_b{}, allocated{};
+Il2CppObject   string_object{}, type_object{};
 Il2CppDelegate delegate_object{};
 
 // Generated code stand-ins. Each records what the binding passed.
@@ -201,24 +201,22 @@ const MethodInfo* delegate_target = nullptr;
 void              DelegateInvoker(Il2CppMethodPointer, const MethodInfo*, void* self, void** args, void*)
 {
   // Delegate(object target, IntPtr method): the second argument points at the MethodInfo address.
-  auto* delegate = static_cast<Il2CppDelegate*>(self);
-  delegate_target = *static_cast<const MethodInfo**>(args[1]);
+  auto* delegate   = static_cast<Il2CppDelegate*>(self);
+  delegate_target  = *static_cast<const MethodInfo**>(args[1]);
   delegate->method = delegate_target;
 }
-void NativeTarget()
-{
-}
+void NativeTarget() {}
 
-MethodInfo* base_describe = nullptr;
-MethodInfo* shared_method = nullptr;
-int32_t     shared_result = 41;
+MethodInfo* base_describe     = nullptr;
+MethodInfo* shared_method     = nullptr;
+int32_t     shared_result     = 41;
 int         boxed_invocations = 0;
 
 void BuildRuntime()
 {
   auto& get_count = AddMethod(base_class, "get_Count", reinterpret_cast<void*>(&Base_get_Count), T(int_class), {});
-  auto& set_count = AddMethod(base_class, "set_Count", reinterpret_cast<void*>(&Base_set_Count), T(void_class),
-                              {T(int_class)});
+  auto& set_count =
+      AddMethod(base_class, "set_Count", reinterpret_cast<void*>(&Base_set_Count), T(void_class), {T(int_class)});
   AddProperty(base_class, "Count", &get_count, &set_count);
   AddMethod(base_class, "Select", reinterpret_cast<void*>(&Base_Select_Int), T(void_class), {T(int_class)});
   AddMethod(base_class, "Select", reinterpret_cast<void*>(&Base_Select_Bool), T(void_class), {T(bool_class)});
@@ -237,8 +235,8 @@ void BuildRuntime()
             METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_VIRTUAL);
   AddMethod(base_class, "Twice", reinterpret_cast<void*>(&Base_Twice), T(int_class), {T(int_class)},
             METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
-  auto& get_instance = AddMethod(base_class, "get_Instance", reinterpret_cast<void*>(&Base_get_Instance),
-                                 T(base_class), {}, METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
+  auto& get_instance = AddMethod(base_class, "get_Instance", reinterpret_cast<void*>(&Base_get_Instance), T(base_class),
+                                 {}, METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
   AddProperty(base_class, "Instance", &get_instance);
   AddMethod(base_class, ".ctor", reinterpret_cast<void*>(&Base_ctor), T(void_class), {T(int_class)});
   AddMethod(base_class, "Explode", reinterpret_cast<void*>(&Base_Explode), T(int_class), {});
@@ -253,7 +251,7 @@ void BuildRuntime()
   AddMethod(list_b_class, "get_Count", reinterpret_cast<void*>(&ListB_get_Count), T(int_class), {});
   AddMethod(list_b_class, "get_Item", reinterpret_cast<void*>(&List_get_Item), T(object_class), {T(int_class)});
 
-  auto& ctor = AddMethod(action_class, ".ctor", nullptr, T(void_class), {T(object_class), T(intptr_class)});
+  auto& ctor          = AddMethod(action_class, ".ctor", nullptr, T(void_class), {T(object_class), T(intptr_class)});
   ctor.invoker_method = &DelegateInvoker;
   AddMethod(base_class, "OnEvent", reinterpret_cast<void*>(&NativeTarget), T(void_class), {},
             METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
@@ -391,6 +389,11 @@ API(int32_t, il2cpp_class_value_size, (Il2CppClass * klass, uint32_t*))
 END_API
 API(bool, il2cpp_class_is_assignable_from, (Il2CppClass * klass, Il2CppClass* other))
 {
+  // The real runtime dereferences both classes.
+  if (!klass || !other) {
+    std::fprintf(stderr, "il2cpp_class_is_assignable_from called with a null class\n");
+    std::abort();
+  }
   for (; other; other = other->parent) {
     if (other == klass)
       return true;
@@ -442,7 +445,7 @@ END_API
 API(void, il2cpp_field_set_value, (Il2CppObject * object, FieldInfo* field, void* value))
 {
   // Like Field::SetValueRaw: value types are copied from the pointer, references are the pointer.
-  auto size = Fake(static_cast<Il2CppClass*>(field->type->data.dummy)).value_size;
+  auto  size = Fake(static_cast<Il2CppClass*>(field->type->data.dummy)).value_size;
   auto* dest = reinterpret_cast<char*>(object) + field->offset;
   if (size)
     std::memcpy(dest, value, size);
@@ -484,6 +487,10 @@ struct Derived : Base {
 };
 struct Other : il2cpp::Object {
   using Class = il2cpp::Class<"Game", "Game", "Other">;
+};
+// A binding whose class is not in the game, as after an update renames it.
+struct Gone : il2cpp::Object {
+  using Class = il2cpp::Class<"Game", "Game", "Gone">;
 };
 enum class State : int32_t { kIdle = 0, kBusy = 2 };
 
@@ -538,6 +545,14 @@ int main()
   Il2CppObject* found = nullptr;
   Require(base->Call<"TryGet", bool>(int32_t{1}, std::ref(found)) && found == &other_object.header, "out argument");
 
+  // A named signature converts the arguments and binds T& parameters to the caller's lvalues.
+  base->Call<"Select", void(int32_t)>(7);
+  Require(seen_overload == "int" && seen_int == 7, "signature picks overload");
+  found = nullptr;
+  Require(base->Call<"TryGet", bool(int32_t, Il2CppObject*&)>(1, found) && found == &other_object.header,
+          "signature out argument");
+  Require(Base::Class::Call<"Twice", int32_t(int32_t)>(4) == 8, "static signature call");
+
   // Virtual calls dispatch on the receiver; non-virtual calls do not.
   auto* derived = reinterpret_cast<Derived*>(&derived_object);
   Require(!std::strcmp(base->Describe(), "base"), "base dispatch");
@@ -571,6 +586,8 @@ int main()
           "property type drift");
   Require(base->Field<"_count", Other*>() == nullptr && ErrorsMentioning("field Game.Base._count") == 1,
           "field type drift");
+  Require(base->Field<"_target", Gone*>() == nullptr && ErrorsMentioning("field Game.Base._target") == 1,
+          "reference to a missing class rejected");
   Require(base->Call<"Find", bool>(reinterpret_cast<Base*>(&other_object)) == false, "unrelated reference rejected");
   Require(native_calls == calls, "rejected members do not call native code");
   Require(il2cpp::Class<"Game", "Game", "Nope">::Raw() == nullptr && ErrorsMentioning("missing class Game:Game.Nope"),
@@ -607,6 +624,15 @@ int main()
   Require(Base::Class::Method("Select", {"System.Boolean"}).Pointer() == reinterpret_cast<void*>(&Base_Select_Bool),
           "hook lookup by parameter types");
   Require(!Base::Class::Method("Absent", 0) && ErrorsMentioning("missing method Game.Base.Absent"), "missing hook");
+
+  // TryCall tells a failed call apart from a result that reads as zero.
+  Require(!base->TryCall<"Explode", int32_t()>() && ErrorsMentioning("Game.Base.Explode threw") == 1,
+          "tried exception is empty and reported once");
+  base->SetCount(0);
+  const auto zero = base->TryCall<"get_Count", int32_t()>();
+  Require(zero && *zero == 0, "tried zero result is known");
+  Require(base->TryCall<"Select", void(int32_t)>(5) && seen_int == 5, "tried void call");
+  Require(!base->TryCall<"Vanished", int32_t()>(), "tried missing method is empty");
 
   std::cout << "IL2CPP binding tests passed\n";
 }

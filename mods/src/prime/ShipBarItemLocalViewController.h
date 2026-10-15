@@ -1,8 +1,7 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class ShipBarItemLocalViewController
-{
-  //
+struct ShipBarItemLocalViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "ShipBarItemLocalViewController">;
 };

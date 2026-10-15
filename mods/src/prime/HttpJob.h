@@ -1,11 +1,13 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
 #include "HttpRequest.h"
 #include "UnityWebRequest.h"
 
-enum class HttpJobState {
+#include <il2cpp/il2cpp.h>
+
+#include <cstdint>
+
+enum class HttpJobState : int32_t {
   None                 = 0,
   Queued               = 1,
   RequestSending       = 2,
@@ -16,42 +18,16 @@ enum class HttpJobState {
   Complete             = 7
 };
 
-struct HttpJob {
-public:
-  __declspec(property(get = __get_Request)) HttpRequest* Request;
-  __declspec(property(get = __get_State, put = __set_State)) HttpJobState State;
-  __declspec(property(get = __get_UnityRequest)) UnityWebRequest* UnityRequest;
+struct HttpJob : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Engine.HttpClient.Runtime", "Digit.Engine.HttpClient", "HttpJob">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Engine.HttpClient.Runtime", "Digit.Engine.HttpClient", "HttpJob");
-    return class_helper;
-  }
-
-public:
-  HttpRequest* __get_Request()
-  {
-    static auto field = get_class_helper().GetField("Request");
-    return *(HttpRequest**)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set_State(HttpJobState state)
-  {
-    static auto field                                  = get_class_helper().GetField("State");
-    *(HttpJobState*)((ptrdiff_t)this + field.offset()) = state;
-  }
-
-  HttpJobState __get_State()
-  {
-    static auto field = get_class_helper().GetField("State");
-    return *(HttpJobState*)((ptrdiff_t)this + field.offset());
-  }
-
-  UnityWebRequest* __get_UnityRequest()
-  {
-    static auto field = get_class_helper().GetField("UnityRequest");
-    return *(UnityWebRequest**)((ptrdiff_t)this + field.offset());
-  }
+  HttpRequest* Request()
+  { return Field<"Request", HttpRequest*>(); }
+  UnityWebRequest* UnityRequest()
+  { return Field<"UnityRequest", UnityWebRequest*>(); }
+  HttpJobState State()
+  { return Field<"State", HttpJobState>(); }
+  // Writes the field directly and bypasses the managed SetState(HttpJobState).
+  void SetState(HttpJobState state)
+  { SetField<"State">(state); }
 };

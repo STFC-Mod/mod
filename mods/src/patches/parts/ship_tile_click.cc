@@ -7,7 +7,7 @@
 #include "pinned_ship_click.h"
 #include "prime/ShipTileWidget.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
@@ -21,7 +21,7 @@ void ShipTileWidget_HandleOnClick_Hook(auto original, ShipTileWidget* _this)
   auto& cfg = Config::Get();
   if (!cfg.double_click_to_assign_ship && !cfg.installPinnedShipClickToggle) return;
 
-  auto* ship = _this ? _this->Context : nullptr;
+  auto* ship = _this ? _this->Context() : nullptr;
   if (!ship) return;
 
   PinShipClickOnTileClicked(ship);
@@ -39,19 +39,12 @@ bool TryInstallHook()
     return true;
   }
 
-  auto helper = ShipTileWidget::get_class_helper();
-  if (!helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.Ships", "ShipTileWidget");
-    return false;
-  }
-
-  auto method = helper.GetMethod("HandleOnClick", 0);
+  auto method = ShipTileWidget::Class::Method("HandleOnClick", 0);
   if (!method) {
-    ErrorMsg::MissingMethod("ShipTileWidget", "HandleOnClick");
+    spdlog::warn("Missing method {}.{}", "ShipTileWidget", "HandleOnClick");
     return false;
   }
-
-  installed = SPUD_STATIC_DETOUR(method, ShipTileWidget_HandleOnClick_Hook);
+  installed = SPUD_STATIC_DETOUR(method.Pointer(), ShipTileWidget_HandleOnClick_Hook);
   if (installed) {
     spdlog::info("Ship tile click dispatcher: hooks installed");
   }

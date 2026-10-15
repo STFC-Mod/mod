@@ -1,10 +1,8 @@
 #include "config.h"
-#include "errormsg.h"
 
 #include <patches/mapkey.h>
 
-#include <il2cpp/il2cpp_helper.h>
-#include <il2cpp/method_contract.h>
+#include <il2cpp/il2cpp.h>
 
 #include <prime/NavigationFleetWidget.h>
 #include <prime/NavigationLOD.h>
@@ -52,17 +50,13 @@ const FleetLabelProfile *FleetLabelProfileFor(NavigationFleetWidget *widget)
   }
 
   const auto &config  = Config::Get();
-  auto       *context = widget->Context;
+  auto       *context = widget->Context();
   if (context == nullptr) {
     return &config.zoom_label_non_player;
   }
 
-  DeployedFleetType fleet_type;
-  if (!context->TryGetFleetType(fleet_type)) {
-    return &config.zoom_label_non_player;
-  }
-
-  switch (fleet_type) {
+  // A missing FleetType property reads as Nonexistent.
+  switch (context->FleetType()) {
     case DeployedFleetType::Player:
       return &config.zoom_label_player;
     case DeployedFleetType::Marauder:
@@ -80,7 +74,7 @@ const FleetLabelProfile *FleetLabelProfileFor(NavigationFleetWidget *widget)
 const FleetLabelProfile *FleetLabelProfileFor(NavigationLOD *lod)
 {
   const auto widget = fleet_label_widgets.find(lod);
-  if (widget == fleet_label_widgets.end() || widget->second == nullptr || widget->second->Context == nullptr) {
+  if (widget == fleet_label_widgets.end() || widget->second == nullptr || widget->second->Context() == nullptr) {
     return nullptr;
   }
   return FleetLabelProfileFor(widget->second);
@@ -197,24 +191,15 @@ void UpdateFleetLabelThreshold()
 }
 } // namespace
 
-vec3 GetMouseWorldPos(void *cam, vec3 *pos)
+vec3 GetMouseWorldPos(Camera *cam, vec3 *pos)
 {
-  static auto class_helper = il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils");
-  static auto fn           = class_helper.GetMethodInfo("GetMouseWorldPos");
+  using MathUtils = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils">;
 
-  if (fn == nullptr || cam == nullptr || pos == nullptr) {
+  if (cam == nullptr || pos == nullptr) {
     return {0.0f, 0.0f, 0.0f};
   }
 
-  void            *args[2]   = {cam, (void *)pos};
-  Il2CppException *exception = nullptr;
-  auto             result    = il2cpp_runtime_invoke(fn, nullptr, args, &exception);
-  if (exception != nullptr || result == nullptr) {
-    return {0.0f, 0.0f, 0.0f};
-  }
-
-  auto unboxed = il2cpp_object_unbox(result);
-  return unboxed != nullptr ? *reinterpret_cast<vec3 *>(unboxed) : vec3{0.0f, 0.0f, 0.0f};
+  return MathUtils::Call<"GetMouseWorldPos", vec3>(cam, *pos);
 }
 
 auto do_default_zoom = false;
@@ -222,12 +207,11 @@ auto do_default_zoom = false;
 inline void StoreZoom(std::string label, float &zoom, NavigationZoom *_this)
 {
   auto old_zoom = zoom;
-  zoom          = (_this->Distance - _this->_minimum) / (_this->_maximum - _this->_minimum) * Config::Get().zoom;
+  zoom          = (_this->Distance() - _this->minimum()) / (_this->maximum() - _this->minimum()) * Config::Get().zoom;
   spdlog::info("Changing {} from {} to {}", label, old_zoom, zoom);
 }
 
 static float s_expectedScale = 0;
-static uint64_t s_backdropLoadRevision = 0;
 
 static void ApplySystemZoomRange(NavigationZoom *_this, float radius)
 {
@@ -235,9 +219,9 @@ static void ApplySystemZoomRange(NavigationZoom *_this, float radius)
     return;
   }
 
-  auto ratio                     = (Config::Get().zoom / radius);
-  _this->_farRatioSystemNormal   = 0.55f * ratio;
-  _this->_farRatioSystemExtended = ratio;
+  auto ratio = (Config::Get().zoom / radius);
+  _this->SetFarRatioSystemNormal(0.55f * ratio);
+  _this->SetFarRatioSystemExtended(ratio);
 }
 
 static void SetSceneCameraFarClip(NavigationZoom *_this)
@@ -246,19 +230,19 @@ static void SetSceneCameraFarClip(NavigationZoom *_this)
     return;
   }
 
-  auto *cam = _this->_sceneCamera;
+  auto *cam = _this->sceneCamera();
   if (!cam) {
     return;
   }
 
-  cam->farClipPlane    = Config::Get().zoom * 3.75f;
-  cam->clearFlags      = 2;
-  cam->backgroundColor = {0, 0, 0, 0};
+  cam->SetFarClipPlane(Config::Get().zoom * 3.75f);
+  cam->SetClearFlags(2);
+  cam->SetBackgroundColor({0, 0, 0, 0});
 }
 
 static void EnsureSystemZoomRange(NavigationZoom *_this)
 {
-  if (!_this || _this->_depth != NodeDepth::SolarSystem) {
+  if (!_this || _this->depth() != NodeDepth::SolarSystem) {
     return;
   }
 
@@ -267,20 +251,20 @@ static void EnsureSystemZoomRange(NavigationZoom *_this)
     return;
   }
 
-  ApplySystemZoomRange(_this, _this->_viewRadius);
-  if (_this->_maximum < max_zoom) {
-    _this->_maximum = max_zoom;
+  ApplySystemZoomRange(_this, _this->viewRadius());
+  if (_this->maximum() < max_zoom) {
+    _this->SetMaximum(max_zoom);
   }
 
-  const auto zoom_total = _this->_maximum - _this->_minimum;
+  const auto zoom_total = _this->maximum() - _this->minimum();
   if (zoom_total > 0.0f) {
-    _this->_zoomtotal = zoom_total;
+    _this->SetZoomtotal(zoom_total);
   }
 
   SetSceneCameraFarClip(_this);
 }
 
-static void ScaleFR(void *fr)
+static void ScaleFR(il2cpp::Object *fr)
 {
   if (!fr) {
     return;
@@ -291,40 +275,31 @@ static void ScaleFR(void *fr)
     return;
   }
 
-  static auto comp_helper = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Component");
-  if (!comp_helper.isValidHelper()) {
-    return;
-  }
-
-  static auto get_transform = comp_helper.GetProperty("transform");
-  if (!get_transform.isValidHelper()) {
-    return;
-  }
-
-  auto *t = reinterpret_cast<Transform *>(get_transform.GetRaw<Il2CppObject>(fr));
+  // FlatRenderable is a Component; transform resolves on its runtime class.
+  auto *t = fr->Get<"transform", Transform *>();
   if (t == nullptr) {
     return;
   }
 
-  auto *scale = t->localScale;
-  if (scale == nullptr || (s_expectedScale > 0 && fabsf(scale->x - s_expectedScale) < 0.1f)) {
+  auto scale = t->localScale();
+  if (s_expectedScale > 0 && fabsf(scale.x - s_expectedScale) < 0.1f) {
     return;
   }
 
-  Vector3 newScale = {scale->x * factor, scale->y * factor, scale->z * factor};
-  t->localScale    = &newScale;
+  Vector3 newScale = {scale.x * factor, scale.y * factor, scale.z * factor};
+  t->SetLocalScale(newScale);
   s_expectedScale  = newScale.x;
 }
 
 void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
 {
   static auto GetMousePosition =
-      il2cpp_resolve_icall_typed<void(vec3 *)>("UnityEngine.Input::get_mousePosition_Injected(UnityEngine.Vector3&)");
-  static auto GetDeltaTime = il2cpp_resolve_icall_typed<float()>("UnityEngine.Time::get_deltaTime()");
+      il2cpp::ResolveICall<void(vec3 *)>("UnityEngine.Input::get_mousePosition_Injected(UnityEngine.Vector3&)");
+  static auto GetDeltaTime = il2cpp::ResolveICall<float()>("UnityEngine.Time::get_deltaTime()");
 
   if (fleet_label_hooks_installed) {
     const auto zoom_id = reinterpret_cast<uintptr_t>(_this);
-    if (_this->_depth == NodeDepth::SolarSystem) {
+    if (_this->depth() == NodeDepth::SolarSystem) {
       BeginFleetLabelSystemState(_this);
     } else if (active_system_zoom_id == zoom_id) {
       ResetFleetLabelSystemState();
@@ -400,25 +375,23 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
     if ((camera_shortcuts_enabled && MapKey::IsPressed(GameFunction::ZoomIn)) || do_absolute_zoom) {
       vec3 mousePos;
       GetMousePosition(&mousePos);
-      _this->_zoomLocation = vec2{.x = mousePos.x, .y = mousePos.y};
+      _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});
       if (do_absolute_zoom) {
-        auto zoom_distance = _this->_minimum + (_this->_maximum - _this->_minimum) * (zoomDelta / config->zoom);
-        _this->Distance    = zoom_distance;
+        auto zoom_distance = _this->minimum() + (_this->maximum() - _this->minimum()) * (zoomDelta / config->zoom);
+        _this->SetDistance(zoom_distance);
       } else {
-        _this->_zoomDelta     = zoomDelta;
-        _this->_lastZoomDelta = zoomDelta;
+        _this->SetZoomDelta(zoomDelta);
+        _this->SetLastZoomDelta(zoomDelta);
       }
-      auto worldPos      = GetMouseWorldPos(_this->_sceneCamera, &mousePos);
-      _this->_worldPoint = worldPos;
+      _this->SetWorldPoint(GetMouseWorldPos(_this->sceneCamera(), &mousePos));
       _this->ZoomCameraAtWorldPoint();
     } else if (camera_shortcuts_enabled && MapKey::IsPressed(GameFunction::ZoomOut)) {
       vec3 mousePos;
       GetMousePosition(&mousePos);
-      _this->_zoomLocation  = vec2{.x = mousePos.x, .y = mousePos.y};
-      _this->_zoomDelta     = -1.0f * zoomDelta;
-      _this->_lastZoomDelta = -1.0f * zoomDelta;
-      auto worldPos         = GetMouseWorldPos(_this->_sceneCamera, &mousePos);
-      _this->_worldPoint    = worldPos;
+      _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});
+      _this->SetZoomDelta(-1.0f * zoomDelta);
+      _this->SetLastZoomDelta(-1.0f * zoomDelta);
+      _this->SetWorldPoint(GetMouseWorldPos(_this->sceneCamera(), &mousePos));
       _this->ZoomCameraAtWorldPoint();
     }
   }
@@ -432,13 +405,13 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
   original(_this);
 
   EnsureSystemZoomRange(_this);
-  if (fleet_label_hooks_installed && _this->_depth == NodeDepth::SolarSystem) {
+  if (fleet_label_hooks_installed && _this->depth() == NodeDepth::SolarSystem) {
     BeginFleetLabelSystemState(_this);
     const auto state_was_valid   = system_zoom_state_valid;
     const auto threshold_enabled = FleetLabelThresholdEnabled();
-    system_zoom_level            = _this->_zoomLevel;
+    system_zoom_level            = _this->zoomLevel();
     if (threshold_enabled) {
-      system_normalized_zoom = _this->NormalizedZoom;
+      system_normalized_zoom = _this->NormalizedZoom();
     }
     system_zoom_state_valid = true;
     if (threshold_enabled) {
@@ -471,11 +444,11 @@ void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_
 
   // Fresh pooled widgets are enabled before BindDataContext assigns m_context. Forcing an LOD in that window can fire
   // OnLODChanged callbacks that dereference the not-yet-bound fleet data.
-  if (_this->Context == nullptr) {
+  if (_this->Context() == nullptr) {
     return;
   }
 
-  auto *lod = _this->_lod;
+  auto *lod = _this->lod();
   if (lod) {
     fleet_label_widgets.insert_or_assign(lod, _this);
     if (FleetLabelThresholdEnabled() && !system_zoom_state_valid) {
@@ -488,9 +461,9 @@ void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_
 void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget *_this)
 {
   if (_this) {
-    auto *lod = _this->_lod;
+    auto *lod = _this->lod();
     fleet_label_widgets.erase(lod);
-    if (_this->Context != nullptr) {
+    if (_this->Context() != nullptr) {
       RestoreNativeFleetLabelDetail(lod);
     }
   }
@@ -504,7 +477,7 @@ void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetW
     return;
   }
 
-  auto *lod = _this->_lod;
+  auto *lod = _this->lod();
   if (lod != nullptr) {
     fleet_label_widgets.insert_or_assign(lod, _this);
     ApplyFleetLabelDetail(lod, system_zoom_level);
@@ -514,10 +487,10 @@ void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetW
 void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, NavigationFleetWidget *_this)
 {
   if (_this != nullptr) {
-    auto *lod = _this->_lod;
+    auto *lod = _this->lod();
     if (lod != nullptr) {
       fleet_label_widgets.erase(lod);
-      if (_this->Context != nullptr) {
+      if (_this->Context() != nullptr) {
         RestoreNativeFleetLabelDetail(lod);
       }
     }
@@ -533,49 +506,6 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
   if (_this != nullptr) {
     _this->GetFlatRenderable(); // probe: triggers get_FlatRenderable_Hook, which scales the FR; game often reads the
                                 // field directly so our detour needs this call-path
-  }
-}
-
-void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *backdrop,
-                                        Il2CppObject *resource, bool usingDefault)
-{
-  original(_this, backdrop, resource, usingDefault);
-  // Native creation has now assigned the selected scenery's authored transform.
-  // Reuse the existing getter/scaling path before any player zoom event.
-  if (_this && resource) {
-    ++s_backdropLoadRevision;
-    // A newly authored scale must not be compared with the previous system.
-    s_expectedScale = 0;
-    _this->GetFlatRenderable();
-  }
-}
-
-void PlanetViewUtils_CreateBackdropCollection_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *backdrop,
-                                                  Il2CppObject *resource, bool usingDefault)
-{
-  original(_this, backdrop, resource, usingDefault);
-  // The collection overload can load scenery without the Object callback.
-  if (_this && resource) {
-    ++s_backdropLoadRevision;
-    s_expectedScale = 0;
-    _this->GetFlatRenderable();
-  }
-}
-
-void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *system, int64_t nodeId,
-                                  NodeDepth depth)
-{
-  auto      *previous_population = _this ? _this->_popData : nullptr;
-  const auto load_revision       = s_backdropLoadRevision;
-  original(_this, system, nodeId, depth);
-
-  // Cached variations reload their authored transforms in Populate rather than CreateBackdrop.
-  // A cached prefab backdrop already retains its scaled transform and must not be scaled again.
-  auto *population = _this ? _this->_popData : nullptr;
-  if (depth == NodeDepth::SolarSystem && population && population != previous_population
-      && population->VariationCollection && load_revision == s_backdropLoadRevision) {
-    s_expectedScale = 0;
-    _this->GetFlatRenderable();
   }
 }
 
@@ -613,7 +543,7 @@ void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom *_this, NodeDept
   }
 
   if (depth == NodeDepth::SolarSystem) {
-    ApplySystemZoomRange(_this, _this->_viewRadius);
+    ApplySystemZoomRange(_this, _this->viewRadius());
     SetSceneCameraFarClip(_this);
 
     original(_this, depth);
@@ -632,182 +562,48 @@ void *PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils *_t
     return fr;
   }
 
-  ScaleFR(fr);
+  ScaleFR(static_cast<il2cpp::Object *>(fr));
   return fr;
 }
 
 void InstallZoomHooks()
 {
-  auto  navigation_zoom_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom");
-  auto  ptr_update = navigation_zoom_helper.isValidHelper() ? navigation_zoom_helper.GetMethod("Update") : nullptr;
-  auto *navigation_zoom_class    = navigation_zoom_helper.get_cls();
-  auto *zoom_level_field         = navigation_zoom_class != nullptr
-                                       ? il2cpp_class_get_field_from_name(navigation_zoom_class, "_zoomLevel")
-                                       : nullptr;
-  auto *normalized_zoom_property = navigation_zoom_class != nullptr
-                                       ? il2cpp_class_get_property_from_name(navigation_zoom_class, "NormalizedZoom")
-                                       : nullptr;
+  auto update = NavigationZoom::Class::Method("Update");
+
   if (FleetLabelProfilesEnabled()) {
-    auto lod_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationLOD");
-    auto fleet_widget_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationFleetWidget");
-    auto fleet_data_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData");
-    auto ptr_update_lod = lod_helper.isValidHelper() ? lod_helper.GetMethod("UpdateLOD") : nullptr;
-    auto ptr_on_enable  = fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnEnable") : nullptr;
-    auto ptr_on_disable = fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnDisable") : nullptr;
-    auto ptr_on_did_bind_context =
-        fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnDidBindContext") : nullptr;
-    auto ptr_on_about_to_release_context =
-        fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnAboutToReleaseContext") : nullptr;
-    auto *lod_class = lod_helper.get_cls();
-    auto *target_level_field =
-        lod_class != nullptr ? il2cpp_class_get_field_from_name(lod_class, "<TargetLevel>k__BackingField") : nullptr;
-    auto *fleet_widget_class = fleet_widget_helper.get_cls();
-    auto *lod_field =
-        fleet_widget_class != nullptr ? il2cpp_class_get_field_from_name(fleet_widget_class, "_lod") : nullptr;
-    auto *context_field    = NavigationFleetWidget::ContextField();
-    auto *fleet_data_class = fleet_data_helper.get_cls();
-    auto *fleet_type_property =
-        fleet_data_class != nullptr ? il2cpp_class_get_property_from_name(fleet_data_class, "FleetType") : nullptr;
-    auto *fleet_type_getter =
-        fleet_type_property != nullptr ? il2cpp_property_get_get_method((PropertyInfo *)fleet_type_property) : nullptr;
+    // Installed as a set. Missing fields and properties (_lod, Context, FleetType) read as null or zero, which the hooks
+    // treat as native labels, so only the methods gate installation.
+    auto update_lod                  = NavigationLOD::Class::Method("UpdateLOD");
+    auto on_enable                   = NavigationFleetWidget::Class::Method("OnEnable");
+    auto on_disable                  = NavigationFleetWidget::Class::Method("OnDisable");
+    auto on_did_bind_context         = NavigationFleetWidget::Class::Method("OnDidBindContext");
+    auto on_about_to_release_context = NavigationFleetWidget::Class::Method("OnAboutToReleaseContext");
 
-    if (!lod_helper.isValidHelper()) {
-      ErrorMsg::MissingHelper("Navigation", "NavigationLOD");
-    } else {
-      if (ptr_update_lod == nullptr) {
-        ErrorMsg::MissingMethod("NavigationLOD", "UpdateLOD");
-      }
-      if (target_level_field == nullptr) {
-        ErrorMsg::MissingMethod("NavigationLOD", "<TargetLevel>k__BackingField");
-      }
-    }
-    if (!fleet_widget_helper.isValidHelper()) {
-      ErrorMsg::MissingHelper("Navigation", "NavigationFleetWidget");
-    } else {
-      if (ptr_on_enable == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "OnEnable");
-      }
-      if (ptr_on_disable == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "OnDisable");
-      }
-      if (ptr_on_did_bind_context == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "OnDidBindContext");
-      }
-      if (ptr_on_about_to_release_context == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "OnAboutToReleaseContext");
-      }
-      if (lod_field == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "_lod");
-      }
-      if (context_field == nullptr) {
-        ErrorMsg::MissingMethod("NavigationFleetWidget", "m_context");
-      }
-    }
-    if (!fleet_data_helper.isValidHelper()) {
-      ErrorMsg::MissingHelper("Digit.PrimeServer.Models", "FleetDeployedData");
-    } else if (fleet_type_property == nullptr || fleet_type_getter == nullptr) {
-      ErrorMsg::MissingMethod("FleetDeployedData", "FleetType");
-    }
-    if (!navigation_zoom_helper.isValidHelper()) {
-      ErrorMsg::MissingHelper("Navigation", "NavigationZoom");
-    } else {
-      if (ptr_update == nullptr) {
-        ErrorMsg::MissingMethod("NavigationZoom", "Update");
-      }
-      if (zoom_level_field == nullptr) {
-        ErrorMsg::MissingMethod("NavigationZoom", "_zoomLevel");
-      }
-      if (normalized_zoom_property == nullptr) {
-        ErrorMsg::MissingMethod("NavigationZoom", "NormalizedZoom");
-      }
-    }
-
-    const auto fleet_label_dependencies_valid =
-        lod_helper.isValidHelper() && ptr_update_lod != nullptr && target_level_field != nullptr
-        && fleet_widget_helper.isValidHelper() && ptr_on_enable != nullptr && ptr_on_disable != nullptr
-        && ptr_on_did_bind_context != nullptr && ptr_on_about_to_release_context != nullptr && lod_field != nullptr
-        && context_field != nullptr && fleet_data_helper.isValidHelper() && fleet_type_property != nullptr
-        && fleet_type_getter != nullptr && navigation_zoom_helper.isValidHelper() && ptr_update != nullptr
-        && zoom_level_field != nullptr && normalized_zoom_property != nullptr;
-    if (fleet_label_dependencies_valid) {
+    if (update && update_lod && on_enable && on_disable && on_did_bind_context && on_about_to_release_context) {
       fleet_label_hooks_installed = true;
-      SPUD_STATIC_DETOUR(ptr_update_lod, NavigationLOD_UpdateLOD_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_enable, NavigationFleetWidget_OnEnable_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_disable, NavigationFleetWidget_OnDisable_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_did_bind_context, NavigationFleetWidget_OnDidBindContext_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_about_to_release_context, NavigationFleetWidget_OnAboutToReleaseContext_Hook);
+      SPUD_STATIC_DETOUR(update_lod.Pointer(), NavigationLOD_UpdateLOD_Hook);
+      SPUD_STATIC_DETOUR(on_enable.Pointer(), NavigationFleetWidget_OnEnable_Hook);
+      SPUD_STATIC_DETOUR(on_disable.Pointer(), NavigationFleetWidget_OnDisable_Hook);
+      SPUD_STATIC_DETOUR(on_did_bind_context.Pointer(), NavigationFleetWidget_OnDidBindContext_Hook);
+      SPUD_STATIC_DETOUR(on_about_to_release_context.Pointer(), NavigationFleetWidget_OnAboutToReleaseContext_Hook);
     } else {
       spdlog::error("Fleet label detail hooks were not installed; using native fleet labels");
     }
   }
 
-  {
-    auto pv_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "PlanetViewUtils");
-    if (pv_helper.isValidHelper()) {
-      auto ptr_populate = pv_helper.GetMethod("Populate");
-      if (ptr_populate)
-        SPUD_STATIC_DETOUR(ptr_populate, PlanetViewUtils_Populate_Hook);
-      else
-        ErrorMsg::MissingMethod("PlanetViewUtils", "Populate");
+  if (auto method = PlanetViewUtils::Class::Method("CameraZoomedEventHandler"))
+    SPUD_STATIC_DETOUR(method.Pointer(), PlanetViewUtils_CameraZoomedEventHandler_Hook);
+  if (auto method = PlanetViewUtils::Class::Method("get_FlatRenderable"))
+    SPUD_STATIC_DETOUR(method.Pointer(), PlanetViewUtils_get_FlatRenderable_Hook);
 
-      const auto *create = method_contract::Resolve(
-          pv_helper.get_cls(), "CreateBackdrop", false, "System.Void",
-          {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"});
-      const auto *create_collection = method_contract::Resolve(
-          pv_helper.get_cls(), "CreateBackdrop", false, "System.Void",
-          {"Digit.PrimeServer.Models.ITreeNode", "SystemVariationConfigCollection", "System.Boolean"});
-      if (create)
-        SPUD_STATIC_DETOUR(create->methodPointer, PlanetViewUtils_CreateBackdrop_Hook);
-      else
-        ErrorMsg::MissingMethod("PlanetViewUtils", "CreateBackdrop(Object)");
-      if (create_collection)
-        SPUD_STATIC_DETOUR(create_collection->methodPointer, PlanetViewUtils_CreateBackdropCollection_Hook);
-      else
-        ErrorMsg::MissingMethod("PlanetViewUtils", "CreateBackdrop(SystemVariationConfigCollection)");
-
-      auto ptr_zoom = pv_helper.GetMethod("CameraZoomedEventHandler");
-      if (ptr_zoom != nullptr) {
-        SPUD_STATIC_DETOUR(ptr_zoom, PlanetViewUtils_CameraZoomedEventHandler_Hook);
-      } else {
-        ErrorMsg::MissingMethod("PlanetViewUtils", "CameraZoomedEventHandler");
-      }
-
-      auto ptr_get_fr = pv_helper.GetMethod("get_FlatRenderable");
-      if (ptr_get_fr != nullptr) {
-        SPUD_STATIC_DETOUR(ptr_get_fr, PlanetViewUtils_get_FlatRenderable_Hook);
-      } else {
-        ErrorMsg::MissingMethod("PlanetViewUtils", "get_FlatRenderable");
-      }
-    } else {
-      ErrorMsg::MissingHelper("Navigation", "PlanetViewUtils");
-    }
-  }
-
-  if (!navigation_zoom_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Navigation", "NavigationZoom");
-  } else {
-    if (ptr_update == nullptr) {
-      ErrorMsg::MissingMethod("NavigationZoom", "Update");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_update, NavigationZoom_Update_Hook);
-    }
+  if (update)
+    SPUD_STATIC_DETOUR(update.Pointer(), NavigationZoom_Update_Hook);
 
 #if _WIN32
-    auto ptr_set_depth = navigation_zoom_helper.GetMethod("SetDepth");
-    if (ptr_set_depth == nullptr) {
-      ErrorMsg::MissingMethod("NavigationZoom", "SetDepth");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_set_depth, NavigationZoom_SetDepth_Hook);
-    }
+  if (auto method = NavigationZoom::Class::Method("SetDepth"))
+    SPUD_STATIC_DETOUR(method.Pointer(), NavigationZoom_SetDepth_Hook);
 #endif
 
-    auto ptr_set_view_parameters = navigation_zoom_helper.GetMethod("SetViewParameters");
-    if (ptr_set_view_parameters == nullptr) {
-      ErrorMsg::MissingMethod("NavigationZoom", "SetViewParameters");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_set_view_parameters, NavigationZoom_SetViewParameters_Hook);
-    }
-  }
+  if (auto method = NavigationZoom::Class::Method("SetViewParameters"))
+    SPUD_STATIC_DETOUR(method.Pointer(), NavigationZoom_SetViewParameters_Hook);
 }

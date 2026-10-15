@@ -1,13 +1,14 @@
 #include "config.h"
-#include "errormsg.h"
+#include "patches/object_tracker.h"
 
 #include "patches/instant_warp_policy.h"
 #include "patches/screen_update_hook.h"
 #include "prime/DeploymentManager.h"
 #include "prime/FleetsManager.h"
 #include "prime/StarNodeObjectViewerWidget.h"
+#include "prime/TextLocalizer.h"
 #include "str_utils.h"
-#include <il2cpp/il2cpp_checked.h>
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 
 #include <chrono>
@@ -17,49 +18,40 @@ namespace
 {
 // This is a client of the existing frame dispatcher, not another UI detour.
 // Never mutate the button context, timer, resource cost, or click handler.
-bool Alive(Il2CppObject* object)
+// Unity's `bool(UnityEngine.Object)`: false for null and for destroyed native objects.
+bool Alive(il2cpp::Object* object)
 {
-  if (!object)
-    return false;
-  static auto  helper = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Object");
-  static auto* method = helper.GetMethodInfo("op_Implicit", 1);
-  if (!method)
-    return false;
-  void*            args[]    = {object};
-  Il2CppException* exception = nullptr;
-  auto*            result    = il2cpp_runtime_invoke(method, nullptr, args, &exception);
-  return !exception && Il2CppChecked::Boolean(result);
+  using UnityObject = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
+  return object && UnityObject::Call<"op_Implicit", bool>(object);
 }
 
-std::string CurrentText(Il2CppObject* label)
+std::string CurrentText(TextLocalizer* label)
 {
-  auto* text = Il2CppChecked::Invoke(label, "CurrentText");
-  if (!text || il2cpp_class_get_type(text->klass)->type != IL2CPP_TYPE_STRING)
+  auto* text = label->CurrentText();
+  if (!text)
     throw std::runtime_error("expected label text");
-  return to_string(reinterpret_cast<Il2CppString*>(text));
+  return to_string(text);
 }
 
 struct OwnedLabel {
-  Il2CppGCHandle handle = nullptr;
-  std::string    text;
+  il2cpp::GcHandle handle;
+  std::string      text;
 
-  Il2CppObject* Get() const
-  { return handle ? il2cpp_gchandle_get_target(handle) : nullptr; }
+  TextLocalizer* Get() const
+  { return handle.Get<TextLocalizer>(); }
 
   void Clear()
   {
     auto* label    = Get();
     auto  previous = std::move(text);
-    if (handle)
-      il2cpp_gchandle_free(handle);
-    handle = nullptr;
+    handle.Reset();
     text.clear();
     // Forget ownership even if native cleanup fails.
-    if (Alive(label) && Il2CppChecked::BooleanField(label, "_textOverride") && CurrentText(label) == previous)
-      Il2CppChecked::Invoke(label, "ClearTextOverride");
+    if (Alive(label) && label->textOverride() && CurrentText(label) == previous)
+      label->ClearTextOverride();
   }
 
-  void Apply(Il2CppObject* label, const char* desired)
+  void Apply(TextLocalizer* label, const char* desired)
   {
     if (!label || !desired) {
       Clear();
@@ -68,24 +60,20 @@ struct OwnedLabel {
     if (Get() != label) {
       Clear();
       // Don't take ownership from an existing text override.
-      if (Il2CppChecked::BooleanField(label, "_textOverride"))
+      if (label->textOverride())
         return;
-      handle = il2cpp_gchandle_new_weakref(label, false);
+      handle = il2cpp::GcHandle::Weak(label);
       if (!handle)
         return;
     }
     const auto current = CurrentText(label);
-    if (!text.empty() && Il2CppChecked::BooleanField(label, "_textOverride") && current != text) {
+    if (!text.empty() && label->textOverride() && current != text) {
       Clear();
       return;
     }
-    if (text == desired && Il2CppChecked::BooleanField(label, "_textOverride") && current == desired)
+    if (text == desired && label->textOverride() && current == desired)
       return;
-    auto* value = il2cpp_string_new(desired);
-    if (!value)
-      return;
-    void* args[] = {value};
-    Il2CppChecked::Invoke(label, "OverrideLocalizedText", 1, args);
+    label->OverrideLocalizedText(il2cpp_string_new(desired));
     text = desired;
   }
 };
@@ -99,25 +87,20 @@ void Update()
     return;
   next = now + std::chrono::milliseconds(100);
   try {
-    auto*      widget = reinterpret_cast<Il2CppObject*>(ObjectFinder<StarNodeObjectViewerWidget>::Get());
-    const bool active =
-        Alive(widget) && Il2CppChecked::Boolean(Il2CppChecked::Invoke(widget, "get_isActiveAndEnabled"));
-    auto*      button = active ? Il2CppChecked::ReferenceField(widget, "_visitButton", "GenericButtonWidget") : nullptr;
-    const bool enabled  = Alive(button)
-                          && Il2CppChecked::Boolean(Il2CppChecked::Invoke(button, "get_isActiveAndEnabled"))
-                          && Il2CppChecked::Boolean(Il2CppChecked::Invoke(button, "get_Interactable"));
+    auto*       widget  = ObjectFinder<StarNodeObjectViewerWidget>::Get();
+    const bool  active  = Alive(widget) && widget->isActiveAndEnabled();
+    auto*       button  = active ? widget->visitButton() : nullptr;
+    const bool  enabled = Alive(button) && button->isActiveAndEnabled() && button->Interactable();
     const char* desired = nullptr;
     // The ordinary visit path uses the currently selected fleet. The card's
     // cached popup CourseData is populated on click, so it is not a preview source.
     // Toll/wormhole buttons have separate confirmation paths and retain native text.
     if (enabled) {
-      auto* fleets     = reinterpret_cast<Il2CppObject*>(FleetsManager::Instance());
-      auto* deployment = reinterpret_cast<Il2CppObject*>(DeploymentManger::Instance());
-      auto* fleet      = Alive(fleets) ? Il2CppChecked::Invoke(fleets, "GetSelectedFleetData") : nullptr;
-      void* args[]     = {fleet};
-      if (fleet && Alive(deployment)
-          && Il2CppChecked::Boolean(Il2CppChecked::Invoke(deployment, "HasInstantWarpAbility", 1, args))) {
-        switch (ResolveInstantWarpConfirmation(reinterpret_cast<FleetPlayerData*>(fleet))) {
+      auto* fleets     = FleetsManager::Instance();
+      auto* deployment = DeploymentManger::Instance();
+      auto* fleet      = Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
+      if (fleet && Alive(deployment) && deployment->HasInstantWarpAbility(fleet)) {
+        switch (ResolveInstantWarpConfirmation(fleet)) {
           case InstantWarpConfirmation::Warp:
             desired = "WARP";
             break;
@@ -129,7 +112,7 @@ void Update()
         }
       }
     }
-    auto* label = desired ? Il2CppChecked::ReferenceField(button, "_mainText", "TextLocalizer") : nullptr;
+    auto* label = desired ? button->mainText() : nullptr;
     action_label.Apply(Alive(label) ? label : nullptr, desired);
   } catch (const std::exception& error) {
     static bool warned = false;

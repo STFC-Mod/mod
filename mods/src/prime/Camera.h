@@ -2,64 +2,26 @@
 
 #include "Color.h"
 
-class Camera
-{
-public:
-  __declspec(property(get = __get_farClipPlane, put = __set_farClipPlane)) float farClipPlane;
-  __declspec(property(get = __get_nearClipPlane, put = __set_nearClipPlane)) float nearClipPlane;
-  __declspec(property(get = __get_clearFlags, put = __set_clearFlags)) int clearFlags;
-  __declspec(property(get = __get_backgroundColor, put = __set_backgroundColor)) color backgroundColor;
+#include <il2cpp/il2cpp.h>
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Camera");
-    return class_helper;
-  }
+struct Camera : il2cpp::Object {
+  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Camera">;
 
-public:
-  float __get_farClipPlane()
-  {
-    static auto field = get_class_helper().GetProperty("farClipPlane");
-    return *field.GetRaw<float>(this);
-  }
-  void __set_farClipPlane(float v)
-  {
-    static auto field = get_class_helper().GetProperty("farClipPlane");
-    field.SetRaw(this, v);
-  }
-
-  float __get_nearClipPlane()
-  {
-    static auto field = get_class_helper().GetProperty("nearClipPlane");
-    return *field.GetRaw<float>(this);
-  }
-  void __set_nearClipPlane(float v)
-  {
-    static auto field = get_class_helper().GetProperty("nearClipPlane");
-    field.SetRaw(this, v);
-  }
-
-  int __get_clearFlags()
-  {
-    static auto field = get_class_helper().GetProperty("clearFlags");
-    return *field.GetRaw<int>(this);
-  }
-  void __set_clearFlags(int v)
-  {
-    static auto field = get_class_helper().GetProperty("clearFlags");
-    field.SetRaw(this, v);
-  }
-
-  color __get_backgroundColor()
-  {
-    static auto field = get_class_helper().GetProperty("backgroundColor");
-    auto ptr          = field.Get<color>(this);
-    return ptr ? *ptr : color{};
-  }
-  void __set_backgroundColor(color v)
-  {
-    static auto field = get_class_helper().GetProperty("backgroundColor");
-    field.SetRaw(this, v);
-  }
+  float farClipPlane()
+  { return Get<"farClipPlane", float>(); }
+  void SetFarClipPlane(float value)
+  { Set<"farClipPlane">(value); }
+  float nearClipPlane()
+  { return Get<"nearClipPlane", float>(); }
+  void SetNearClipPlane(float value)
+  { Set<"nearClipPlane">(value); }
+  // UnityEngine.CameraClearFlags
+  int32_t clearFlags()
+  { return Get<"clearFlags", int32_t>(); }
+  void SetClearFlags(int32_t value)
+  { Set<"clearFlags">(value); }
+  color backgroundColor()
+  { return Get<"backgroundColor", color>(); }
+  void SetBackgroundColor(color value)
+  { Set<"backgroundColor">(value); }
 };

@@ -1,28 +1,13 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-#include "BattleTargetData.h"
-#include "ScanEngageButtonsWidget.h"
-#include "ViewController.h"
+#include <cstdint>
 
-class ShopSummaryDirector
-{
-public:
-  __declspec(property(get = __get__backLogicSkipSectionIds)) Il2CppArraySize* _backLogicSkipSectionIds;
+struct ShopSummaryDirector : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSummaryDirector">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Shop", "ShopSummaryDirector");
-    return class_helper;
-  }
-
-public:
-  Il2CppArraySize* __get__backLogicSkipSectionIds()
-  {
-    static auto field = get_class_helper().GetField("_backLogicSkipSectionIds").offset();
-    return *(Il2CppArraySize**)((char*)this + field);
-  }
-
+  // SectionID[] declared on SectionDirectorBase; elements are the SectionID enum (Hub.h).
+  il2cpp::Array<int32_t>* backLogicSkipSectionIds()
+  { return Field<"_backLogicSkipSectionIds", il2cpp::Array<int32_t>*>(); }
 };

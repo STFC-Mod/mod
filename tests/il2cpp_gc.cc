@@ -74,5 +74,15 @@ int main()
     Require(root && !root.Get());
   }
   Require(frees == 3 && targets.empty());
+  {
+    // Operation roots keep what they rooted until the set ends; a failed root marks the set.
+    il2cpp::GcRoots roots;
+    Require(!roots.Keep(nullptr) && roots.healthy());
+    Require(roots.Keep(&object) == &object && roots.Keep(&other) == &other && targets.size() == 2);
+    fail_allocation = true;
+    Require(!roots.Keep(&object) && !roots.healthy());
+    fail_allocation = false;
+  }
+  Require(frees == 5 && targets.empty());
   std::cout << "IL2CPP GC ownership tests passed\n";
 }

@@ -1,24 +1,12 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-template <typename T> struct MonoSingleton {
-public:
+// Unity singletons expose a static Instance on their MonoSingleton`1<T> base.
+template <typename T> struct MonoSingleton : il2cpp::Object {
   static T* Instance()
-  {
-    IL2CppClassHelper& helper = T::get_class_helper();
-    static auto        parent = helper.GetParent("MonoSingleton`1");
-    auto               p      = parent.GetProperty("Instance");
-    auto               p2     = p.GetRaw<T>(nullptr);
-
-    // Il2CppClassPointerStore<MonoSingleton<T>>.NativeClassPtr =
-    // (__Null)IL2CPP.il2cpp_class_from_type(Il2CppSystem.Type.internal_from_handle(IL2CPP.il2cpp_class_get_type(IL2CPP.GetIl2CppClass("Assembly-CSharp.dll",
-    // "", "MonoSingleton`1"))).MakeGenericType(new Il2CppReferenceArray<Il2CppSystem.Type>(new Il2CppSystem.Type[1]
-    //	{
-    //	  Il2CppSystem.Type.internal_from_handle(IL2CPP.il2cpp_class_get_type((System.IntPtr)
-    // Il2CppClassPointerStore<T>.NativeClassPtr))
-    //	})).TypeHandle.value);
-
-    return p2;
-  }
+  { return T::Class::template Get<"Instance", T*>(); }
+  // The singleton s_instance already holds, or null. Instance can search the scene or create a replacement.
+  static T* Existing()
+  { return T::Class::template Field<"s_instance", T*>(); }
 };

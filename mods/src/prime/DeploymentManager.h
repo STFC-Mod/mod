@@ -1,99 +1,50 @@
 #pragma once
 
-#include "CallbackContainer.h"
+#include "FleetDeployedData.h"
+#include "FleetPlayerData.h"
 #include "MonoSingleton.h"
 #include "Vector3.h"
-#include "FleetPlayerData.h"
-#include "FleetDeployedData.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class DeploymentService
-{
-public:
-  class IEnumerator_PlanCourse
-  {
-  public:
+struct DeploymentService : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "DeploymentService">;
+
+  // The compiler-generated <PlanCourse>d__N iterator. Unbound so MoveNext resolves on whatever class the game
+  // returns; the suffix changes between client builds.
+  struct IEnumerator_PlanCourse : il2cpp::Object {
     bool MoveNext()
-    {
-      static auto MoveNext = get_class_helper().GetMethodSpecial<bool(IEnumerator_PlanCourse*)>("MoveNext");
-      static auto MoveWarn = true;
-
-      if (MoveNext) {
-        return MoveNext(this);
-      } else if (MoveWarn) {
-        MoveWarn = false;
-        ErrorMsg::MissingMethod("IEnumerator_PlanCourse", "MoveNext");
-      }
-
-      return false;
-    }
-
-  private:
-    static IL2CppClassHelper& get_class_helper()
-    {
-      static auto class_helper =
-          il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "", "DeploymentService.<PlanCourse>d__119");
-      return class_helper;
-    }
+    { return Call<"MoveNext", bool>(); }
   };
-
-private:
-  friend class IEnumerator_PlanCourse;
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "DeploymentService");
-    return class_helper;
-  }
 };
 
+// The managed class is DeploymentManager; the misspelled C++ name is kept for existing callers.
 struct DeploymentManger : MonoSingleton<DeploymentManger> {
-  friend struct MonoSingleton<DeploymentManger>;
+  using Class = il2cpp::Class<"Assembly-CSharp", "", "DeploymentManager">;
 
-public:
   void SetTowRequest(uint64_t towedFleetId, uint64_t towingFleetId)
   {
-    static auto SetTowRequestMethod =
-        get_class_helper().GetMethod<void(DeploymentManger*, uint64_t, uint64_t, void*)>("SetTowRequest");
-    static auto SetTowRequestWarn = true;
-
-    if (SetTowRequestMethod) {
-      auto ptr = CallbackContainer::Create();
-      SetTowRequestMethod(this, towedFleetId, towingFleetId, ptr);
-    } else if (SetTowRequestWarn) {
-      SetTowRequestWarn = false;
-      ErrorMsg::MissingMethod("DeploymentManager", "SetTowRequest");
-    }
+    // The game expects a CallbackContainer<int>; an empty one without handlers is enough. Take the concrete
+    // generic instance from the method signature instead of spelling the inflated class out here.
+    static Il2CppClass* const callback_class = [] {
+      auto method = Class::Method("SetTowRequest", 3);
+      return method ? il2cpp_class_from_type(method.Info()->parameters[2]) : nullptr;
+    }();
+    if (!callback_class)
+      return;
+    Call<"SetTowRequest">(towedFleetId, towingFleetId, il2cpp_object_new(callback_class));
   }
 
+  bool HasInstantWarpAbility(FleetPlayerData* selectedFleet)
+  { return Call<"HasInstantWarpAbility", bool>(selectedFleet); }
+
+  // targetAddress is a NodeAddress; the trailing data arguments are optional references.
   DeploymentService::IEnumerator_PlanCourse* PlanCourse(FleetPlayerData* selectedFleet, void* targetAddress,
                                                         Vector3 targetPosition, FleetDeployedData* targetDeployedFleet,
-                                                        void* starbaseData, void* allianceStarbaseData)
+                                                        void* starbaseData, void* allianceStarbaseData,
+                                                        void* outpost = nullptr)
   {
-    static auto PlanCourseMethod =
-        get_class_helper()
-            .GetMethod<DeploymentService::IEnumerator_PlanCourse*(
-                DeploymentManger*, FleetPlayerData * selectedFleet, void* targetAddress, Vector3* targetPosition,
-                FleetDeployedData* targetDeployedFleet, void* starbaseData, void* allianceStarbaseData)>("PlanCourse");
-    static auto PlanCourseWarn = true;
-
-    if (PlanCourseMethod) {
-      return PlanCourseMethod(this, selectedFleet, targetAddress, &targetPosition, targetDeployedFleet, starbaseData,
-                              allianceStarbaseData);
-    } else if (PlanCourseWarn) {
-      PlanCourseWarn = false;
-      ErrorMsg::MissingMethod("DeploymentService", "PlanCourse");
-    }
-
-    return nullptr;
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "", "DeploymentManager");
-    return class_helper;
+    return Call<"PlanCourse", DeploymentService::IEnumerator_PlanCourse*>(
+        selectedFleet, targetAddress, targetPosition, targetDeployedFleet, starbaseData, allianceStarbaseData, outpost);
   }
 };

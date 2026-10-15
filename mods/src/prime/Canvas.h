@@ -1,27 +1,12 @@
 #pragma once
 
-#include "il2cpp/il2cpp_helper.h"
+#include <il2cpp/il2cpp.h>
 
-struct Canvas {
-public:
-  __declspec(property(get = __get_scaleFactor, put = __set_scaleFactor)) float scaleFactor;
+struct Canvas : il2cpp::Object {
+  using Class = il2cpp::Class<"UnityEngine.UIModule", "UnityEngine", "Canvas">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("UnityEngine.UIModule", "UnityEngine", "Canvas");
-    return class_helper;
-  }
-
-public:
-  float __get_scaleFactor()
-  {
-    static auto field = get_class_helper().GetProperty("scaleFactor");
-    return *field.Get<float>(this);
-  }
-  void __set_scaleFactor(float v)
-  {
-    static auto field = get_class_helper().GetProperty("scaleFactor");
-    field.SetRaw<float>(this, v);
-  }
+  float scaleFactor()
+  { return Get<"scaleFactor", float>(); }
+  void SetScaleFactor(float value)
+  { Set<"scaleFactor">(value); }
 };

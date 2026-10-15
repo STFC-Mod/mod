@@ -1,31 +1,15 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
+#include "GenericButtonWidget.h"
 #include "ObjectViewerBaseWidget.h"
 
-struct StarNodeObjectViewerWidget : public ObjectViewerBaseWidget<StarNodeObjectViewerWidget> {
-public:
+struct StarNodeObjectViewerWidget : ObjectViewerBaseWidget {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget">;
+
   void OnViewButtonActivation()
-  {
-    static auto OnViewButtonActivation =
-        get_class_helper().GetMethod<void(StarNodeObjectViewerWidget*)>("OnViewButtonActivation");
-    OnViewButtonActivation(this);
-  }
+  { Call<"OnViewButtonActivation">(); }
   void InitiateWarp()
-  {
-    static auto InitiateWarp = get_class_helper().GetMethod<void(StarNodeObjectViewerWidget*)>("InitiateWarp");
-    InitiateWarp(this);
-  }
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ObjectViewer", "StarNodeObjectViewerWidget");
-    return class_helper;
-  }
-
-private:
-  friend class ObjectFinder<StarNodeObjectViewerWidget>;
-  friend class ObjectViewerBaseWidget<StarNodeObjectViewerWidget>;
+  { Call<"InitiateWarp">(); }
+  GenericButtonWidget* visitButton()
+  { return Field<"_visitButton", GenericButtonWidget*>(); }
 };

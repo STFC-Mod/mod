@@ -1,5 +1,6 @@
-#include <il2cpp/il2cpp_helper.h>
-#include <il2cpp/method_contract.h>
+#include "patches/object_tracker.h"
+
+#include <il2cpp/il2cpp.h>
 
 #include "prime/AllianceStarbaseObjectViewerWidget.h"
 #include "prime/AnimatedRewardsScreenViewController.h"
@@ -155,26 +156,6 @@ void track_free(auto original, void* _this)
 #undef GET_CLASS
 }
 
-void artifact_details_bind_hook(auto original, Il2CppObject* _this)
-{
-  original(_this);
-  if (!_this || !_this->klass)
-    return;
-
-  std::scoped_lock lk{tracked_objects_mutex};
-  remove_from_tracking_all(_this);
-  add_to_tracking_recursive(_this->klass, _this);
-}
-
-void artifact_details_release_hook(auto original, Il2CppObject* _this)
-{
-  if (_this) {
-    std::scoped_lock lk{tracked_objects_mutex};
-    remove_from_tracking_all(_this);
-  }
-  original(_this);
-}
-
 void calc_liveness_hook(auto original, void* state)
 {
   original(state);
@@ -205,38 +186,19 @@ void calc_liveness_hook(auto original, void* state)
 static eastl::unordered_set<void*> seen_ctor;
 static eastl::unordered_set<void*> seen_destroy;
 
+// OnDestroy (and sometimes .ctor) resolves to a shared base implementation; detour each entry point once.
 template <typename T> void TrackObject()
 {
-  auto& object_class = T::get_class_helper();
-  auto  ctor         = object_class.GetMethod(".ctor");
-  auto  on_destroy   = object_class.GetMethod("OnDestroy");
-  if (seen_ctor.find(ctor) == seen_ctor.end()) {
-    SPUD_STATIC_DETOUR(ctor, track_ctor);
-    seen_ctor.emplace(ctor);
+  if (auto ctor = T::Class::Method(".ctor"); ctor && seen_ctor.find(ctor.Pointer()) == seen_ctor.end()) {
+    SPUD_STATIC_DETOUR(ctor.Pointer(), track_ctor);
+    seen_ctor.emplace(ctor.Pointer());
   }
 
-  if (seen_destroy.find(on_destroy) == seen_destroy.end()) {
-    SPUD_STATIC_DETOUR(on_destroy, track_destroy);
-    seen_destroy.emplace(on_destroy);
+  if (auto on_destroy = T::Class::Method("OnDestroy");
+      on_destroy && seen_destroy.find(on_destroy.Pointer()) == seen_destroy.end()) {
+    SPUD_STATIC_DETOUR(on_destroy.Pointer(), track_destroy);
+    seen_destroy.emplace(on_destroy.Pointer());
   }
-}
-
-void TrackArtifactDetailsCanvas()
-{
-  auto* cls = ArtifactHallDetailsViewController::get_class_helper().get_cls();
-  const auto* bind = method_contract::Resolve(cls, "OnDidBindCanvasContext", false, "System.Void", {});
-  const auto* release = method_contract::Resolve(cls, "OnAboutToReleaseCanvasContext", false, "System.Void", {});
-  if (!bind || !release || bind->has_full_generic_sharing_signature || release->has_full_generic_sharing_signature) {
-    spdlog::warn("Object tracker: artifact details canvas lifecycle unavailable; artifact arrow navigation disabled");
-    return;
-  }
-
-  const bool bind_installed = SPUD_STATIC_DETOUR(bind->methodPointer, artifact_details_bind_hook);
-  const bool release_installed = SPUD_STATIC_DETOUR(release->methodPointer, artifact_details_release_hook);
-  if (bind_installed && release_installed)
-    spdlog::info("Object tracker: tracking artifact details through canvas lifecycle");
-  else
-    spdlog::warn("Object tracker: artifact details canvas hooks were not installed; artifact arrow navigation disabled");
 }
 
 void InstallObjectTrackers()
@@ -247,7 +209,7 @@ void InstallObjectTrackers()
   TrackObject<AllianceStarbaseObjectViewerWidget>();
   TrackObject<AnimatedRewardsScreenViewController>();
   TrackObject<ArmadaObjectViewerWidget>();
-  TrackArtifactDetailsCanvas();
+  TrackObject<ArtifactHallDetailsViewController>();
   TrackObject<AssignShipsWidget>();
   TrackObject<CelestialObjectViewerWidget>();
   TrackObject<EmbassyObjectViewer>();

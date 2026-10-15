@@ -1,27 +1,15 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class IBuffComparer
-{
-public:
-  long get_HullId()
-  {
-    static auto prop = get_class_helper().GetProperty("HullID");
-    return *prop.Get<long>((void*)this);
-  }
+#include <cstdint>
 
-  long get_FactionId()
-  {
-    static auto prop = get_class_helper().GetProperty("FactionID");
-    return *prop.Get<long>((void*)this);
-  }
+// Interface binding; the getters dispatch to the receiver's implementation.
+struct IBuffComparer : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "IBuffComparer">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "IBuffComparer");
-    return class_helper;
-  }
+  int64_t get_HullId()
+  { return Get<"HullID", int64_t>(); }
+  int64_t get_FactionId()
+  { return Get<"FactionID", int64_t>(); }
 };

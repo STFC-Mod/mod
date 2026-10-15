@@ -1,8 +1,10 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-enum class SectionID {
+#include <cstdint>
+
+enum class SectionID : int32_t {
   ArtifactHall_Inventory                   = -2058246328,
   Alliance_Contribution                    = -2035860712,
   Alliance_Diplomacy_List                  = -1998741427,
@@ -143,195 +145,84 @@ enum class SectionID {
   Tournament_Group_Selection               = 2138751318,
 };
 
-struct SectionStorage {
-public:
+struct SectionStorage : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Sections", "SectionStorage">;
+
   void* GetState(SectionID section)
-  {
-    static auto GetStateMethod = get_class_helper().GetMethod<void*(SectionStorage*, SectionID)>("GetState");
-    static auto GetStateWarn   = true;
-
-    if (GetStateMethod) {
-      return GetStateMethod(this, section);
-    } else if (GetStateWarn) {
-      GetStateWarn = false;
-      ErrorMsg::MissingMethod("SectionStorage", "GetState");
-    }
-
-    return nullptr;
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Sections", "SectionStorage");
-    return class_helper;
-  }
+  { return Call<"GetState", void*>(section); }
 };
 
-struct SectionNavHistory {
-public:
+struct SectionNavHistory : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Sections", "SectionNavHistory">;
+
   bool Contains(SectionID section)
-  {
-    static auto ContainsMethod = get_class_helper().GetMethod<bool(SectionNavHistory*, SectionID)>("ContainsSectionID");
-    static auto ContainsWarn   = true;
-
-    if (ContainsMethod) {
-      return ContainsMethod(this, section);
-    } else if (ContainsWarn) {
-      ContainsWarn = false;
-      ErrorMsg::MissingMethod("SectionNavHistory", "Contains");
-    }
-
-    return false;
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Sections", "SectionNavHistory");
-    return class_helper;
-  }
+  { return Call<"ContainsSectionID", bool>(section); }
 };
 
-struct SectionManager {
-public:
-  __declspec(property(get = __get_CurrentSection)) SectionID CurrentSection;
-  __declspec(property(get = __get__sectionStorage)) SectionStorage* _sectionStorage;
-  __declspec(property(get = __get__history)) SectionNavHistory* _history;
+struct SectionManager : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Sections", "SectionManager">;
 
-  void TriggerSectionChange(SectionID nextSectionID, void* args, bool forcedSectionChange = false,
+  SectionID CurrentSection()
+  { return Get<"CurrentSection", SectionID>(); }
+  SectionStorage* sectionStorage()
+  { return Field<"_sectionStorage", SectionStorage*>(); }
+  SectionNavHistory* history()
+  { return Field<"_history", SectionNavHistory*>(); }
+
+  // The (SectionData) overload is not used here; args is any managed object or null.
+  bool TriggerSectionChange(SectionID nextSectionID, void* args, bool forcedSectionChange = false,
                             bool isGoBackStep = false, bool allowSameSection = false)
   {
-    static auto triggerWarn = true;
-    static auto triggerMethod =
-        get_class_helper().GetMethod<void(void*, SectionID, void*, bool, bool isGoBackStep, bool allowSameSection)>(
-            "TriggerSectionChange");
-
-    if (triggerMethod) {
-      triggerMethod(this, nextSectionID, args, forcedSectionChange, isGoBackStep, allowSameSection);
-    } else if (triggerWarn) {
-      triggerWarn = false;
-      ErrorMsg::MissingMethod("SectionManager", "TriggerSectionChange");
-    }
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Sections", "SectionManager");
-    return class_helper;
-  }
-
-public:
-  SectionID __get_CurrentSection()
-  {
-    static auto field = get_class_helper().GetProperty("CurrentSection");
-    return *field.Get<SectionID>(this);
-  }
-
-  SectionStorage* __get__sectionStorage()
-  {
-    static auto field = get_class_helper().GetField("_sectionStorage");
-    return *(SectionStorage**)((ptrdiff_t)this + field.offset());
-  }
-
-  SectionNavHistory* __get__history()
-  {
-    static auto field = get_class_helper().GetField("_history");
-    return *(SectionNavHistory**)((ptrdiff_t)this + field.offset());
+    return Call<"TriggerSectionChange", bool>(nextSectionID, args, forcedSectionChange, isGoBackStep,
+                                              allowSameSection);
   }
 };
 
-struct GSServiceRegistry {
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.Networking.Core", "GSServiceRegistry");
-    return class_helper;
-  }
+struct GSServiceRegistry : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Networking.Core", "GSServiceRegistry">;
 };
 
-struct PrimeApp {
+// Digit.Client.Core.CustomReloadArgs and Nullable<CustomReloadArgs>, laid out as the runtime does.
+struct CustomReloadArgs {
+  Il2CppObject* SectionArgs;
+  bool          ForceFakeReload;
+};
+struct NullableCustomReloadArgs {
+  bool             hasValue;
+  CustomReloadArgs value;
+};
+
+struct PrimeApp : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "PrimeApp">;
+
   void Quit()
-  {
-    static auto quit = get_class_helper().GetMethod<void(PrimeApp*)>("Quit");
-    static auto warn = true;
-    if (quit) {
-      quit(this);
-    } else if (warn) {
-      warn = false;
-      ErrorMsg::MissingMethod("PrimeApp", "Quit");
-    }
-  }
-
+  { Call<"Quit">(); }
   void Reload()
-  {
-    struct CustomReloadArgs {
-      void* SectionArgs;
-      bool  ForceFakeReload;
-    };
-    struct NullableCustomReloadArgs {
-      bool             hasValue;
-      CustomReloadArgs value;
-    };
-
-    static auto reload = get_class_helper().GetMethod<void(PrimeApp*, bool, NullableCustomReloadArgs, bool)>("Reload");
-    static auto warn   = true;
-    if (reload) {
-      reload(this, false, {}, false);
-    } else if (warn) {
-      warn = false;
-      ErrorMsg::MissingMethod("PrimeApp", "Reload");
-    }
-  }
-
+  { Call<"Reload">(false, NullableCustomReloadArgs{}, false); }
   GSServiceRegistry* get_Services()
-  {
-    static auto field = get_class_helper().GetProperty("Services");
-    return field.GetRaw<GSServiceRegistry>(this);
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "PrimeApp");
-    return class_helper;
-  }
+  { return Get<"Services", GSServiceRegistry*>(); }
 };
 
+// Digit.Client.Core.Hub is a static class.
 struct Hub {
-  static SectionManager* get_SectionManager()
-  {
-    static auto field = get_class_helper().GetProperty("SectionManager");
-    return field.GetRaw<SectionManager>(nullptr);
-  }
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Hub">;
 
+  static SectionManager* get_SectionManager()
+  { return Class::Get<"SectionManager", SectionManager*>(); }
   static PrimeApp* get_App()
-  {
-    static auto field = get_class_helper().GetProperty("App");
-    return field.GetRaw<PrimeApp>(nullptr);
-  }
+  { return Class::Get<"App", PrimeApp*>(); }
 
   static bool IsInChat()
   {
-    auto current_section = Hub::get_SectionManager()->CurrentSection;
+    auto current_section = get_SectionManager()->CurrentSection();
     return current_section == SectionID::Chat_Private_Message || current_section == SectionID::Chat_Alliance
            || current_section == SectionID::Chat_Main || current_section == SectionID::Chat_Private_List;
   }
 
   static bool IsInSystemOrGalaxyOrStarbase()
   {
-    auto current_section = Hub::get_SectionManager()->CurrentSection;
+    auto current_section = get_SectionManager()->CurrentSection();
     return current_section == SectionID::Navigation_Galaxy || current_section == SectionID::Navigation_System
            || current_section == SectionID::Starbase_Interior || current_section == SectionID::Starbase_Exterior;
   }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "Hub");
-    return class_helper;
-  }
-
-public:
 };

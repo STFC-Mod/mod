@@ -1,22 +1,14 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
 #include "HullSpec.h"
 
-struct SpecService {
-public:
-  HullSpec* GetHull(long hullId)
-  {
-    static auto method =
-        get_class_helper().GetMethod<HullSpec*(SpecService*, long)>("GetHull");
-    return method(this, hullId);
-  }
+#include <il2cpp/il2cpp.h>
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "SpecService");
-    return class_helper;
-  }
+#include <cstdint>
+
+struct SpecService : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "SpecService">;
+
+  HullSpec* GetHull(int64_t hullId)
+  { return Call<"GetHull", HullSpec*>(hullId); }
 };

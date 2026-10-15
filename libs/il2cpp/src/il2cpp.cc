@@ -34,7 +34,7 @@ namespace
 
   std::string TypeName(const Il2CppType* type)
   {
-    auto*       raw = type ? il2cpp_type_get_name(type) : nullptr;
+    auto*       raw  = type ? il2cpp_type_get_name(type) : nullptr;
     std::string name = raw ? raw : "?";
     if (raw)
       il2cpp_free(raw);
@@ -51,7 +51,7 @@ namespace
 
   std::string Describe(const detail::Slot& slot)
   {
-    using Kind = detail::Slot::Kind;
+    using Kind       = detail::Slot::Kind;
     std::string text = slot.byref ? "ref " : "";
     if (slot.kind == Kind::kVoid)
       return text + "void";
@@ -96,11 +96,12 @@ namespace
       // Bindings may name a base or derived class of the declared type. If the binding's own class
       // is missing, nothing matches; guessing could pass an object of the wrong type.
       auto* expected = slot.klass();
-      return expected && il2cpp_class_is_assignable_from(klass, expected)
-             || il2cpp_class_is_assignable_from(expected, klass);
+      return expected
+             && (il2cpp_class_is_assignable_from(klass, expected) || il2cpp_class_is_assignable_from(expected, klass));
     }
     uint32_t alignment = 0;
-    if (!il2cpp_class_is_valuetype(klass) || static_cast<uint32_t>(il2cpp_class_value_size(klass, &alignment)) != slot.size)
+    if (!il2cpp_class_is_valuetype(klass)
+        || static_cast<uint32_t>(il2cpp_class_value_size(klass, &alignment)) != slot.size)
       return false;
     if (il2cpp_class_is_enum(klass) || IsIntegral(type->type))
       return IsIntegral(slot.primitive);
@@ -226,8 +227,7 @@ namespace detail
       return {};
     const MethodInfo* found = nullptr;
     ForEachMethod(klass, name, [&](const MethodInfo* method) {
-      if (!Callable(method) || (method->flags & METHOD_ATTRIBUTE_ABSTRACT)
-          || method->parameters_count != params.size())
+      if (!Callable(method) || (method->flags & METHOD_ATTRIBUTE_ABSTRACT) || method->parameters_count != params.size())
         return true;
       size_t index = 0;
       for (auto param : params) {
@@ -246,8 +246,7 @@ namespace detail
     return Method(found);
   }
 
-  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature,
-                                  bool is_static)
+  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature, bool is_static)
   {
     if (!klass)
       return nullptr;

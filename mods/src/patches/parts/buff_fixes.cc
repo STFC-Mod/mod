@@ -1,8 +1,7 @@
 #include "config.h"
-#include "errormsg.h"
 #include "prime_types.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <prime/IBuffComparer.h>
 #include <prime/IBuffData.h>
 
@@ -25,17 +24,10 @@ static bool BuffService_IsBuffConditionMet(auto original, void* _this, BuffCondi
 
 void InstallBuffFixHooks()
 {
+  using BuffService = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "BuffService">;
+
   if (Config::Get().use_out_of_dock_power) {
-    auto buffHelper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "BuffService");
-    if (!buffHelper.isValidHelper()) {
-      ErrorMsg::MissingHelper("Services", "BuffService");
-    } else {
-      if (const auto ptr = buffHelper.GetMethod("IsBuffConditionMet"); ptr == nullptr) {
-        ErrorMsg::MissingMethod("BuffService", "IsBuffConditionMet");
-      } else {
-        SPUD_STATIC_DETOUR(ptr, BuffService_IsBuffConditionMet);
-      }
-    }
+    if (auto method = BuffService::Method("IsBuffConditionMet"))
+      SPUD_STATIC_DETOUR(method.Pointer(), BuffService_IsBuffConditionMet);
   }
 }

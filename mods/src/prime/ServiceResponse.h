@@ -2,51 +2,62 @@
 
 #include "EntityGroup.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-struct RepeatedField_EntityGroup {
-public:
-  __declspec(property(get = __get_Count)) int Count;
+struct ServiceResponse : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ServiceResponse">;
 
-  EntityGroup* get_Item(int index)
-  {
-    static auto helper   = IL2CppClassHelper{((Il2CppObject*)(this))->klass};
-    static auto get_Item = helper.GetMethod<EntityGroup*(void*, int)>("get_Item");
-    return get_Item(this, index);
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Google.Protobuf", "Google.Protobuf.Collections", "RepeatedField`1");
-    return class_helper;
-  }
-
-public:
-  int __get_Count()
-  {
-    static auto helper = IL2CppClassHelper{((Il2CppObject*)(this))->klass};
-    static auto prop   = helper.GetField("count");
-    return *(int*)((ptrdiff_t)this + prop.offset());
-  };
+  // Google.Protobuf.Collections.RepeatedField<EntityGroup>; List resolves Count/get_Item on it.
+  il2cpp::List<EntityGroup*>* EntityGroups()
+  { return Get<"EntityGroups", il2cpp::List<EntityGroup*>*>(); }
 };
 
-struct ServiceResponse {
-  __declspec(property(get = __get_EntityGroups)) RepeatedField_EntityGroup* EntityGroups;
+// The platform service's responses, Digit.Platform.Models. They pass through the same model registry code as game
+// server responses, but their entity groups have their own type enum.
+struct PlatformEntityGroup : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Platform.Models", "EntityGroup">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ServiceResponse");
-    return class_helper;
-  }
+  enum Type : int32_t {
+    StaticTranslations             = 0,
+    DynamicTranslations            = 1,
+    StoreOffers                    = 2,
+    OrderVirtualGood               = 3,
+    Json                           = 4,
+    TournamentBundles              = 5,
+    EventRanking                   = 6,
+    EventsModel                    = 7,
+    LeaderboardRanking             = 8,
+    LeaderboardsModel              = 9,
+    EventNotification              = 10,
+    PlayerStats                    = 11,
+    GameNews                       = 12,
+    FileSignedUrls                 = 13,
+    GameInfo                       = 14,
+    PlayerProfiles                 = 15,
+    PlayerlifecycleNotification    = 16,
+    MinigamesList                  = 17,
+    GameNewsVideo                  = 18,
+    PromoCodeRedeem                = 19,
+    StoreGroups                    = 20,
+    AllianceGameState              = 21,
+    AllianceGameChangeNotification = 22,
+    ApmFiltersStatus               = 23,
+    ApmFiltersUpdated              = 24,
+    ListReferralConnections        = 25,
+    RewardRedeem                   = 26,
+    LoginStreakRecalculate         = 27,
+    OrdersVirtualGood              = 28,
+  };
 
-public:
-  RepeatedField_EntityGroup* __get_EntityGroups()
-  {
-    static auto prop = get_class_helper().GetProperty("EntityGroups");
-    return prop.GetRaw<RepeatedField_EntityGroup>(this);
-  }
+  Type Type_()
+  { return Get<"Type", Type>(); }
+  ByteString* Group()
+  { return Get<"Group", ByteString*>(); }
+};
+
+struct PlatformServiceResponse : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Platform.Models", "ServiceResponse">;
+
+  il2cpp::List<PlatformEntityGroup*>* EntityGroups()
+  { return Get<"EntityGroups", il2cpp::List<PlatformEntityGroup*>*>(); }
 };

@@ -1,12 +1,12 @@
 #include "patches/notification_service.h"
 #include "patches/battle_notify_parser.h"
-#include "patches/notification_audio.h"
 
 #include "config.h"
 #include "str_utils.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <prime/LanguageManager.h>
+#include <prime/LocaleTextContext.h>
 #include <prime/Toast.h>
 
 #include <spdlog/spdlog.h>
@@ -19,12 +19,21 @@
 #include <winrt/Windows.UI.Notifications.h>
 #endif
 
-// ---------------------------------------------------------------------------
-// IL2CPP method cache
-// ---------------------------------------------------------------------------
-static const MethodInfo* s_localize_ltc    = nullptr; // LanguageManager.Localize(out string, LocaleTextContext) — instance
-static const MethodInfo* s_locale_utils_localize = nullptr; // LocaleUtilities.Localize(LocaleTextContext, bool, bool) — static
-static const MethodInfo* s_object_tostring = nullptr;
+namespace {
+
+// EventCategories is a struct wrapping one int32 (_flagValue).
+struct EventCategories {
+  int32_t flagValue;
+};
+
+struct EventModel : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimePlatform.Models", "EventModel">;
+
+  EventCategories category()
+  { return Field<"category_", EventCategories>(); }
+};
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Toast state → human-readable title
@@ -121,33 +130,6 @@ static void show_system_notification(const char* title, const char* body)
 #endif
 
 // ---------------------------------------------------------------------------
-// Convert an IL2CPP object to string via virtual ToString()
-// ---------------------------------------------------------------------------
-static std::string il2cpp_object_to_string(Il2CppObject* obj)
-{
-  if (!obj) return {};
-
-  // Fast path: if it's a String, convert directly
-  auto* cls = il2cpp_object_get_class(obj);
-  if (cls) {
-    auto* name = il2cpp_class_get_name(cls);
-    if (name && std::string_view(name) == "String")
-      return to_string(reinterpret_cast<Il2CppString*>(obj));
-  }
-
-  // Call virtual ToString() — resolve Object.ToString once, then dispatch per object
-  if (!s_object_tostring) return {};
-
-  auto* vm = il2cpp_object_get_virtual_method(obj, s_object_tostring);
-  if (!vm) return {};
-
-  Il2CppException* exc = nullptr;
-  auto* result = reinterpret_cast<Il2CppString*>(il2cpp_runtime_invoke(vm, obj, nullptr, &exc));
-  if (exc || !result) return {};
-  return to_string(result);
-}
-
-// ---------------------------------------------------------------------------
 // SEH wrapper — catches access violations from bad IL2CPP pointers
 // ---------------------------------------------------------------------------
 template <typename Fn>
@@ -177,11 +159,8 @@ static Il2CppString* seh_to_string_raw(Il2CppObject* obj)
     if (name && strcmp(name, "String") == 0)
       return reinterpret_cast<Il2CppString*>(obj);
   }
-  if (!s_object_tostring) return nullptr;
-  auto* vm = il2cpp_object_get_virtual_method(obj, s_object_tostring);
-  if (!vm) return nullptr;
-  Il2CppException* exc = nullptr;
-  return reinterpret_cast<Il2CppString*>(il2cpp_runtime_invoke(vm, obj, nullptr, &exc));
+  // Virtual ToString(); boxed value types dispatch to their own override.
+  return static_cast<il2cpp::Object*>(obj)->Call<"ToString", Il2CppString*>();
 }
 
 static std::string safe_il2cpp_to_string(Il2CppObject* obj, il2cpp_array_size_t index)
@@ -198,16 +177,16 @@ static std::string safe_il2cpp_to_string(Il2CppObject* obj, il2cpp_array_size_t 
 // ---------------------------------------------------------------------------
 // Replace {N} placeholders in template with values from an IL2CPP object[]
 // ---------------------------------------------------------------------------
-static std::string format_with_array(const std::string& tmpl, Il2CppArray* arr)
+static std::string format_with_array(const std::string& tmpl, il2cpp::Array<Il2CppObject*>* arr)
 {
   if (!arr) return tmpl;
 
-  auto  len   = static_cast<il2cpp_array_size_t>(reinterpret_cast<Il2CppArraySize*>(arr)->max_length);
+  auto len = arr->size();
   if (len == 0) return tmpl;
 
   std::string result = tmpl;
   for (il2cpp_array_size_t i = 0; i < len; ++i) {
-    auto* elem = reinterpret_cast<Il2CppObject**>(reinterpret_cast<Il2CppArraySize*>(arr)->vector)[i];
+    auto* elem = (*arr)[i];
     if (!elem) continue;
 
     auto val = safe_il2cpp_to_string(elem, i);
@@ -238,7 +217,8 @@ static std::string format_with_array(const std::string& tmpl, Il2CppArray* arr)
 // ---------------------------------------------------------------------------
 // Try every instance array field on an object. Toast parameter arrays have
 // moved and changed names between game builds, including generated backing
-// fields, so runtime metadata is more reliable than names or offsets.
+// fields, so runtime metadata is more reliable than names or offsets. This
+// scan stays on the raw field API because no member name is known up front.
 // ---------------------------------------------------------------------------
 static std::string format_with_array_fields(const std::string& tmpl, Il2CppObject* obj, std::string& fields_seen)
 {
@@ -248,20 +228,20 @@ static std::string format_with_array_fields(const std::string& tmpl, Il2CppObjec
   for (auto* cls = il2cpp_object_get_class(obj); cls; cls = il2cpp_class_get_parent(cls)) {
     void* iter = nullptr;
     while (auto* field = il2cpp_class_get_fields(cls, &iter)) {
-      if ((il2cpp_field_get_flags(field) & 0x10) != 0) continue; // FieldAttributes.Static
+      if ((il2cpp_field_get_flags(field) & FIELD_ATTRIBUTE_STATIC) != 0) continue;
 
       auto* type = il2cpp_field_get_type(field);
       auto  kind = type ? il2cpp_type_get_type(type) : IL2CPP_TYPE_END;
       if (kind != IL2CPP_TYPE_SZARRAY && kind != IL2CPP_TYPE_ARRAY) continue;
 
-      Il2CppArray* arr = nullptr;
+      il2cpp::Array<Il2CppObject*>* arr = nullptr;
       il2cpp_field_get_value(obj, field, &arr);
 
       if (!fields_seen.empty()) fields_seen += ", ";
       fields_seen += il2cpp_field_get_name(field);
-      fields_seen += arr ? "[" + std::to_string(reinterpret_cast<Il2CppArraySize*>(arr)->max_length) + "]" : "[null]";
+      fields_seen += arr ? "[" + std::to_string(arr->size()) + "]" : "[null]";
 
-      if (!arr || reinterpret_cast<Il2CppArraySize*>(arr)->max_length == 0) continue;
+      if (!arr || arr->size() == 0) continue;
       auto candidate = format_with_array(tmpl, arr);
       if (std::ranges::count(candidate, '{') < std::ranges::count(result, '{'))
         result = std::move(candidate);
@@ -274,22 +254,19 @@ static std::string format_with_array_fields(const std::string& tmpl, Il2CppObjec
 // Replace {N} placeholders using Toast.TextParameters, falling back to
 // LocaleTextContext._textParameters if the Toast array is empty.
 // ---------------------------------------------------------------------------
-static std::string format_placeholders(const std::string& tmpl, Toast* toast, void* ltc)
+static std::string format_placeholders(const std::string& tmpl, Toast* toast, LocaleTextContext* ltc)
 {
   // Try Toast.TextParameters first.
   auto* toast_arr = toast->get_TextParameters();
-  if (toast_arr) {
-    auto len = static_cast<il2cpp_array_size_t>(reinterpret_cast<Il2CppArraySize*>(toast_arr)->max_length);
-    if (len > 0) {
-      return format_with_array(tmpl, toast_arr);
-    }
+  if (toast_arr && toast_arr->size() > 0) {
+    return format_with_array(tmpl, toast_arr);
   }
 
   std::string fields_seen;
-  auto result = format_with_array_fields(tmpl, reinterpret_cast<Il2CppObject*>(toast), fields_seen);
+  auto result = format_with_array_fields(tmpl, toast, fields_seen);
   if (result != tmpl) return result;
 
-  result = format_with_array_fields(tmpl, reinterpret_cast<Il2CppObject*>(ltc), fields_seen);
+  result = format_with_array_fields(tmpl, ltc, fields_seen);
   if (result != tmpl) return result;
 
   if (tmpl.find('{') != std::string::npos) {
@@ -304,7 +281,7 @@ static std::string format_placeholders(const std::string& tmpl, Toast* toast, vo
 // ---------------------------------------------------------------------------
 static std::string resolve_toast_text(Toast* toast)
 {
-  auto* ltc = toast->get_TextLocaleTextContext();
+  auto* ltc = static_cast<LocaleTextContext*>(toast->get_TextLocaleTextContext());
   if (!ltc) {
     spdlog::debug("[Notify] No TextLocaleTextContext for toast state {}", toast->get_State());
     return {};
@@ -312,65 +289,35 @@ static std::string resolve_toast_text(Toast* toast)
 
   // Try the static LocaleUtilities.Localize(LTC, bool, bool) first — it handles
   // parameter substitution internally and returns a fully formatted string.
-  if (s_locale_utils_localize) {
-    void* params[3] = { ltc, nullptr, nullptr };
-    // localizeTextParams = true, invariantCulture = false
-    bool localizeTextParams = true;
-    bool invariantCulture  = false;
-    params[1] = &localizeTextParams;
-    params[2] = &invariantCulture;
-
-    Il2CppException* exc = nullptr;
-    auto* ret = il2cpp_runtime_invoke(s_locale_utils_localize, nullptr, params, &exc);
-
-    if (exc) {
-      spdlog::warn("[Notify] LocaleUtilities.Localize threw exception");
-    } else if (ret) {
-      auto result = to_string(reinterpret_cast<Il2CppString*>(ret));
-      // LocaleUtilities.Localize may return a template with unresolved {N}
-      // placeholders if the LTC's own _textParameters are empty.  The actual
-      // parameter values may be in Toast.TextParameters, so run
-      // format_placeholders to substitute them.
-      if (result.find('{') != std::string::npos)
-        result = format_placeholders(result, toast, ltc);
-      return result;
-    } else {
-      spdlog::debug("[Notify] LocaleUtilities.Localize returned null for toast state {}", toast->get_State());
-    }
+  if (auto* ret = LocaleUtilities::Localize(ltc, true, false)) {
+    auto result = to_string(ret);
+    // LocaleUtilities.Localize may return a template with unresolved {N}
+    // placeholders if the LTC's own _textParameters are empty.  The actual
+    // parameter values may be in Toast.TextParameters, so run
+    // format_placeholders to substitute them.
+    if (result.find('{') != std::string::npos)
+      result = format_placeholders(result, toast, ltc);
+    return result;
   }
+  spdlog::debug("[Notify] LocaleUtilities.Localize returned null for toast state {}", toast->get_State());
 
   // Fall back to instance LanguageManager.Localize(out string, LTC)
-  if (s_localize_ltc) {
-    auto* langMgr = LanguageManager::Instance();
-    if (!langMgr) return {};
+  auto* langMgr = LanguageManager::Instance();
+  if (!langMgr) return {};
 
-    Il2CppString*  resolved = nullptr;
-    void*          params[2] = { &resolved, ltc };
-    Il2CppException* exc = nullptr;
-    auto* ret = il2cpp_runtime_invoke(s_localize_ltc, langMgr, params, &exc);
-
-    if (exc) {
-      spdlog::warn("[Notify] LanguageManager.Localize threw exception");
-      return {};
-    }
-
-    bool success = ret ? (*static_cast<bool*>(il2cpp_object_unbox(ret))) : false;
-    if (!success || !resolved) {
-      spdlog::debug("[Notify] LanguageManager.Localize returned false for toast state {}", toast->get_State());
-      return {};
-    }
-
-    auto tmpl = to_string(resolved);
-    return format_placeholders(tmpl, toast, ltc);
+  Il2CppString* resolved = nullptr;
+  if (!langMgr->Localize(resolved, ltc) || !resolved) {
+    spdlog::debug("[Notify] LanguageManager.Localize returned false for toast state {}", toast->get_State());
+    return {};
   }
 
-  return {};
+  auto tmpl = to_string(resolved);
+  return format_placeholders(tmpl, toast, ltc);
 }
 
 // ---------------------------------------------------------------------------
-// Resolve the event category from Toast.Data (EventModel) and map it to a
-// human-readable name.  EventModel.category_ is at offset 0x1E8 and holds an
-// EventCategories struct whose sole field (_flagValue) is an int32.
+// Resolve the event category from Toast.Data (EventModel.category_) and map
+// it to a human-readable name.
 // ---------------------------------------------------------------------------
 static const char* event_category_name(int32_t cat)
 {
@@ -411,19 +358,11 @@ static const char* event_category_name(int32_t cat)
 static std::string resolve_event_category(Toast* toast)
 {
   auto* data = toast->get_Data();
-  if (!data) return {};
+  auto* event = data ? static_cast<il2cpp::Object*>(data)->As<EventModel>() : nullptr;
+  if (!event) return {};
 
-  std::string result;
-  if (!seh_call([&] {
-        // EventModel.category_ is at offset 0x1E8 (int32 _flagValue)
-        auto cat = *reinterpret_cast<int32_t*>(reinterpret_cast<char*>(data) + 0x1E8);
-        auto* name = event_category_name(cat);
-        if (name) result = name;
-      })) {
-    spdlog::warn("[Notify] SEH: reading EventModel.category_ crashed");
-  }
-
-  return result;
+  auto* name = event_category_name(event->category().flagValue);
+  return name ? name : std::string{};
 }
 
 // ---------------------------------------------------------------------------
@@ -450,57 +389,8 @@ static std::string strip_unity_rich_text(const std::string& s)
 
 void notification_init()
 {
+  // IL2CPP members resolve on first use; only the platform side needs setup.
 #if _WIN32
-  // Resolve LanguageManager::Localize(out string, LocaleTextContext) — the
-  // 2-parameter overload that takes an LTC and returns a localized string.
-  auto lm_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Localization", "LanguageManager");
-  if (lm_helper.isValidHelper()) {
-    auto* cls = lm_helper.get_cls();
-    if (cls) {
-      void* iter = nullptr;
-      while (auto* method = il2cpp_class_get_methods(cls, &iter)) {
-        auto name = std::string_view(il2cpp_method_get_name(method));
-        auto pc   = il2cpp_method_get_param_count(method);
-        if (name == "Localize" && pc == 2) {
-          s_localize_ltc = method;
-          break;
-        }
-      }
-    }
-  }
-
-  if (!s_localize_ltc) {
-    spdlog::warn("[Notify] Could not resolve LanguageManager::Localize — falling back to LocaleUtilities");
-  }
-
-  // Resolve LocaleUtilities::Localize(LocaleTextContext, bool, bool) — static method
-  // that handles parameter substitution internally and returns a fully formatted string.
-  auto lu_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Localization", "LocaleUtilities");
-  if (lu_helper.isValidHelper()) {
-    auto* cls = lu_helper.get_cls();
-    if (cls) {
-      void* iter = nullptr;
-      while (auto* method = il2cpp_class_get_methods(cls, &iter)) {
-        auto name = std::string_view(il2cpp_method_get_name(method));
-        auto pc   = il2cpp_method_get_param_count(method);
-        if (name == "Localize" && pc == 3) {
-          s_locale_utils_localize = method;
-          break;
-        }
-      }
-    }
-  }
-
-  if (!s_locale_utils_localize) {
-    spdlog::warn("[Notify] Could not resolve LocaleUtilities::Localize — will use LanguageManager fallback");
-  }
-
-  // Resolve System.Object::ToString() for converting IL2CPP objects to strings
-  s_object_tostring = il2cpp_get_class_helper("mscorlib", "System", "Object").GetMethodInfo("ToString", 0);
-  if (!s_object_tostring) {
-    spdlog::warn("[Notify] Could not resolve Object::ToString — placeholder formatting may be incomplete");
-  }
-
   try {
     winrt::init_apartment(winrt::apartment_type::single_threaded);
     spdlog::info("[Notify] Windows notification service initialized");
@@ -510,8 +400,6 @@ void notification_init()
   } catch (...) {
     spdlog::warn("[Notify] Windows notification service failed (unknown error)");
   }
-#elif __APPLE__
-  spdlog::info("[Notify] macOS audio notification service ready");
 #else
   spdlog::info("[Notify] Notification service: platform not supported (no-op)");
 #endif
@@ -519,16 +407,16 @@ void notification_init()
 
 void notification_handle_toast(Toast* toast)
 {
-  if (!toast) return;
-
-  const auto& config = Config::Get();
-  const auto  state  = toast->get_State();
-  notification_audio_play(config.NotificationSoundForToast(state));
-
-#if _WIN32
+  if (!toast)
+    return;
+  notification_audio_play(Config::Get().NotificationSoundForToast(static_cast<int>(toast->get_State())));
+#if !_WIN32
+  return; // No notification delivery on non-Windows platforms yet
+#else
+  auto state = toast->get_State();
 
   // Check if this toast type is in the user's notify list
-  const auto& notify_types = config.notify_banner_types;
+  const auto& notify_types = Config::Get().notify_banner_types;
   if (std::ranges::find(notify_types, state) == notify_types.end()) {
     return;
   }

@@ -1,20 +1,17 @@
 #pragma once
 
-#include "errormsg.h"
-
 #include "BattleTargetData.h"
 #include "HullSpec.h"
 #include "RecallRequirement.h"
 #include "CanRepairRequirement.h"
 #include "FleetLiveData.h"
-#include "ManagedRead.h"
+
+#include <il2cpp/il2cpp.h>
 
 #include <cstdint>
 #include <optional>
 
-struct Ship;
-
-enum class FleetState {
+enum class FleetState : int32_t {
   Unknown                = 0,
   IdleInSpace            = 1,
   Docked                 = 2,
@@ -42,198 +39,109 @@ enum class FleetState {
   Deployed               = 8133,
   CanLocate              = 8135
 };
-    
-struct FleetPlayerData {
-public:
-  __declspec(property(get = __get_CurrentState)) FleetState CurrentState;
-  __declspec(property(get = __get_PreviousState)) FleetState PreviousState;
-  __declspec(property(get = __get_Id)) uint64_t Id;
-  __declspec(property(get = __get_Index)) int Index;
-  __declspec(property(get = __get_Hull)) HullSpec* Hull;
-  __declspec(property(get = __get_Address)) void* Address;
-  __declspec(property(get = __get_Level)) int64_t Level;
-  __declspec(property(get = __get_HasShip)) bool HasShip;
-  __declspec(property(get = __get_HullId)) int64_t           HullId;
-  __declspec(property(get = __get_Ship)) ::Ship*             Ship;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetPlayerData");
-    return class_helper;
-  }
+struct FleetPlayerData : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetPlayerData">;
 
-public:
-  int __get_Index()
+  int32_t Index()
+  { return Get<"Index", int32_t>(); }
+  HullSpec* Hull()
+  { return Get<"Hull", HullSpec*>(); }
+  void* Address()
+  { return Get<"Address", void*>(); }
+  FleetState CurrentState()
+  { return Get<"CurrentState", FleetState>(); }
+  FleetState PreviousState()
+  { return Get<"PreviousState", FleetState>(); }
+  uint64_t Id()
+  { return Get<"Id", uint64_t>(); }
+  int64_t Level()
+  { return Get<"Level", int64_t>(); }
+  bool HasShip()
+  { return Get<"HasShip", bool>(); }
+  int64_t HullId()
+  { return Get<"HullId", int64_t>(); }
+  bool HasAppliedTech()
   {
-    static auto property = get_class_helper().GetProperty("Index");
-    auto* value = property.Get<int>(this);
-    return value ? *value : -1;
-  }
-
-  HullSpec* __get_Hull()
-  {
-    static auto field = get_class_helper().GetProperty("Hull");
-    return field.GetRaw<HullSpec>(this);
-  }
-  void* __get_Address()
-  {
-    static auto field = get_class_helper().GetProperty("Address");
-    return field.GetRaw<void>(this);
-  }
-  FleetState __get_CurrentState()
-  {
-    static auto field = get_class_helper().GetProperty("CurrentState");
-    auto*      value  = field.Get<FleetState>(this);
-    return value ? *value : FleetState::Unknown;
-  }
-  FleetState __get_PreviousState()
-  {
-    static auto field = get_class_helper().GetProperty("PreviousState");
-    auto*      value  = field.Get<FleetState>(this);
-    return value ? *value : FleetState::Unknown;
-  }
-  
-  uint64_t __get_Id()
-  {
-    static auto field = get_class_helper().GetProperty("Id");
-    auto*      value  = field.Get<uint64_t>(this);
-    return value ? *value : 0;
-  }
-  int64_t __get_Level()
-  {
-    static auto field = get_class_helper().GetProperty("Level");
-    auto*      value  = field.Get<int64_t>(this);
-    return value ? *value : 0;
+    struct BaseShip : il2cpp::Object {
+      using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "BaseShip">;
+      int64_t Id()
+      { return Get<"Id", int64_t>(); }
+    };
+    struct Slot : il2cpp::Object {
+      using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
+      int64_t SpecId()
+      { return Get<"SlotSpecId", int64_t>(); }
+      bool HasItem()
+      {
+        static const auto* getter = Class::Method("get_SlotItemId", 0).Info();
+        if (!getter || (getter->flags & METHOD_ATTRIBUTE_STATIC)
+            || getter->return_type->type != IL2CPP_TYPE_GENERICINST)
+          return false;
+        // Runtime invocation boxes Nullable<Int64> as null or its value, without assuming its native layout.
+        return il2cpp::detail::InvokeBoxed(getter, this, nullptr) != nullptr;
+      }
+    };
+    struct Manager : il2cpp::Object {
+      using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager">;
+      bool ActiveSlots(int64_t ship_id, il2cpp::List<Slot*>*& slots)
+      { return Call<"TryGetActiveForbiddenTechSlot", bool>(ship_id, std::ref(slots)); }
+    };
+    auto*                ship    = Get<"Ship", BaseShip*>();
+    auto*                manager = Manager::Class::Get<"Instance", Manager*>();
+    il2cpp::List<Slot*>* slots   = nullptr;
+    if (!ship || !manager || !manager->ActiveSlots(ship->Id(), slots) || !slots)
+      return false;
+    for (auto* slot : *slots) {
+      if (!slot)
+        continue;
+      const auto spec = slot->SpecId();
+      if ((spec == 3502081615 || spec == 953301906) && slot->HasItem())
+        return true;
+    }
+    return false;
   }
 
-  bool __get_HasShip()
-  {
-    static auto field = get_class_helper().GetProperty("HasShip");
-    auto*      value  = field.Get<bool>(this);
-    return value ? *value : false;
-  }
-  int64_t __get_HullId()
-  {
-    static auto property = get_class_helper().GetProperty("HullId");
-    auto*       value    = property.Get<int64_t>(this);
-    return value ? *value : 0;
-  }
-  ::Ship* __get_Ship()
-  {
-    static auto property = get_class_helper().GetProperty("Ship");
-    return property.GetRaw<struct Ship>(this);
-  }
-
-  // live state, empty when missing
-  std::optional<bool> IsHome()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsHome");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<bool> IsDeployed()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsDeployed");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<bool> IsMining()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsMining");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<bool> IsRepairing()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsRepairing");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<bool> IsDamaged()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsDamaged");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<bool> IsDestroyed()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "IsDestroyed");
-    return ManagedRead::Value<bool>(getter, this);
-  }
-  std::optional<int32_t> DrydockID()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "DrydockID");
-    return ManagedRead::Value<int32_t>(getter, this);
-  }
-  std::optional<float> CargoResourceFillLevel()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "CargoResourceFillLevel");
-    return ManagedRead::Value<float>(getter, this);
-  }
-  CargoHoldData* GetCargoHoldData()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "CargoHoldData");
-    return (CargoHoldData*)ManagedRead::Object(getter, this);
-  }
+  // Live state, read for fleet sync.
+  bool IsHome()
+  { return Get<"IsHome", bool>(); }
+  bool IsDeployed()
+  { return Get<"IsDeployed", bool>(); }
+  bool IsMining()
+  { return Get<"IsMining", bool>(); }
+  bool IsRepairing()
+  { return Get<"IsRepairing", bool>(); }
+  bool IsDamaged()
+  { return Get<"IsDamaged", bool>(); }
+  bool IsDestroyed()
+  { return Get<"IsDestroyed", bool>(); }
+  int32_t DrydockID()
+  { return Get<"DrydockID", int32_t>(); }
+  float CargoResourceFillLevel()
+  { return Get<"CargoResourceFillLevel", float>(); }
+  CargoHoldData* CargoHold()
+  { return Get<"CargoHoldData", CargoHoldData*>(); }
   IMiningSlot* MiningData()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "MiningData");
-    return (IMiningSlot*)ManagedRead::Object(getter, this);
-  }
+  { return Get<"MiningData", IMiningSlot*>(); }
   ITimerData* Timer()
-  {
-    static auto getter = ManagedRead::Getter(get_class_helper().get_cls(), "Timer");
-    return (ITimerData*)ManagedRead::Object(getter, this);
-  }
-  // no property for the mining timer, so read the private field
+  { return Get<"Timer", ITimerData*>(); }
+  // No property for the mining timer, so read the private field.
   ITimerData* MiningSlotTimer()
-  {
-    static auto field = get_class_helper().GetField("_miningSlotTimer");
-    return (ITimerData*)ManagedRead::FieldObject(this, field.get_info());
-  }
-  // damage on the fleet's ship (BaseShip), so a docked ship's hull is known without the server
+  { return Field<"_miningSlotTimer", ITimerData*>(); }
+  float GetMiningRate()
+  { return Call<"GetMiningRate", float>(); }
+  // Damage on the fleet's ship, so a docked ship's hull is known without the server. Empty without a ship.
   std::optional<float> HullDamage()
   {
-    static ShipGetter getter{"HullDamage"};
-    return getter.Read(this->Ship);
+    // IShipModel, read on the ship's runtime class.
+    struct Ship : il2cpp::Object {
+      float HullDamage()
+      { return Get<"HullDamage", float>(); }
+    };
+    auto* ship = Get<"Ship", Ship*>();
+    return ship ? std::optional(ship->HullDamage()) : std::nullopt;
   }
-  std::optional<float> GetMiningRate()
-  {
-    static auto method = get_class_helper().GetMethodInfo("GetMiningRate", 0);
-    return ManagedRead::Value<float>(method, this);
-  }
 
-private:
-  // the ship's concrete class is only known at runtime; look the getter up once per class
-  struct ShipGetter {
-    const char*       property;
-    Il2CppClass*      cls    = nullptr;
-    const MethodInfo* getter = nullptr;
-
-    std::optional<float> Read(void* ship)
-    {
-      if (!ship) {
-        return std::nullopt;
-      }
-      if (auto* klass = ((Il2CppObject*)ship)->klass; klass != cls) {
-        cls    = klass;
-        getter = ManagedRead::Getter(klass, property);
-      }
-      return ManagedRead::Value<float>(getter, ship);
-    }
-  };
-
-public:
   int64_t GetLocaId()
-  {
-    static auto GetLocaIdWarn = true;
-    static auto GetLocaIdMethod = get_class_helper().GetMethod<int64_t(FleetPlayerData*)>("GetLocaId");
-
-    if (GetLocaIdMethod) {
-      return GetLocaIdMethod(this);
-    }
-    if (GetLocaIdWarn) {
-      GetLocaIdWarn = false;
-      ErrorMsg::MissingMethod("FleetPlayerData", "GetLocaId");
-    }
-
-    return 0;
-  }
+  { return Call<"GetLocaId", int64_t>(); }
 };

@@ -12,11 +12,13 @@
 #include <cstring>
 #include <functional>
 #include <initializer_list>
+#include <optional>
 #include <span>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace il2cpp
 {
@@ -256,6 +258,68 @@ namespace detail
     return R();
   }
 
+  // Invoke for TryCall: empty (false for void) when the method is missing, the receiver is null, or a managed
+  // exception stopped the call. Exceptions are reported as Invoke reports them.
+  template <typename R> using Tried = std::conditional_t<std::is_void_v<R>, bool, std::optional<R>>;
+  template <typename R, typename... A> Tried<R> TryInvoke(const MethodInfo* method, Il2CppObject* target, A... args)
+  {
+    const bool is_static = method && (method->flags & METHOD_ATTRIBUTE_STATIC);
+    if (!method || (!is_static && !target))
+      return {};
+    if (!is_static && (method->flags & METHOD_ATTRIBUTE_VIRTUAL)) {
+      method = il2cpp_object_get_virtual_method(target, method);
+      if (!method)
+        return {};
+    }
+    try {
+      if constexpr (std::is_void_v<R>) {
+        InvokeNative<R>(method, target, args...);
+        return true;
+      } else {
+        return InvokeNative<R>(method, target, args...);
+      }
+    } catch (const Il2CppExceptionWrapper& error) {
+      ReportException(method, error.ex);
+    } catch (...) {
+      ReportException(method, nullptr);
+    }
+    return {};
+  }
+
+  // Call<"Name", F>: F is either the result type, with parameters taken from the argument types,
+  // or a full signature R(P...). A signature converts arguments to P without narrowing, and a P of
+  // T& is a ref/out parameter that binds the caller's lvalue (std::ref in the deduced form).
+  template <typename T> struct Param {
+    using Type = T;
+    template <typename A> static T From(A&& value)
+    { return T{std::forward<A>(value)}; }
+  };
+  template <typename T> struct Param<T&> {
+    using Type = std::reference_wrapper<T>;
+    static Type From(T& value)
+    { return std::ref(value); }
+  };
+
+  template <typename Fn> struct MethodCall;
+  template <typename R, typename... P> struct MethodCall<R(P...)> {
+    static const MethodInfo* Resolve(Il2CppClass* klass, std::string_view name, bool is_static)
+    { return ResolveMethod(klass, name, SignatureOf<R, typename Param<P>::Type...>(), is_static); }
+    template <typename... A> static R Run(const MethodInfo* method, Il2CppObject* target, A&&... args)
+    {
+      static_assert(sizeof...(A) == sizeof...(P), "argument count does not match the signature");
+      return Invoke<R, typename Param<P>::Type...>(method, target, Param<P>::From(std::forward<A>(args))...);
+    }
+    template <typename... A> static Tried<R> TryRun(const MethodInfo* method, Il2CppObject* target, A&&... args)
+    {
+      static_assert(sizeof...(A) == sizeof...(P), "argument count does not match the signature");
+      return TryInvoke<R, typename Param<P>::Type...>(method, target, Param<P>::From(std::forward<A>(args))...);
+    }
+  };
+  template <typename F, typename... A> struct CallOf : MethodCall<F(A...)> {
+  };
+  template <typename R, typename... P, typename... A> struct CallOf<R(P...), A...> : MethodCall<R(P...)> {
+  };
+
   template <typename T> T ReadField(FieldInfo* field, const Il2CppObject* object)
   {
     T value{};
@@ -306,10 +370,11 @@ template <Name Assembly, Name Namespace, Name TypeName> struct Class {
   static il2cpp::Method Method(std::string_view name, std::initializer_list<std::string_view> params)
   { return detail::FindMethod(Raw(), name, params); }
 
-  template <Name N, typename R = void, typename... A> static R Call(A... args)
+  template <Name N, typename F = void, typename... A> static auto Call(A&&... args)
   {
-    static const auto* method = detail::ResolveMethod(Raw(), N.View(), detail::SignatureOf<R, A...>(), true);
-    return detail::Invoke<R>(method, nullptr, args...);
+    using Sig                 = detail::CallOf<F, std::decay_t<A>...>;
+    static const auto* method = Sig::Resolve(Raw(), N.View(), true);
+    return Sig::Run(method, nullptr, std::forward<A>(args)...);
   }
   template <Name N, typename T> static T Get()
   {
@@ -364,13 +429,22 @@ struct Object : Il2CppObject {
     });
     detail::WriteField(field, &self, value);
   }
-  // Overloads are selected by the C++ argument types. std::ref marks ref/out parameters.
-  template <Name N, typename R = void, typename Self, typename... A> R Call(this Self& self, A... args)
+  // Call<"Name", R>(args) selects the overload by the C++ argument types; std::ref marks ref/out
+  // parameters. Call<"Name", R(P...)>(args) names the signature and converts the arguments to it.
+  template <Name N, typename F = void, typename Self, typename... A> auto Call(this Self& self, A&&... args)
   {
-    auto* method = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
-      return detail::ResolveMethod(klass, N.View(), detail::SignatureOf<R, A...>(), false);
-    });
-    return detail::Invoke<R>(method, &self, args...);
+    using Sig    = detail::CallOf<F, std::decay_t<A>...>;
+    auto* method = detail::Lookup<Self>(self, [](Il2CppClass* klass) { return Sig::Resolve(klass, N.View(), false); });
+    return Sig::Run(method, &self, std::forward<A>(args)...);
+  }
+  // Call, except that a failed call is told apart from a result that reads as zero: empty, or false for a void
+  // method, when the method is missing or a managed exception (still reported) stopped it. For callers that undo
+  // their own changes when the game's code fails.
+  template <Name N, typename F = void, typename Self, typename... A> auto TryCall(this Self& self, A&&... args)
+  {
+    using Sig    = detail::CallOf<F, std::decay_t<A>...>;
+    auto* method = detail::Lookup<Self>(self, [](Il2CppClass* klass) { return Sig::Resolve(klass, N.View(), false); });
+    return Sig::TryRun(method, &self, std::forward<A>(args)...);
   }
 
   template <typename T> bool Is() const
@@ -504,6 +578,34 @@ private:
   {
   }
   Il2CppGCHandle handle_ = nullptr;
+};
+
+// Strong roots for the objects one operation touches, released together when it ends. Keep returns its argument,
+// or null after marking the set unhealthy when the runtime could not root it. Null needs no root.
+class GcRoots
+{
+public:
+  Il2CppObject* Keep(Il2CppObject* object)
+  {
+    if (!object)
+      return nullptr;
+    auto root = GcHandle::Strong(object);
+    if (root.Get() != object) {
+      healthy_ = false;
+      return nullptr;
+    }
+    roots_.push_back(std::move(root));
+    return object;
+  }
+  template <typename T> T* Keep(T* object)
+  { return reinterpret_cast<T*>(Keep(reinterpret_cast<Il2CppObject*>(object))); }
+  // False once any Keep failed.
+  bool healthy() const
+  { return healthy_; }
+
+private:
+  std::vector<GcHandle> roots_;
+  bool                  healthy_ = true;
 };
 
 // Unity engine internal calls, e.g. "UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)".

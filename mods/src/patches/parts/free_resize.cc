@@ -2,13 +2,11 @@
 #include <Windows.h>
 
 #include "config.h"
-#include "errormsg.h"
 #include "file.h"
 
 #include <spud/detour.h>
 
 #include "prime/AspectRatioConstraintHandler.h"
-#include "prime/IList.h"
 #include "windowtitle.h"
 
 static bool            WndProcInstalled  = false;
@@ -101,15 +99,15 @@ struct Resolution {
 void AspectRatioConstraintHandler_Update(auto original, void* _this)
 {
   static auto set_title       = true;
-  static auto get_fullscreen  = il2cpp_resolve_icall_typed<bool()>("UnityEngine.Screen::get_fullScreen()");
-  static auto get_height      = il2cpp_resolve_icall_typed<int()>("UnityEngine.Screen::get_height()");
-  static auto get_width       = il2cpp_resolve_icall_typed<int()>("UnityEngine.Screen::get_width()");
-  static auto SetResolution   = il2cpp_resolve_icall_typed<void(int, int, int, int)>(
+  static auto get_fullscreen  = il2cpp::ResolveICall<bool()>("UnityEngine.Screen::get_fullScreen()");
+  static auto get_height      = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_height()");
+  static auto get_width       = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_width()");
+  static auto SetResolution   = il2cpp::ResolveICall<void(int, int, int, int)>(
       "UnityEngine.Screen::SetResolution(System.Int32,System.Int32,UnityEngine.FullScreenMode,System.Int32)");
 
   if (unityWindow) {
     if (get_fullscreen()) {
-      static auto get_currentResolution_Injected = il2cpp_resolve_icall_typed<void(Resolution*)>(
+      static auto get_currentResolution_Injected = il2cpp::ResolveICall<void(Resolution*)>(
           "UnityEngine.Screen::get_currentResolution_Injected(UnityEngine.Resolution&)");
       auto       height = get_height();
       auto       width  = get_width();
@@ -153,25 +151,12 @@ intptr_t AspectRatioConstraintHandler_WndProc(auto original, HWND hWnd, uint32_t
 
 void InstallFreeResizeHooks()
 {
-  auto AspectRatioConstraintHandler_helper =
-      il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Utils", "AspectRatioConstraintHandler");
-  if (!AspectRatioConstraintHandler_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Utils", "AspectRatioConstraintHandler");
-  } else {
-    auto ptr_update = AspectRatioConstraintHandler_helper.GetMethod("Update");
-    if (ptr_update == nullptr) {
-      ErrorMsg::MissingMethod("AspectRatioConstraintHandler", "Update");
-      return;
-    }
+  auto update  = AspectRatioConstraintHandler::Class::Method("Update");
+  auto wndproc = AspectRatioConstraintHandler::Class::Method("WndProc");
+  if (!update || !wndproc)
+    return;
 
-    auto ptr_wndproc = AspectRatioConstraintHandler_helper.GetMethod("WndProc");
-    if (ptr_wndproc == nullptr) {
-      ErrorMsg::MissingMethod("AspectRatioConstraintHandler", "WndProc");
-      return;
-    }
-
-    SPUD_STATIC_DETOUR(ptr_update, AspectRatioConstraintHandler_Update);
-    SPUD_STATIC_DETOUR(ptr_wndproc, AspectRatioConstraintHandler_WndProc);
-  }
+  SPUD_STATIC_DETOUR(update.Pointer(), AspectRatioConstraintHandler_Update);
+  SPUD_STATIC_DETOUR(wndproc.Pointer(), AspectRatioConstraintHandler_WndProc);
 }
 #endif

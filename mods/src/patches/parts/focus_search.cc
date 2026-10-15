@@ -1,4 +1,5 @@
 #include "focus_search.h"
+#include "patches/object_tracker.h"
 
 #include "config.h"
 
@@ -8,7 +9,7 @@
 #include "prime/InventoryListViewController.h"
 #include "prime/OfficerAssignmentViewController.h"
 
-#include "il2cpp/il2cpp_helper.h"
+#include <il2cpp/il2cpp.h>
 
 #include <spdlog/spdlog.h>
 
@@ -19,7 +20,7 @@ bool FocusSearchBox()
   }
 
   // Guard chat input so we don't steal focus from the chat text box
-  if (auto chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->_inputFieldSelected) {
+  if (auto chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->inputFieldSelected()) {
 #ifdef _MODDBG
     spdlog::info("[FocusSearch] blocked: chat input is selected");
 #endif
@@ -29,21 +30,21 @@ bool FocusSearchBox()
   // InventoryListViewController covers OfficerRosterViewController and other inventory subclasses
   auto inventoryControllers = ObjectFinder<InventoryListViewController>::GetAll();
   for (auto controller : inventoryControllers) {
-    if (!controller || !controller->_inputField) {
+    if (!controller || !controller->inputField()) {
       continue;
     }
 
-    auto canvas  = controller->canvasController;
+    auto canvas  = controller->canvasController();
     bool visible = canvas && canvas->Visible();
-    bool active  = controller->isActiveAndEnabled && controller->_inputField->isActiveAndEnabled;
+    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
     spdlog::debug("[FocusSearch] inventory controller={} section={} canvas={} visible={} active={}", (void*)controller,
-                 (int32_t)controller->_targetSection, (void*)canvas, visible, active);
+                 (int32_t)controller->targetSection(), (void*)canvas, visible, active);
 
     if (visible && active) {
 #ifdef _MODDBG
       spdlog::info("[FocusSearch] focusing visible inventory search");
 #endif
-      controller->_inputField->Focus();
+      controller->inputField()->Focus();
       return true;
     }
   }
@@ -51,13 +52,13 @@ bool FocusSearchBox()
   // OfficerAssignmentViewController (separate from inventory list)
   auto officerControllers = ObjectFinder<OfficerAssignmentViewController>::GetAll();
   for (auto controller : officerControllers) {
-    if (!controller || !controller->_inputField) {
+    if (!controller || !controller->inputField()) {
       continue;
     }
 
-    auto canvas  = controller->canvasController;
+    auto canvas  = controller->canvasController();
     bool visible = canvas && canvas->Visible();
-    bool active  = controller->isActiveAndEnabled && controller->_inputField->isActiveAndEnabled;
+    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
     spdlog::debug("[FocusSearch] officer assignment controller={} canvas={} visible={} active={}", (void*)controller,
                  (void*)canvas, visible, active);
 
@@ -65,7 +66,7 @@ bool FocusSearchBox()
 #ifdef _MODDBG
       spdlog::info("[FocusSearch] focusing visible officer assignment search");
 #endif
-      controller->_inputField->Focus();
+      controller->inputField()->Focus();
       return true;
     }
   }
@@ -73,13 +74,13 @@ bool FocusSearchBox()
   // AssignShipsWidget (ship selection / assignment)
   auto assignShipWidgets = ObjectFinder<AssignShipsWidget>::GetAll();
   for (auto widget : assignShipWidgets) {
-    if (!widget || !widget->_inputField) {
+    if (!widget || !widget->inputField()) {
       continue;
     }
 
     auto canvas  = GetCanvasControllerFromComponent(widget);
     bool visible = canvas && canvas->Visible();
-    bool active  = widget->isActiveAndEnabled && widget->_inputField->isActiveAndEnabled;
+    bool active  = widget->isActiveAndEnabled() && widget->inputField()->isActiveAndEnabled();
     spdlog::debug("[FocusSearch] assign ships widget={} canvas={} visible={} active={}", (void*)widget, (void*)canvas,
                  visible, active);
 
@@ -87,7 +88,7 @@ bool FocusSearchBox()
 #ifdef _MODDBG
       spdlog::info("[FocusSearch] focusing visible assign ships search");
 #endif
-      widget->_inputField->Focus();
+      widget->inputField()->Focus();
       return true;
     }
   }

@@ -1,7 +1,6 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class IEnumerator
-{
+struct IEnumerator : il2cpp::Object {
 };

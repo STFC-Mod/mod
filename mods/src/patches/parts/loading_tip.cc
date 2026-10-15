@@ -1,10 +1,7 @@
 #include "config.h"
-#include "errormsg.h"
 #include "version.h"
 
-#include <il2cpp/il2cpp_helper.h>
-#include <il2cpp/il2cpp-functions.h>
-#include <spdlog/spdlog.h>
+#include <il2cpp/il2cpp.h>
 #include <spud/detour.h>
 
 #include <cstring>
@@ -15,7 +12,19 @@ namespace
 static bool g_isLoadingScreen = true;
 static std::mt19937 g_rng{std::random_device{}()};
 
-constexpr ptrdiff_t kTextMeshProOffset = 0x20;
+struct TMP_Text : il2cpp::Object {
+  using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_Text">;
+
+  void SetText(Il2CppString* value)
+  { Set<"text">(value); }
+};
+
+struct LoadingTipViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Prime.LoadingScreen", "LoadingTipViewController">;
+
+  TMP_Text* textMeshPro()
+  { return Field<"_textMeshPro", TMP_Text*>(); }
+};
 
 struct TipEntry
 {
@@ -41,20 +50,9 @@ std::string GetLoadingScreenTip()
          VER_FILE_VERSION_STR VERSION_PATCH_STR "! Please check our discord for the latest information!";
 }
 
-void SetTMPText(void* tmpObj, const std::string& text)
+void SetTMPText(TMP_Text* tmp, const std::string& text)
 {
-  if (!tmpObj) return;
-
-  void* tipStr = il2cpp_string_new(text.c_str());
-  if (!tipStr) return;
-
-  static auto tmp_h   = il2cpp_get_class_helper("Unity.TextMeshPro", "TMPro", "TMP_Text");
-  static auto fn_text = tmp_h.GetMethodInfo("set_text");
-  if (!fn_text) return;
-
-  void* args[1] = {tipStr};
-  Il2CppException* exception = nullptr;
-  il2cpp_runtime_invoke(fn_text, tmpObj, args, &exception);
+  if (tmp) tmp->SetText(il2cpp_string_new(text.c_str()));
 }
 
 static size_t g_lastCustomTipIdx = SIZE_MAX;
@@ -100,29 +98,26 @@ std::string PickTransitionTip()
   return kCustomTips[indices[numCandidates - 1]].text;
 }
 
-void LTVC_SetRandomTipLocalisedText_Hook(auto original, void* _this)
+void LTVC_SetRandomTipLocalisedText_Hook(auto original, LoadingTipViewController* _this)
 {
   original(_this);
 
-  try {
-    const auto& cfg = Config::Get();
-    if (!cfg.loader_tip_enabled) return;
+  const auto& cfg = Config::Get();
+  if (!cfg.loader_tip_enabled) return;
 
-    std::string chosenTip;
+  std::string chosenTip;
 
-    if (g_isLoadingScreen) {
-      chosenTip = GetLoadingScreenTip();
-      g_isLoadingScreen = false;
-    } else {
-      chosenTip = PickTransitionTip();
-    }
+  if (g_isLoadingScreen) {
+    chosenTip = GetLoadingScreenTip();
+    g_isLoadingScreen = false;
+  } else {
+    chosenTip = PickTransitionTip();
+  }
 
-    if (chosenTip.empty())
-      return;
+  if (chosenTip.empty())
+    return;
 
-    void* tmp = *reinterpret_cast<void**>((char*)_this + kTextMeshProOffset);
-    SetTMPText(tmp, chosenTip);
-  } catch (...) {}
+  SetTMPText(_this->textMeshPro(), chosenTip);
 }
 
 } // namespace
@@ -135,21 +130,6 @@ void ResetLoadingTipState()
 
 void InstallLoadingTipHooks()
 {
-  auto ltv_h = il2cpp_get_class_helper("Assembly-CSharp", "Prime.LoadingScreen", "LoadingTipViewController");
-  if (!ltv_h.isValidHelper()) {
-    ErrorMsg::MissingHelper("Prime.LoadingScreen", "LoadingTipViewController");
-    return;
-  }
-
-  bool ok = false;
-
-  if (auto m = ltv_h.GetMethod("SetRandomTipLocalisedText")) {
-    SPUD_STATIC_DETOUR(m, LTVC_SetRandomTipLocalisedText_Hook);
-    ok = true;
-  } else {
-    ErrorMsg::MissingMethod("LoadingTipViewController", "SetRandomTipLocalisedText");
-  }
-
-  if (!ok)
-    spdlog::error("[LoadingTip] Failed to install hooks");
+  if (auto m = LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"))
+    SPUD_STATIC_DETOUR(m.Pointer(), LTVC_SetRandomTipLocalisedText_Hook);
 }

@@ -59,7 +59,7 @@ void InstallRevealConfirmationHooks()
 {
   auto message_utility_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "MessageUtility");
   if (!message_utility_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Client.UI", "MessageUtility");
+    spdlog::warn("Missing class {}.{}", "Digit.Client.UI", "MessageUtility");
     return;
   }
 
@@ -67,7 +67,7 @@ void InstallRevealConfirmationHooks()
       method_contract::Resolve(message_utility_helper.get_cls(), "ShowFreeAbilityConfirmationPopup", true,
                                "System.Void", {"System.Int64", "System.TimeSpan", "System.Action"});
   if (!show || !show->methodPointer || show->has_full_generic_sharing_signature) {
-    ErrorMsg::MissingMethod("MessageUtility", "ShowFreeAbilityConfirmationPopup");
+    spdlog::warn("Missing method {}.{}", "MessageUtility", "ShowFreeAbilityConfirmationPopup");
     return;
   }
 

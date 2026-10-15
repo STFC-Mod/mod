@@ -63,7 +63,7 @@ void OrbitFrameProvider_UpdateConstrains_Hook(auto original, Il2CppObject *provi
 
   auto      *section_manager = Hub::get_SectionManager();
   const bool in_interior =
-      section_manager != nullptr && section_manager->CurrentSection == SectionID::Starbase_Interior;
+      section_manager != nullptr && section_manager->CurrentSection() == SectionID::Starbase_Interior;
   const float scale = InteriorScale();
 
   if (in_interior && scale > 1.0f) {
@@ -117,7 +117,7 @@ void InstallInteriorZoomHooks()
   auto constraint = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.CameraController", "Constraint");
 
   if (!orbit.isValidHelper()) {
-    ErrorMsg::MissingHelper("CameraController", "OrbitFrameProvider");
+    spdlog::warn("Missing class {}.{}", "CameraController", "OrbitFrameProvider");
     return;
   }
 
@@ -153,7 +153,7 @@ void InstallInteriorZoomHooks()
 
   auto ptr_update_constrains = orbit.GetMethod("UpdateConstrains");
   if (ptr_update_constrains == nullptr) {
-    ErrorMsg::MissingMethod("OrbitFrameProvider", "UpdateConstrains");
+    spdlog::warn("Missing method {}.{}", "OrbitFrameProvider", "UpdateConstrains");
     return;
   }
   if (SPUD_STATIC_DETOUR(ptr_update_constrains, OrbitFrameProvider_UpdateConstrains_Hook)) {

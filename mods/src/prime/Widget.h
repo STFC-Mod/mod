@@ -1,42 +1,15 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-template <typename T, typename Y> struct Widget {
-public:
-  __declspec(property(get = __get_Context)) T* Context;
-  __declspec(property(get = __get_enabled)) bool enabled;
-  __declspec(property(get = __get_isActiveAndEnabled)) bool isActiveAndEnabled;
-
+// Digit.Client.UI.Widget`1. Members resolve on each widget's runtime class.
+template <typename T> struct Widget : il2cpp::Object {
+  T* Context()
+  { return Get<"Context", T*>(); }
+  bool enabled()
+  { return Get<"enabled", bool>(); }
+  bool isActiveAndEnabled()
+  { return Get<"isActiveAndEnabled", bool>(); }
   bool IsActive()
-  {
-    auto IsActive = get_class_helper().GetMethod<bool(Widget*)>("IsActive");
-    return IsActive(this);
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static IL2CppClassHelper class_helper = Y::get_class_helper().GetParent("Widget`1");
-    return class_helper;
-  }
-
-public:
-  bool __get_enabled()
-  {
-    static auto field = get_class_helper().GetProperty("enabled");
-    return field.Get<bool>(this);
-  }
-
-  T* __get_Context()
-  {
-    static auto field = get_class_helper().GetProperty("Context");
-    return field.GetRaw<T>(this);
-  }
-
-  bool __get_isActiveAndEnabled()
-  {
-    static auto field = get_class_helper().GetProperty("isActiveAndEnabled");
-    return *field.Get<bool>(this);
-  }
+  { return Call<"IsActive", bool>(); }
 };
