@@ -1,6 +1,6 @@
 {
 	"recommendations": [
-		"tboox.xmake-vscode",
+		"ziglang.vscode-zig",
 		"llvm-vs-code-extensions.vscode-clangd",
 		"vadimcn.vscode-lldb"
 	]

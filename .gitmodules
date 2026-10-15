@@ -1,3 +1,0 @@
-[submodule "macos-launcher/deps/PLzmaSDK"]
-	path = macos-launcher/deps/PLzmaSDK
-	url = https://github.com/OlehKulykov/PLzmaSDK.git

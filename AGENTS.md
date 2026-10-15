@@ -8,23 +8,32 @@ Before changing bindings or hooks, read the [IL2CPP reference](docs/IL2CPP.md).
 
 - Stage only task-related files. Leave unrelated edits and generated artifacts alone.
 - Preserve client enum catalogs in `src/mod/game/`, including unused IDs for future features.
-- Run `git diff --check` and the narrowest relevant xmake build before finishing C++ or patch work.
+- Run `git diff --check` and the narrowest relevant Zig build before finishing C++ or patch work.
 - Review hooks, platform guards, config defaults, and the English settings example in the final diff.
 - Put specialized subtree rules in a nearby `AGENTS.md`.
 
 ## Build and check
 
-The project uses xmake and C++23. Build on the target platform; the Swift launcher requires macOS and Xcode.
+The project uses **Zig 0.16.0** and **C++23**.
+Build definitions are in `build.zig` and `zig/`. Dependency URLs and hashes are pinned in `build.zig.zon`.
+Windows uses the MSVC ABI and static CRT.
+
+For core mod changes, use the relevant platform build:
 
 ```sh
-xmake f -c -p macosx -a arm64 -m release -y
-xmake build -y
-xmake build -y il2cpp-bindings-tests il2cpp-gc-tests mod-logic-tests sync-logic-tests config-reload-tests unity-tracker-tests launcher-rsync-tests
+zig build mods -Dtarget=aarch64-macos.14.6
+zig build mods build-tests -Dtarget=x86_64-windows-msvc
 ```
 
-Run each matching test with `xmake run <target>`.
-The x64-only `spud-relocation-tests` target checks detour relocation.
-See [contributor checks](CONTRIBUTING.md#run-checks-before-submitting) for coverage.
+Native logic tests need no game:
+
+```sh
+zig build test-il2cpp test-mod test-sync test-spud test-launcher
+```
+
+`test-spud` is x64-only; `test-launcher` requires Linux or macOS.
+See [contributor checks](CONTRIBUTING.md#run-checks-before-submitting) for coverage and SDK requirements.
+Outputs use `zig-out`, generated sources use `.zig-cache`, and SDKs use `.cache/toolchain`.
 
 ## Source map
 
