@@ -23,3 +23,8 @@ debug.log
 mods/.xmake
 Analyse-GameAssembly.ps1
 assets/LoadingScreens/*.psd
+
+# zig
+/zig-out/
+/.zig-cache/
+/zig-pkg/

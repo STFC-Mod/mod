@@ -307,13 +307,11 @@ struct InteriorRadiusConstraint : il2cpp::Object {
   void SetMaximum(float value)
   { SetField<"_max">(value); }
 };
-
 struct InteriorOrbitConstraint : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.CameraController", "OrbitConstraint">;
   InteriorRadiusConstraint* Radius()
   { return Field<"_radius", InteriorRadiusConstraint*>(); }
 };
-
 struct InteriorOrbitProvider : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.CameraController", "AbstractOrbitFrameProvider">;
   InteriorOrbitConstraint* Constraint()

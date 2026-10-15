@@ -1,0 +1,194 @@
+//! Native test fixtures. They link the same libraries as the shipped mod, and run without the game.
+const std = @import("std");
+const Ctx = @import("ctx.zig").Ctx;
+const Lib = @import("ctx.zig").Lib;
+const deps = @import("deps.zig");
+
+/// The libraries the fixtures link. They are the production artifacts.
+pub const Libs = struct {
+    il2cpp: Lib,
+    spdlog: Lib,
+    spud: Lib,
+    proto: Lib,
+    proto_runtime: Lib,
+    toml: Lib,
+};
+
+/// Register the fixture steps.
+pub fn add(ctx: *const Ctx, libs: Libs) void {
+    const b = ctx.b;
+    const steps: Steps = .{
+        .build = b.step("build-tests", "Compile the tests without running them"),
+        .il2cpp = b.step("test-il2cpp", "Build and run the IL2CPP boundary tests (native targets only)"),
+        .mod = b.step("test-mod", "Build and run the settings and shortcut tests (native targets only)"),
+        .sync = b.step("test-sync", "Run sync record and delivery regression tests without the game"),
+        .spud = b.step("test-spud", "Run the x64 trampoline relocation test (native x86_64 targets only)"),
+    };
+    const flags = ctx.cxxFlags("c++23", &.{});
+    const mod_flags = ctx.cxxFlags("c++23", &.{"-Wno-deprecated-literal-operator"});
+
+    // Queue logic in src/mod, header-only.
+    inline for (.{ "action_queue", "thin_queue_protection", "queue_address_guard" }) |name| {
+        const module = ctx.createModule(true);
+        module.addIncludePath(b.path("src/mod"));
+        module.addCSourceFile(.{ .file = b.path("tests/" ++ name ++ ".cc"), .flags = flags });
+        addFixture(ctx, steps.build, steps.mod, name ++ "-tests", module);
+    }
+
+    // IL2CPP bindings and GC handles against a fake runtime API.
+    inline for (.{ "bindings", "gc" }) |name| {
+        const module = ctx.createModule(true);
+        libs.il2cpp.linkInto(module);
+        module.addCSourceFile(.{ .file = b.path("tests/il2cpp_" ++ name ++ ".cc"), .flags = flags });
+        // The fake API must precede consumers so the linker does not pull in production API storage.
+        if (comptime std.mem.eql(u8, name, "bindings")) {
+            module.addIncludePath(b.path("src/libs/unity/include"));
+            module.addCSourceFile(.{ .file = b.path("src/libs/unity/src/input.cc"), .flags = flags });
+        }
+        addFixture(ctx, steps.build, steps.il2cpp, "il2cpp-" ++ name ++ "-tests", module);
+    }
+    {
+        const module = ctx.createModule(true);
+        module.addIncludePath(b.path("src/libs/unity/include"));
+        libs.il2cpp.linkInto(module);
+        libs.spud.linkInto(module);
+        module.addCSourceFile(.{ .file = b.path("tests/unity_tracker.cc"), .flags = flags });
+        addFixture(ctx, steps.build, steps.il2cpp, "unity-tracker-tests", module);
+    }
+
+    // Settings, shortcuts and reload. The fixture paths are defined on mod_logic.cc alone, so the shared settings
+    // objects compile with identical flags and come from Clang's cache for the second fixture.
+    {
+        const module = settingsModule(ctx, libs);
+        module.addCSourceFile(.{
+            .file = b.path("tests/mod_logic.cc"),
+            .flags = ctx.cxxFlags("c++23", &.{
+                "-Wno-deprecated-literal-operator",
+                b.fmt("-DSTFC_SHORTCUT_DEFAULTS={s}", .{quotedPath(b, "tests/shortcut_defaults.toml")}),
+                b.fmt("-DSTFC_EXAMPLE_SETTINGS={s}", .{
+                    quotedPath(b, "docs/configuration/example_community_patch_settings_en.toml"),
+                }),
+            }),
+        });
+        module.addCSourceFiles(.{
+            .files = &.{
+                "src/mod/shortcuts.cc",
+                "src/mod/config.cc",
+                "src/mod/file.cc",
+                "src/mod/features/notification_audio.cc",
+            },
+            .flags = mod_flags,
+        });
+        if (ctx.isWindows()) {
+            // file.cc reads the command line through CommandLineToArgvW.
+            module.linkSystemLibrary("shell32", .{});
+            module.linkSystemLibrary("winmm", .{});
+        }
+        if (ctx.isMacos()) {
+            module.addCSourceFiles(.{
+                .files = &.{ "src/mod/file_macos.mm", "src/mod/features/notification_audio_mac.mm" },
+                .flags = flags,
+            });
+            module.linkFramework("Cocoa", .{});
+        }
+        addFixture(ctx, steps.build, steps.mod, "mod-logic-tests", module);
+    }
+    {
+        const module = settingsModule(ctx, libs);
+        module.addCSourceFiles(.{
+            .files = &.{
+                "tests/config_reload.cc",
+                "src/mod/shortcuts.cc",
+                "src/mod/config.cc",
+                "src/mod/features/notification_audio.cc",
+            },
+            .flags = mod_flags,
+        });
+        if (ctx.isWindows()) module.linkSystemLibrary("winmm", .{});
+        if (ctx.isMacos()) {
+            module.addCSourceFile(.{ .file = b.path("src/mod/features/notification_audio_mac.mm"), .flags = flags });
+            module.linkFramework("Cocoa", .{});
+        }
+        addFixture(ctx, steps.build, steps.mod, "config-reload-tests", module);
+    }
+
+    // Sync records and delivery state over the generated protobuf messages.
+    {
+        const module = ctx.createModule(true);
+        module.addIncludePath(b.path("src/mod"));
+        module.addIncludePath(b.path("src/libs/unity/include"));
+        libs.il2cpp.includeInto(module);
+        inline for (.{ libs.proto, libs.proto_runtime, libs.spdlog, libs.toml, deps.nlohmannJson(ctx) }) |lib|
+            lib.linkInto(module);
+        module.addCSourceFiles(.{
+            .files = &.{ "tests/sync_logic.cc", "src/mod/sync/records.cc", "src/mod/sync/state.cc" },
+            .flags = mod_flags,
+        });
+        addFixture(ctx, steps.build, steps.sync, "sync-logic-tests", module);
+    }
+
+    // A prologue where two RIP-relative instructions expand ahead of a relative call, detoured and run. ARM64
+    // relocates differently and has nothing to check here.
+    if (ctx.target.result.cpu.arch == .x86_64) {
+        const module = ctx.createModule(true);
+        libs.spud.linkInto(module);
+        module.addCSourceFile(.{ .file = b.path("tests/spud_relocation.cc"), .flags = flags });
+        addFixture(ctx, steps.build, steps.spud, "spud-relocation-tests", module);
+    }
+}
+
+/// `test-deps` and `build-dependency-test`: exercise protobuf, zlib and the HTTPS backend as the platform links
+/// them. Arguments after `--` pass an optional test URL and CA file.
+pub fn addDependencySmoke(ctx: *const Ctx, libs: []const Lib) void {
+    const b = ctx.b;
+    const module = ctx.createModule(true);
+    for (libs) |lib| lib.linkInto(module);
+    module.addCSourceFile(.{ .file = b.path("tests/dependency_smoke.cc"), .flags = ctx.cxxFlags("c++23", &.{}) });
+    const exe = ctx.executable("dependency-smoke", module);
+    const run = b.addRunArtifact(exe);
+    if (b.args) |args| run.addArgs(args);
+    const run_step = b.step("test-deps", "Run protobuf, zlib and HTTPS backend checks; optionally pass a test URL and CA file");
+    run_step.dependOn(&run.step);
+    const build_step = b.step("build-dependency-test", "Cross-compile the dependency smoke executable");
+    build_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
+}
+
+const Steps = struct {
+    build: *std.Build.Step,
+    il2cpp: *std.Build.Step,
+    mod: *std.Build.Step,
+    sync: *std.Build.Step,
+    spud: *std.Build.Step,
+};
+
+/// Mod headers, logging and TOML for the settings fixtures. il2cpp contributes headers only; settings code never
+/// calls into the runtime.
+fn settingsModule(ctx: *const Ctx, libs: Libs) *std.Build.Module {
+    const b = ctx.b;
+    const module = ctx.createModule(true);
+    module.addIncludePath(b.path("src/mod"));
+    module.addIncludePath(b.path("src/libs/unity/include"));
+    libs.spdlog.linkInto(module);
+    libs.toml.linkInto(module);
+    libs.il2cpp.includeInto(module);
+    return module;
+}
+
+/// Install `module` as an executable under `build-tests`, and run it under `run_step`.
+fn addFixture(
+    ctx: *const Ctx,
+    build_step: *std.Build.Step,
+    run_step: *std.Build.Step,
+    name: []const u8,
+    module: *std.Build.Module,
+) void {
+    const b = ctx.b;
+    const exe = ctx.executable(name, module);
+    build_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
+    run_step.dependOn(&b.addRunArtifact(exe).step);
+}
+
+/// `path` from the repository root as a C string literal.
+fn quotedPath(b: *std.Build, path: []const u8) []const u8 {
+    return std.json.Stringify.valueAlloc(b.allocator, b.pathFromRoot(path), .{}) catch @panic("OOM");
+}
