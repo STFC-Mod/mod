@@ -14,19 +14,15 @@ pub fn spdlog(ctx: *const Ctx) Lib {
     const module = ctx.createModule(true);
     module.addIncludePath(src.path(b, "include"));
     module.addCMacro("SPDLOG_COMPILED_LIB", "1");
-    module.addCSourceFiles(.{
-        .root = src,
-        .files = &.{
-            "src/spdlog.cpp",
-            "src/stdout_sinks.cpp",
-            "src/color_sinks.cpp",
-            "src/file_sinks.cpp",
-            "src/async.cpp",
-            "src/cfg.cpp",
-            "src/bundled_fmtlib_format.cpp",
-        },
-        .flags = ctx.cxxFlags("c++20", &.{}),
-    });
+    ctx.addCxxBatch(module, "spdlog", src, &.{
+        "src/spdlog.cpp",
+        "src/stdout_sinks.cpp",
+        "src/color_sinks.cpp",
+        "src/file_sinks.cpp",
+        "src/async.cpp",
+        "src/cfg.cpp",
+        "src/bundled_fmtlib_format.cpp",
+    }, ctx.cxxFlags("c++20", &.{}));
     return .{
         .artifact = ctx.staticLib("spdlog", module),
         .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
@@ -242,11 +238,7 @@ pub fn cpr(ctx: *const Ctx, curl_lib: Lib) Lib {
     module.addIncludePath(src.path(b, "include"));
     module.addIncludePath(generated);
     curl_lib.linkInto(module);
-    module.addCSourceFiles(.{
-        .root = src,
-        .files = globFiles(b, src, "cpr", &.{".cpp"}, &.{}),
-        .flags = ctx.cxxFlags("c++17", &.{}),
-    });
+    ctx.addCxxBatch(module, "cpr", src, globFiles(b, src, "cpr", &.{".cpp"}, &.{}), ctx.cxxFlags("c++17", &.{}));
     return .{
         .artifact = ctx.staticLib("cpr", module),
         .include_dirs = ctx.dirs(&.{ src.path(b, "include"), generated }),

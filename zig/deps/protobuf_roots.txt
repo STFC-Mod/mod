@@ -1,0 +1,38 @@
+# Sync entry points. Field message types and nested messages are included transitively.
+Digit.PrimePlatform.Content.Bundles
+Digit.PrimeServer.Models.ActiveMissionsResponse
+Digit.PrimeServer.Models.AllianceGamePropertiesResponse
+Digit.PrimeServer.Models.AllianceGetBankResourcesResponse
+Digit.PrimeServer.Models.AllianceResourcesDeltaResponse
+Digit.PrimeServer.Models.AwayAssignmentInstance
+Digit.PrimeServer.Models.AwayAssignmentUserListResponse
+Digit.PrimeServer.Models.BattleResultHeadersResponse
+Digit.PrimeServer.Models.CompletedMissionsResponse
+Digit.PrimeServer.Models.DeployedFleet
+Digit.PrimeServer.Models.EntitySlot
+Digit.PrimeServer.Models.EntitySlots
+Digit.PrimeServer.Models.EntitySlotsData
+Digit.PrimeServer.Models.ForbiddenTechsResponse
+Digit.PrimeServer.Models.GetAllianceProfilesResponse
+Digit.PrimeServer.Models.GlobalActiveBuffsResponse
+Digit.PrimeServer.Models.InventoryResponse
+Digit.PrimeServer.Models.Job
+Digit.PrimeServer.Models.JobResponse
+# Declared by the mod in stfc.sync.proto; the game has no message for the MyDeployedFleets payload.
+Digit.PrimeServer.Models.MyDeployedFleetsResponse
+Digit.PrimeServer.Models.OfficerTraitsResponse
+Digit.PrimeServer.Models.OfficersResponse
+Digit.PrimeServer.Models.PlanetaryBase
+Digit.PrimeServer.Models.PlanetaryMapData
+Digit.PrimeServer.Models.PlanetaryMapProsperityResponse
+Digit.PrimeServer.Models.PlanetaryMapResponse
+Digit.PrimeServer.Models.PlayerShipsResponse
+Digit.PrimeServer.Models.ResearchTreesState
+Digit.PrimeServer.Models.ResourcesDeltaResponse
+Digit.PrimeServer.Models.ResourcesResponse
+Digit.PrimeServer.Models.StarbaseModulesResponse
+Digit.PrimeServer.Models.UserProfilesResponse
+
+# Dependency smoke fixtures.
+google.protobuf.Int64Value
+google.protobuf.Timestamp
