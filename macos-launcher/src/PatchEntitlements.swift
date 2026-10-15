@@ -9,7 +9,7 @@ private let logger = Logger(subsystem: "com.stfcmod.startrekpatch", category: "e
 /// Entitlements required to enable the loader for STFC.
 /// The game ships with these from Scopely's Developer ID signature, so normally
 /// no re-signing is needed — we just verify they're present.
-let loaderEntitlements: [String: Any] = [
+let loaderEntitlements: [String: Bool] = [
     "com.apple.security.cs.allow-dyld-environment-variables": true,
     "com.apple.security.cs.allow-unsigned-executable-memory": true,
     "com.apple.security.cs.disable-library-validation": true,
@@ -48,10 +48,6 @@ func ensureGameHasLoaderEntitlements(signingIdentity: String = "-") throws {
     // typically ships with the entitlements we need from Scopely's signature.
     if checkEntitlements(appPath: gamePath, expectedEntitlements: loaderEntitlements) {
         logger.info("Game already has the required loader entitlements, no re-signing needed")
-        // Clear any pending re-application flag since entitlements are valid
-        if UserDefaults.standard.bool(forKey: "forceEntitlementReapplication") {
-            UserDefaults.standard.set(false, forKey: "forceEntitlementReapplication")
-        }
         return
     }
 
@@ -93,7 +89,6 @@ func ensureGameHasLoaderEntitlements(signingIdentity: String = "-") throws {
     // We only sign the main executable, preserving nested framework/plugin signatures
     logger.info("Applying loader entitlements to the game binary...")
     let applySuccess = applyEntitlementsDirectly(
-        appBundlePath: gameAppPath,
         mainExecutablePath: gamePath,
         entitlements: loaderEntitlements,
         signingIdentity: signingIdentity
@@ -108,7 +103,6 @@ func ensureGameHasLoaderEntitlements(signingIdentity: String = "-") throws {
     }
 
     logger.info("Successfully applied loader entitlements to the game")
-    UserDefaults.standard.set(false, forKey: "forceEntitlementReapplication")
 }
 
 /// Fetches the path to the Star Trek Fleet Command game executable
@@ -159,7 +153,7 @@ func fetchGamePath() throws -> String? {
 ///   - appPath: Path to the .app bundle or executable to check
 ///   - expectedEntitlements: Dictionary of entitlement keys and their expected values
 /// - Returns: true if all expected entitlements match, false otherwise
-func checkEntitlements(appPath: String, expectedEntitlements: [String: Any]) -> Bool {
+func checkEntitlements(appPath: String, expectedEntitlements: [String: Bool]) -> Bool {
     // Create process to run codesign command
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
@@ -205,8 +199,7 @@ func checkEntitlements(appPath: String, expectedEntitlements: [String: Any]) -> 
                 return false
             }
 
-            // Compare values (handling different types)
-            if !areValuesEqual(actualValue, expectedValue) {
+            if (actualValue as? Bool) != expectedValue {
                 let expected = String(describing: expectedValue)
                 let actual = String(describing: actualValue)
                 logger.debug("Entitlement '\(key)' mismatch: expected \(expected), got \(actual)")
@@ -297,16 +290,14 @@ private func requestGameBundleAccessOnMainThread(
 
 /// Applies entitlements to an application using codesign directly (no elevation)
 /// - Parameters:
-///   - appBundlePath: Path to the .app bundle to sign
 ///   - mainExecutablePath: Path to the main executable within the bundle
 ///   - entitlements: Dictionary of entitlement keys and values to apply
 ///   - signingIdentity: Optional signing identity (defaults to "-" for ad-hoc signing)
 /// - Returns: true if signing succeeded, false otherwise
 /// - Note: Must be called while security-scoped resource access is active
 func applyEntitlementsDirectly(
-    appBundlePath: String,
     mainExecutablePath: String,
-    entitlements: [String: Any],
+    entitlements: [String: Bool],
     signingIdentity: String = "-"
 ) -> Bool {
     // Create temporary entitlements plist file
@@ -332,7 +323,6 @@ func applyEntitlementsDirectly(
 
         // Execute codesign directly (no elevation needed - user owns these files)
         let success = executeCodesignDirectly(
-            appBundlePath: appBundlePath,
             mainExecutablePath: mainExecutablePath,
             entitlementsPath: tempEntitlementsPath,
             signingIdentity: signingIdentity
@@ -356,14 +346,12 @@ func applyEntitlementsDirectly(
 
 /// Executes codesign directly without elevation
 /// - Parameters:
-///   - appBundlePath: Path to the .app bundle to sign
 ///   - mainExecutablePath: Path to the main executable within the bundle
 ///   - entitlementsPath: Path to temporary entitlements plist
 ///   - signingIdentity: Code signing identity
 /// - Returns: true if successful, false otherwise
 /// - Note: Must be called while security-scoped resource access is active
 func executeCodesignDirectly(
-    appBundlePath: String,
     mainExecutablePath: String,
     entitlementsPath: String,
     signingIdentity: String
@@ -454,52 +442,6 @@ func executeCodesignDirectly(
         logger.error("Error running codesign: \(error.localizedDescription)")
         return false
     }
-}
-
-/// Helper function to compare two values of potentially different types
-/// - Parameters:
-///   - lhs: First value to compare
-///   - rhs: Second value to compare
-/// - Returns: true if values are equal, false otherwise
-private func areValuesEqual(_ lhs: Any, _ rhs: Any) -> Bool {
-    // Handle Bool comparison
-    if let lhsBool = lhs as? Bool, let rhsBool = rhs as? Bool {
-        return lhsBool == rhsBool
-    }
-
-    // Handle String comparison
-    if let lhsString = lhs as? String, let rhsString = rhs as? String {
-        return lhsString == rhsString
-    }
-
-    // Handle Number/Int comparison
-    if let lhsNum = lhs as? NSNumber, let rhsNum = rhs as? NSNumber {
-        return lhsNum == rhsNum
-    }
-
-    // Handle Array comparison
-    if let lhsArray = lhs as? [Any], let rhsArray = rhs as? [Any] {
-        guard lhsArray.count == rhsArray.count else { return false }
-        for (index, lhsElement) in lhsArray.enumerated() where !areValuesEqual(lhsElement, rhsArray[index]) {
-            return false
-        }
-        return true
-    }
-
-    // Handle Dictionary comparison
-    if let lhsDict = lhs as? [String: Any], let rhsDict = rhs as? [String: Any] {
-        guard lhsDict.keys == rhsDict.keys else { return false }
-        for (key, lhsValue) in lhsDict {
-            guard let rhsValue = rhsDict[key] else { return false }
-            if !areValuesEqual(lhsValue, rhsValue) {
-                return false
-            }
-        }
-        return true
-    }
-
-    // Fallback: try string comparison
-    return "\(lhs)" == "\(rhs)"
 }
 
 /// Checks if the game is currently running
