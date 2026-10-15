@@ -1,73 +1,34 @@
-#include "config.h"
-#include "str_utils.h"
-#include "version.h"
-#include <prime/ui.h>
+#pragma once
 
-#include <EASTL/tuple.h>
-#include <spdlog/spdlog.h>
+// Where the mod's settings, runtime vars, log, and battle-log cache live, and the command-line flags that change
+// them. `-ccm <path>` selects a profile: every file is named after it instead of the defaults.
 
-#include <algorithm>
-#include <cstdio>
 #include <filesystem>
-#include <iostream>
 #include <string>
 #include <string_view>
 
-#if !_WIN32
-#include "folder_manager.h"
-#else
-#include <shellapi.h>
-#include <windows.h>
-#endif
-
-// Original output file names
-#define FILE_DEF_CONFIG "community_patch_settings.toml"
-#define FILE_DEF_LOG "community_patch.log"
-#define FILE_DEF_VARS "community_patch_runtime.vars"
-#define FILE_DEF_VARS_OLD "community_path_runtime.vars"
-#define FILE_DEF_BL "patch_battlelogs_sent.json"
-#define FILE_DEF_PARSED "community_patch_settings_parsed.toml"
-#define FILE_DEF_TITLE L"Star Trek Fleet Command"
-
-#define FILE_EXT_TOML ".toml"
-#define FILE_EXT_VARS ".vars"
-#define FILE_EXT_LOG ".log"
-#define FILE_EXT_JSON ".json"
-
-class File
+namespace File
 {
-public:
-  static void         Init();
-  static std::wstring Title();
-  static const char*  Default();
-  static const char*  Config();
-  static const char*  Vars();
-  static const char*  Log();
-  static const char*  Battles();
-  static bool         hasCustomNames();
-  static bool         hasDebug();
-  static bool         hasTrace();
+// Parses the command line. Call once, before anything else here.
+void Init();
 
-#if _WIN32
-  static std::string_view MakePath(std::string_view filename, bool create_dir = false, bool old_path = false);
-#else
-  static std::u8string MakePath(std::string_view filename, bool create_dir = false, bool old_path = false);
-#endif
+// File names as configured, relative to Path().
+const std::string& Config();
+const std::string& Vars();
+const std::string& Log();
+const std::string& Battles();
+// The settings file name used without -ccm, for messages that point users at it.
+const std::string& DefaultConfig();
 
-private:
-  static std::filesystem::path Path();
+// The -ccm profile name ("alt" for -ccm alt.toml), or empty without -ccm.
+const std::string& Profile();
+bool               Debug();
+bool               Trace();
 
-  static bool debug;
-  static bool trace;
-  static bool override;
-  static bool initialized;
+// Full path of a mod file. On macOS this is ~/Library/Preferences/com.stfcmod.startrekpatch unless -ccm points
+// elsewhere; on Windows it is the game's working directory.
+std::filesystem::path Path(std::string_view name, bool create_dir = false);
 
-  static std::wstring cacheNameTitle;
-  static std::string  cacheNameBattles;
-  static std::string  cacheNameLog;
-  static std::string  cacheNameVar;
-  static std::string  cacheNameConfig;
-  static std::string  cacheNameDefault;
-
-  static std::filesystem::path configPath;
-};
+// Moves settings left behind by older releases. Logs, so call after the logger is up.
+void MigrateLegacyFiles();
+} // namespace File

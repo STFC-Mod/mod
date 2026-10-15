@@ -11,11 +11,6 @@ namespace Audio
 {
   constexpr const char* disabled_events = "";
   constexpr bool        trace_events    = false;
-  constexpr const char* alert_victory = "none";
-  constexpr const char* alert_defeat = "none";
-  constexpr const char* alert_armada_created = "none";
-  constexpr const char* alert_armada_battle_won = "none";
-  constexpr const char* alert_armada_battle_lost = "none";
 } // namespace Audio
 
 namespace SystemConfig
@@ -26,14 +21,12 @@ namespace SystemConfig
 
 namespace Control
 {
-  constexpr bool enable_experimental             = false;
-  constexpr bool hotkeys_enabled                 = true;
-  constexpr bool hotkeys_extended                = true;
-  constexpr bool primary_requires_visible_target = false;
-  constexpr bool use_scopely_hotkeys             = false;
-  constexpr bool queue_enabled                   = true;
-  constexpr bool kirshara_fixes                  = true;
-  constexpr auto select_timer                    = 500;
+  constexpr bool enable_experimental = false;
+  constexpr bool hotkeys_enabled     = true;
+  constexpr bool hotkeys_extended    = true;
+  constexpr bool use_scopely_hotkeys = false;
+  constexpr bool queue_enabled       = true;
+  constexpr int  select_timer        = 500;
 } // namespace Control
 
 namespace Graphics
@@ -42,30 +35,28 @@ namespace Graphics
   constexpr bool        borderless_fullscreen           = true;
   constexpr bool        allow_cursor                    = true;
   constexpr const char* zoom_label_player_detail        = "native";
-  constexpr auto        zoom_label_player_threshold     = 0.5;
+  constexpr float       zoom_label_player_threshold     = 0.5f;
   constexpr const char* zoom_label_non_player_detail    = "native";
-  constexpr auto        zoom_label_non_player_threshold = 0.5;
-  constexpr auto        default_system_zoom             = 1750;
+  constexpr float       zoom_label_non_player_threshold = 0.5f;
+  constexpr float       default_system_zoom             = 1750.0f;
   constexpr bool        free_resize                     = true;
-  constexpr auto        keyboard_zoom_speed             = 350;
-  constexpr auto        system_pan_momentum_falloff     = 0.8;
-  constexpr bool        disable_target_camera_lock = false;
-  constexpr auto        system_pan_momentum             = 0.4;
-  constexpr auto        system_zoom_preset_1            = 50;
-  constexpr auto        system_zoom_preset_2            = 500;
-  constexpr auto        system_zoom_preset_3            = 1250;
-  constexpr auto        system_zoom_preset_4            = 2750;
-  constexpr auto        system_zoom_preset_5            = 5000;
-  constexpr auto        transition_time                 = 0.01;
-  constexpr auto        ui_scale                        = 0.6;
-  constexpr auto        ui_scale_step                   = 0.05;
-  constexpr auto        ui_scale_ship                   = 1.0;
-  constexpr auto        ui_scale_viewer                 = 1.2;
+  constexpr float       keyboard_zoom_speed             = 350.0f;
+  constexpr float       system_pan_momentum_falloff     = 0.8f;
+  constexpr bool        disable_target_camera_lock      = false;
+  constexpr float       system_pan_momentum             = 0.4f;
+  constexpr float       system_zoom_preset_1            = 50.0f;
+  constexpr float       system_zoom_preset_2            = 500.0f;
+  constexpr float       system_zoom_preset_3            = 1250.0f;
+  constexpr float       system_zoom_preset_4            = 2750.0f;
+  constexpr float       system_zoom_preset_5            = 5000.0f;
+  constexpr float       transition_time                 = 0.01f;
+  constexpr float       ui_scale                        = 0.6f;
+  constexpr float       ui_scale_step                   = 0.05f;
+  constexpr float       ui_scale_ship                   = 1.0f;
+  constexpr float       ui_scale_viewer                 = 1.2f;
   constexpr bool        use_presets_as_default          = true;
-  constexpr auto        zoom                            = 5000;
-  constexpr auto        haven_zoom                      = 4000.0;
-  constexpr auto        interior_zoom_scale             = 2.0; // station-interior zoom-out multiplier; 1.0 = native
-  constexpr auto        fr_scale                        = 2.0;
+  constexpr float       zoom                            = 5000.0f;
+  constexpr float       fr_scale                        = 2.0f;
   constexpr bool        loader_enabled                  = true; // replace LoginSequence background
   constexpr bool        loader_transition               = true; // replace TVC/SlideShow backgrounds
 #ifdef _USE_ORIGINAL_BG
@@ -74,7 +65,7 @@ namespace Graphics
   constexpr bool loader_transition_black = false; // transition: use black BG instead of custom image
 #endif
   constexpr const char* loader_image       = "";   // Empty = use embedded fallback
-  constexpr auto        loader_logo_scale  = 1.0;  // multiplier for logo size
+  constexpr float       loader_logo_scale  = 1.0f; // multiplier for logo size
   constexpr bool        loader_tip_enabled = true; // show custom tip on loading screen
 } // namespace Graphics
 
@@ -96,8 +87,6 @@ namespace Patches
   constexpr bool toastbannerhooks           = true;
   constexpr bool uiscalehooks               = true;
   constexpr bool zoomhooks                  = true;
-  constexpr bool havenzoomhooks             = true;
-  constexpr bool interiorzoomhooks          = true;
   constexpr bool miscpatches                = true;
   constexpr bool giftsbulkclaimhooks        = true;
   constexpr bool dailyfactionbulkclaimhooks = true;
@@ -116,10 +105,6 @@ namespace Patches
   constexpr bool cargoformathooks           = true; // on by default: cargo number precision override
   constexpr bool officersorthooks           = true; // restore Below Deck Ability sort option
   constexpr bool pinnedshiphooks            = true; // pin configured ships to front of fleet dock sort
-  constexpr bool pinnedshipclicktoggle      = true; // SHIFT+click a fleet dock ship tile to pin/unpin it
-  constexpr bool havenhistoryhooks          = true; // reverse Haven help history into newest-first order
-  constexpr bool revealconfirmhooks         = true; // auto-confirm the Excelsior Decloaking Deflector popup when enabled in [ui]
-  constexpr bool alliancegamesstorehooks   = true; // repair Alliance Games store research/currency/refresh
 } // namespace Patches
 
 namespace Shortcuts
@@ -239,39 +224,17 @@ namespace Sync
   constexpr const char* spocksclub_url     = "https://spocks.club/sync/ingress/";
   constexpr const char* nextspocksclub_url = "https://next.spocks.club/sync/ingress/";
 
-  constexpr bool        away_assignments   = true;
-  constexpr bool        battlelogs         = false;
-  constexpr bool        buffs              = true;
-  constexpr bool        buildings          = true;
-  constexpr bool        fleets             = false; // opt-in: live fleet state from fleet_watch
-  constexpr bool        haven              = true;
-  constexpr bool        inventory          = true;
-  constexpr bool        jobs               = true;
-  constexpr bool        missions           = true;
-  constexpr bool        officers           = true;
-  constexpr bool        profile            = false;
   constexpr const char* proxy              = "";
-  constexpr bool        research           = true;
-  constexpr bool        resources          = true;
-  constexpr bool        ships              = true;
-  constexpr bool        slots              = true;
-  constexpr bool        store_offers       = false;
-  constexpr bool        tech               = true;
-  constexpr bool        traits             = true;
-  constexpr const char* token              = "";
-  constexpr const char* url                = "";
   constexpr bool        debug              = false;
   constexpr bool        logging            = false;
   constexpr bool        verify_ssl         = true;
-  constexpr auto        resolver_cache_ttl = 300;
+  constexpr int         resolver_cache_ttl = 300;
 } // namespace Sync
 
 namespace UI
 {
   constexpr bool        always_skip_reveal_sequence        = true;
   constexpr bool        arrow_keys_to_select_ship          = true;
-  constexpr bool        dock_syncmanagement                = true;
-  constexpr bool        auto_confirm_discovery             = true;
   constexpr bool        auto_confirm_ft_upgrade            = false;
   constexpr bool        forbidden_tech_ship_name           = true;
   constexpr bool        auto_confirm_reveal_ability        = false;
@@ -279,11 +242,10 @@ namespace UI
   constexpr bool        auto_open_bulk_claim_flyout        = false;
   constexpr const char* daily_bulk_claim_factions          = "federation,klingon,romulan";
   constexpr bool        daily_bulk_claim_toggle_default_on = false;
-  constexpr bool        only_show_first_popup              = false;
   constexpr bool        disable_escape_exit                = true;
   // Maximum gap between Escape presses that opens the exit prompt.
   // 0 disables double-tap and preserves the existing blocked behavior.
-  constexpr auto        disable_escape_exit_timer   = 0;
+  constexpr int         disable_escape_exit_timer   = 0;
   constexpr bool        disable_first_popup         = false;
   constexpr float       default_chat_width          = 0.0f;
   constexpr bool        auto_open_chat              = false;
@@ -299,8 +261,8 @@ namespace UI
   constexpr bool        focus_search                = true;
   constexpr bool        format_cargo_values         = true;
   constexpr bool        officer_sort                = true;
-  constexpr bool        reverse_haven_history       = true;
   constexpr const char* disabled_banner_types       = "";
+  constexpr const char* hud_daily_goals             = "auto";
   constexpr const char* hud_field_training          = "auto";
   constexpr const char* hud_missions                = "auto";
   constexpr const char* hud_outposts                = "auto";
@@ -311,8 +273,8 @@ namespace UI
   constexpr const char* instant_warp_always_ask     = "";
   constexpr const char* pinned_ships                = "";
   constexpr const char* notify_banner_types         = "";
-  constexpr auto        extend_chest_purchase_max   = 160;
-  constexpr auto        extend_donation_max         = 80;
+  constexpr int         extend_chest_purchase_max   = 160;
+  constexpr int         extend_donation_max         = 80;
   constexpr bool        extend_donation_slider      = true;
   constexpr bool        show_armada_cargo           = true;
   constexpr bool        show_cargo_default          = true;

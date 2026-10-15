@@ -1,26 +1,26 @@
 #include "config.h"
+
+#include "defaultconfig.h"
 #include "file.h"
 #include "patches/shortcuts.h"
 #include "ship_name_match.h"
 #include "str_utils.h"
 #include "version.h"
+
 #include <prime/ui.h>
 
-#include <EASTL/tuple.h>
 #include <spdlog/spdlog.h>
+#include <toml++/toml.h>
 
-#include "defaultconfig.h"
 #include <algorithm>
-#include <array>
 #include <cmath>
-#include <cstdio>
-#include <initializer_list>
+#include <fstream>
 #include <iostream>
 #include <ranges>
-#include <string>
-#include <string_view>
-#include <utility>
+#include <tuple>
 
+namespace
+{
 namespace DCP  = DefaultConfig::Patches;
 namespace DCA  = DefaultConfig::Audio;
 namespace DCG  = DefaultConfig::Graphics;
@@ -29,40 +29,9 @@ namespace DCU  = DefaultConfig::UI;
 namespace DCBS = DefaultConfig::Buffs;
 namespace DCS  = DefaultConfig::Sync;
 namespace DCSC = DefaultConfig::SystemConfig;
-namespace DCSH = DefaultConfig::Shortcuts;
 
-namespace
-{
-constexpr bool is_all_audio_wildcard(std::string_view value)
-{
-  return value.size() == 3 && (value[0] == 'a' || value[0] == 'A') && (value[1] == 'l' || value[1] == 'L')
-         && (value[2] == 'l' || value[2] == 'L');
-}
-
-static_assert(is_all_audio_wildcard("aLl"));
-static_assert(!is_all_audio_wildcard(std::string_view{"All\0suffix", 10}));
-static_assert(!is_all_audio_wildcard(std::string_view{"\xffll", 3}));
-
-struct ToastAudioAlertConfig {
-  int                       toast_state;
-  std::string_view          config_name;
-  std::string_view          default_sound;
-  NotificationSound Config::* config_member;
-};
-
-constexpr auto kToastAudioAlerts = std::to_array<ToastAudioAlertConfig>({
-    {ToastState::Victory, "alert_victory", DCA::alert_victory, &Config::alert_victory},
-    {ToastState::Defeat, "alert_defeat", DCA::alert_defeat, &Config::alert_defeat},
-    {ToastState::ArmadaCreated, "alert_armada_created", DCA::alert_armada_created, &Config::alert_armada_created},
-    {ToastState::ArmadaBattleWon, "alert_armada_battle_won", DCA::alert_armada_battle_won,
-     &Config::alert_armada_battle_won},
-    {ToastState::ArmadaBattleLost, "alert_armada_battle_lost", DCA::alert_armada_battle_lost,
-     &Config::alert_armada_battle_lost},
-});
-} // namespace
-
-static const eastl::tuple<const char*, int> bannerTypes[] = {
-    {"All", ToastState::All},
+// Names of ToastState values as written in disabled_banner_types and notify_banner_types.
+constexpr std::pair<std::string_view, ToastState> kBannerTypes[] = {
     {"Standard", ToastState::Standard},
     {"FactionWarning", ToastState::FactionWarning},
     {"FactionLevelUp", ToastState::FactionLevelUp},
@@ -104,517 +73,174 @@ static const eastl::tuple<const char*, int> bannerTypes[] = {
     {"SurgeTimeLeft", ToastState::SurgeTimeLeft},
 };
 
-bool SyncConfig::enabled(SyncConfig::Type type) const
+template <typename E> struct Choice {
+  std::string_view name;
+  E                value;
+};
+
+// The first name listed for a value is the one written back; later ones are accepted synonyms.
+constexpr Choice<MissionHudVisibility> kHudVisibility[] = {
+    {"auto", MissionHudVisibility::Auto},
+    {"always", MissionHudVisibility::Always},
+    {"never", MissionHudVisibility::Never},
+    {"", MissionHudVisibility::Auto},
+};
+
+constexpr Choice<InstantWarpConfirmation> kInstantWarp[] = {
+    {"none", InstantWarpConfirmation::None},  {"warp", InstantWarpConfirmation::Warp},
+    {"jump", InstantWarpConfirmation::Jump},  {"left", InstantWarpConfirmation::Warp},
+    {"right", InstantWarpConfirmation::Jump}, {"", InstantWarpConfirmation::None},
+};
+
+constexpr Choice<FleetLabelDetail> kFleetLabelDetail[] = {
+    {"native", FleetLabelDetail::Native},    {"expanded", FleetLabelDetail::Expanded},
+    {"compact", FleetLabelDetail::Compact},  {"threshold", FleetLabelDetail::Threshold},
+    {"always", FleetLabelDetail::Expanded},  {"never", FleetLabelDetail::Compact},
+    {"custom", FleetLabelDetail::Threshold}, {"auto", FleetLabelDetail::Native},
+    {"none", FleetLabelDetail::Native},      {"off", FleetLabelDetail::Native},
+    {"", FleetLabelDetail::Native},
+};
+
+std::string MaskToken(const std::string& token)
 {
-  for (const auto& opt : SyncOptions) {
-    if (opt.type == type) {
-      return this->*opt.option;
+  if (token.size() <= 21)
+    return token;
+  auto masked = token;
+  for (size_t i = 9; i < token.size() - 12; ++i)
+    if (masked[i] != '-')
+      masked[i] = '*';
+  return masked;
+}
+
+// Reads settings from the user's file and records every effective value in `parsed`, which is written out as the
+// runtime vars file so users can see what the mod actually used.
+class Reader
+{
+public:
+  Reader(const toml::table& config, toml::table& parsed, bool log)
+      : config_(config)
+      , parsed_(parsed)
+      , log_(log)
+  {
+  }
+
+  const toml::table& Config() const
+  { return config_; }
+
+  toml::table& Section(std::string_view name)
+  { return *parsed_.emplace<toml::table>(name).first->second.as_table(); }
+
+  // The configured value converted to T, or `fallback` when missing or of the wrong type. TOML integers read fine
+  // into float settings; fractions into int settings do not.
+  template <typename T> T Get(std::string_view section, std::string_view key, T fallback)
+  {
+    T    value = fallback;
+    auto node  = config_[section][key];
+    if (auto read = node.template value<T>())
+      value = *read;
+    else if (node)
+      spdlog::warn("invalid config value {}.{}; using {}", section, key, fallback);
+    Record(section, key, value);
+    return value;
+  }
+
+  std::string Get(std::string_view section, std::string_view key, const char* fallback)
+  { return Get<std::string>(section, key, fallback); }
+
+  // A setting that was renamed: `key`, or `old_key` when only the old name is set. The vars file records `key`.
+  template <typename T>
+  T GetRenamed(std::string_view section, std::string_view key, std::string_view old_key, T fallback)
+  {
+    if (!config_[section][key] && config_[section][old_key]) {
+      T value = fallback;
+      if (auto read = config_[section][old_key].template value<T>())
+        value = *read;
+      else
+        spdlog::warn("invalid config value {}.{}; using {}", section, old_key, fallback);
+      Record(section, key, value);
+      return value;
     }
+    return Get(section, key, fallback);
   }
 
-  return false;
-}
-
-Config::Config()
-{
-  Load();
-}
-
-void Config::Save(const toml::table& config, const std::string_view filename, bool apply_warning)
-{
-  std::ofstream config_file;
-
-  auto config_path = File::MakePath(filename, true);
-  config_file.open(config_path);
-
-  if (apply_warning) {
-    char defaultFile[255], configFile[255];
-    snprintf(defaultFile, 255, "%s", File::Default());
-    snprintf(configFile, 255, "%s", File::Config());
-
-    config_file << "#######################################################################\n";
-    config_file << "#######################################################################\n";
-    config_file << "####                                                               ####\n";
-    config_file << "#### NOTE: This file is not the configuration file that is used    ####\n";
-    config_file << "####       by the STFC Community Mod.  It is provided to help      ####\n";
-    config_file << "####       see what configuration is being used by the runtime     ####\n";
-    config_file << "####       and any desired settings should be copied to the same   ####\n";
-    config_file << "####       section in: " << defaultFile << "\n";
-    config_file << "####                                                               ####\n";
-    config_file << "####        Config in: " << configFile << "\n";
-    config_file << "####                                                               ####\n";
-    config_file << "#######################################################################\n";
-    config_file << "#######################################################################\n\n";
-  }
-
-  config_file << config;
-  config_file.close();
-}
-
-Config& Config::Get()
-{
-  static Config config;
-  return config;
-}
-
-NotificationSound Config::NotificationSoundForToast(int toast_state) const
-{
-  const auto alert = std::ranges::find(kToastAudioAlerts, toast_state, &ToastAudioAlertConfig::toast_state);
-  return alert == kToastAudioAlerts.end() ? NotificationSound::None : this->*(alert->config_member);
-}
-
-MissionHudVisibility Config::MissionHudButtonVisibility(std::string_view button_name) const
-{
-  const auto it = this->mission_hud_buttons.find(std::string(button_name));
-  return it == this->mission_hud_buttons.end() ? MissionHudVisibility::Auto : it->second;
-}
-
-#if _WIN32
-static HMONITOR lastMonitor = (HMONITOR)-1;
-static float    dpi         = 1.0f;
-
-HWND Config::WindowHandle()
-{
-  static HWND hwnd = nullptr;
-
-  if (hwnd == nullptr) {
-    DWORD processId = GetCurrentProcessId();
-    hwnd            = GetTopWindow(nullptr); // Start with the first top-level window
-
-    while (hwnd != nullptr) {
-      DWORD windowProcessId;
-      GetWindowThreadProcessId(hwnd, &windowProcessId);
-
-      // Check if the window belongs to the current process and is the main window
-      if (windowProcessId == processId && GetWindow(hwnd, GW_OWNER) == nullptr && IsWindowVisible(hwnd)) {
-        break;
-      }
-
-      hwnd = GetNextWindow(hwnd, GW_HWNDNEXT); // Move to the next top-level window
+  // A case-insensitive choice from a fixed list of names.
+  template <typename E, size_t N>
+  E Choose(std::string_view section, std::string_view key, std::string_view fallback, const Choice<E> (&choices)[N])
+  {
+    const auto raw        = Get<std::string>(section, key, std::string(fallback));
+    const auto normalized = AsciiStrToLower(StripAsciiWhitespace(raw));
+    auto       found      = std::ranges::find(choices, normalized, &Choice<E>::name);
+    if (found == std::end(choices)) {
+      spdlog::warn("invalid config value {}.{}: '{}'; using {}", section, key, raw, fallback);
+      found = std::ranges::find(choices, fallback, &Choice<E>::name);
+      if (found == std::end(choices)) // a default missing from the list is a programmer mistake; take the first
+        found = std::begin(choices);
     }
+    Record(section, key, std::string(std::ranges::find(choices, found->value, &Choice<E>::value)->name));
+    return found->value;
   }
 
-  return hwnd;
+  template <typename T> void Record(std::string_view section, std::string_view key, const T& value)
+  {
+    Section(section).insert_or_assign(key, value);
+    if (log_)
+      spdlog::debug("config value {}.{} value: {}", section, key, value);
+  }
+
+private:
+  const toml::table& config_;
+  toml::table&       parsed_;
+  bool               log_;
+};
+
+// Sync options renamed since; their old names are still read, per target as well.
+constexpr std::pair<SyncConfig::Type, std::string_view> kRenamedSyncOptions[] = {
+    {SyncConfig::Type::Officer, "officer"}};
+
+std::string_view OldName(const SyncConfig::Option& option)
+{
+  const auto it =
+      std::ranges::find(kRenamedSyncOptions, option.type, &std::pair<SyncConfig::Type, std::string_view>::first);
+  return it == std::end(kRenamedSyncOptions) ? std::string_view{} : it->second;
 }
 
-float Config::RefreshDPI()
+// "*" matches every ship; otherwise a comma list of ship names, normalized for ShipNameMatch.
+void ReadShipFilter(Reader& reader, std::string_view key, const char* fallback, std::vector<std::string>& names,
+                    bool& match_all)
 {
-  lastMonitor = (HMONITOR)-1;
-
-  return Config::GetDPI();
-}
-
-float Config::GetDPI()
-{
-  auto     activeWindow = GetActiveWindow();
-  HMONITOR monitor      = MonitorFromWindow(activeWindow, MONITOR_DEFAULTTONEAREST);
-
-  if (monitor != lastMonitor) {
-    // Get the logical width and height of the monitor
-    MONITORINFOEX monitorInfoEx;
-    monitorInfoEx.cbSize = sizeof(monitorInfoEx);
-    GetMonitorInfo(monitor, &monitorInfoEx);
-    auto cxLogical = monitorInfoEx.rcMonitor.right - monitorInfoEx.rcMonitor.left;
-    auto cyLogical = monitorInfoEx.rcMonitor.bottom - monitorInfoEx.rcMonitor.top;
-
-    // Get the physical width and height of the monitor
-    DEVMODE devMode;
-    devMode.dmSize        = sizeof(devMode);
-    devMode.dmDriverExtra = 0;
-    EnumDisplaySettings(monitorInfoEx.szDevice, ENUM_CURRENT_SETTINGS, &devMode);
-    auto cxPhysical = devMode.dmPelsWidth;
-    auto cyPhysical = devMode.dmPelsHeight;
-
-    // Calculate the scaling factor
-    auto horizontalScale = ((double)cxPhysical / (double)cxLogical);
-    auto verticalScale   = ((double)cyPhysical / (double)cyLogical);
-
-    spdlog::trace("Horizontal scaling: {}", horizontalScale);
-    spdlog::trace("Vertical scaling: {}", verticalScale);
-
-    dpi         = horizontalScale;
-    lastMonitor = monitor;
-  }
-
-  return dpi;
-}
-#else
-float Config::RefreshDPI()
-{
-  return Config::GetDPI();
-}
-
-float Config::GetDPI()
-{
-  return 1.0f;
-}
-#endif
-
-void Config::AdjustUiScale(bool scaleUp)
-{
-  if (this->ui_scale != 0.0f) {
-    auto old_scale    = this->ui_scale;
-    auto scale_factor = (scaleUp ? 1.0f : -1.0f) * this->ui_scale_step;
-    auto new_scale    = this->ui_scale + scale_factor;
-    this->ui_scale    = std::clamp(new_scale, 0.1f, 2.0f);
-
-    auto dpi = Config::RefreshDPI();
-    spdlog::info("UI has been scaled {}, was {}, now {} (unclamped {}) @ {} DPI Scaling", (scaleUp ? "UP" : "DOWN"),
-                 old_scale, this->ui_scale, new_scale, dpi);
-  }
-}
-
-void Config::AdjustUiViewerScale(bool scaleUp)
-{
-  if (this->ui_scale_viewer != 0.0f) {
-    auto old_scale        = this->ui_scale_viewer;
-    auto scale_factor     = (scaleUp ? 1.0f : -1.0f) * this->ui_scale_step;
-    auto new_scale        = this->ui_scale_viewer + (scale_factor * 0.25f);
-    this->ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
-
-    spdlog::info("UI Viewer has been scaled {}, was {}, now {} (unclamped {})", (scaleUp ? "UP" : "DOWN"), old_scale,
-                 this->ui_scale_viewer, new_scale);
-  }
-}
-
-void Config::AdjustUiShipScale(bool scaleUp)
-{
-  const auto old_scale    = this->ui_scale_ship;
-  const auto scale_factor = (scaleUp ? 1.0f : -1.0f) * this->ui_scale_step;
-  const auto new_scale    = this->ui_scale_ship + scale_factor;
-  this->ui_scale_ship     = std::clamp(new_scale, 0.1f, 20.0f);
-
-  spdlog::info("System ship models have been scaled {}, was {}, now {} (unclamped {})", (scaleUp ? "UP" : "DOWN"),
-               old_scale, this->ui_scale_ship, new_scale);
-  ApplyUiShipScaleToLoadedShips(old_scale, this->ui_scale_ship);
-}
-
-inline std::string mask_token(const std::string& token)
-{
-  if (token.size() > 21) {
-    std::string masked = token;
-    for (size_t i = 9; i < token.size() - 12; ++i) {
-      if (masked[i] != '-') {
-        masked[i] = '*';
-      }
-    }
-    return masked;
-  }
-
-  return token;
-}
-
-std::string get_config_type_as_string(const toml::node_type type)
-{
-  switch (type) {
-    case toml::node_type::none:
-      return "Not-a-node.";
-    case toml::node_type::table:
-      return "toml::table.";
-    case toml::node_type::array:
-      return "toml::array.";
-    case toml::node_type::string:
-      return "toml::value<std::string>.";
-    case toml::node_type::integer:
-      return "toml::value<int64_t>.";
-    case toml::node_type::floating_point:
-      return "toml::value<double>.";
-    case toml::node_type::boolean:
-      return "toml::value<bool>.";
-    case toml::node_type::date:
-      return "toml::value<date>.";
-    case toml::node_type::time:
-      return "toml::value<time>.";
-    case toml::node_type::date_time:
-      return "toml::value<date_time>.";
-  };
-
-  return "The node type is unknown";
-}
-
-template <typename T>
-T get_config_or_default(toml::table& config, toml::table& new_config, std::string_view section, std::string_view item,
-                        T default_value, bool write_log)
-{
-  new_config.emplace<toml::table>(section, toml::table());
-
-  auto sectionTable = new_config[section];
-  T    final_value  = default_value;
-
-  try {
-    if (config.contains(section)) {
-      auto parsed_value = (T)config[section][item].value_or(default_value);
-      final_value       = parsed_value;
-    }
-  } catch (...) {
-    spdlog::warn("invalid config value {}.{}", section, item);
-  }
-
-  sectionTable.as_table()->insert_or_assign(item, final_value);
-
-  if (write_log) {
-    spdlog::debug("config value {}.{} value: {}", section, item, final_value);
-  }
-
-  return (T)final_value;
-}
-
-NotificationSound get_notification_sound(toml::table& config, toml::table& new_config, std::string_view item,
-                                         std::string_view default_value, bool write_log)
-{
-  const auto value = get_config_or_default<std::string>(config, new_config, "audio", item,
-                                                         std::string(default_value), false);
-  auto sound = notification_sound_from_name(StripAsciiWhitespace(value));
-  if (!sound.has_value()) {
-    spdlog::warn("invalid config value audio.{}: '{}'; using {}", item, value, default_value);
-    sound = notification_sound_from_name(default_value);
-  }
-
-  const auto result = sound.value_or(NotificationSound::None);
-  new_config["audio"].as_table()->insert_or_assign(item, notification_sound_name(result));
-  if (write_log) {
-    spdlog::debug("config value audio.{} value: {}", item, notification_sound_name(result));
-  }
-  return result;
-}
-
-template <typename T>
-T get_config_or_default_with_alias(toml::table& config, toml::table& new_config, std::string_view section,
-                                   std::string_view item, std::string_view alias, T default_value, bool write_log)
-{
-  if (!config[section][item] && config[section][alias]) {
-    config[section].as_table()->insert_or_assign(item, config[section][alias]);
-  }
-
-  return get_config_or_default(config, new_config, section, item, default_value, write_log);
-}
-
-std::string_view to_string(MissionHudVisibility visibility)
-{
-  switch (visibility) {
-    case MissionHudVisibility::Always:
-      return "always";
-    case MissionHudVisibility::Never:
-      return "never";
-    case MissionHudVisibility::Auto:
-    default:
-      return "auto";
-  }
-}
-
-MissionHudVisibility parse_mission_hud_visibility(std::string_view item, std::string_view value)
-{
-  const auto normalized = AsciiStrToUpper(StripAsciiWhitespace(value));
-
-  if (normalized == "ALWAYS") {
-    return MissionHudVisibility::Always;
-  }
-  if (normalized == "NEVER") {
-    return MissionHudVisibility::Never;
-  }
-  if (normalized == "AUTO" || normalized.empty()) {
-    return MissionHudVisibility::Auto;
-  }
-
-  spdlog::warn("invalid config value ui.{}: '{}'; using auto", item, value);
-  return MissionHudVisibility::Auto;
-}
-
-MissionHudVisibility get_mission_hud_visibility(toml::table& config, toml::table& new_config, std::string_view item,
-                                                std::string_view default_value, bool write_log)
-{
-  const auto value = config["ui"][item].value<std::string>().value_or(std::string(default_value));
-  const auto mode  = parse_mission_hud_visibility(item, value);
-
-  new_config.emplace<toml::table>("ui", toml::table());
-  new_config["ui"].as_table()->insert_or_assign(item, std::string(to_string(mode)));
-
-  if (write_log) {
-    spdlog::debug("config value ui.{} value: {}", item, to_string(mode));
-  }
-
-  return mode;
-}
-
-std::string_view to_string(InstantWarpConfirmation confirmation)
-{
-  switch (confirmation) {
-    case InstantWarpConfirmation::Warp:
-      return "warp";
-    case InstantWarpConfirmation::Jump:
-      return "jump";
-    case InstantWarpConfirmation::None:
-    default:
-      return "none";
-  }
-}
-
-InstantWarpConfirmation parse_auto_confirm_instant_warp(std::string_view value)
-{
-  const auto normalized = AsciiStrToUpper(StripAsciiWhitespace(value));
-
-  if (normalized == "WARP" || normalized == "LEFT") {
-    return InstantWarpConfirmation::Warp;
-  }
-  if (normalized == "JUMP" || normalized == "RIGHT") {
-    return InstantWarpConfirmation::Jump;
-  }
-  if (normalized == "NONE" || normalized.empty()) {
-    return InstantWarpConfirmation::None;
-  }
-
-  spdlog::warn("invalid config value ui.auto_confirm_instant_warp: '{}'; using none", value);
-  return InstantWarpConfirmation::None;
-}
-
-InstantWarpConfirmation get_auto_confirm_instant_warp(toml::table& config, toml::table& new_config,
-                                                      std::string_view default_value, bool write_log)
-{
-  const auto value = config["ui"]["auto_confirm_instant_warp"].value<std::string>().value_or(
-      std::string(default_value));
-  const auto confirmation = parse_auto_confirm_instant_warp(value);
-
-  new_config.emplace<toml::table>("ui", toml::table());
-  new_config["ui"].as_table()->insert_or_assign("auto_confirm_instant_warp", std::string(to_string(confirmation)));
-
-  if (write_log) {
-    spdlog::debug("config value ui.auto_confirm_instant_warp value: {}", to_string(confirmation));
-  }
-
-  return confirmation;
-}
-
-std::string_view to_string(FleetLabelDetail detail)
-{
-  switch (detail) {
-    case FleetLabelDetail::Expanded:
-      return "expanded";
-    case FleetLabelDetail::Compact:
-      return "compact";
-    case FleetLabelDetail::Threshold:
-      return "threshold";
-    case FleetLabelDetail::Native:
-    default:
-      return "native";
-  }
-}
-
-FleetLabelDetail parse_fleet_label_detail(std::string_view key, std::string_view value)
-{
-  const auto trimmed    = std::string(StripAsciiWhitespace(value));
-  const auto normalized = AsciiStrToUpper(trimmed);
-
-  if (normalized == "EXPANDED" || normalized == "ALWAYS") {
-    return FleetLabelDetail::Expanded;
-  }
-  if (normalized == "COMPACT" || normalized == "NEVER") {
-    return FleetLabelDetail::Compact;
-  }
-  if (normalized == "THRESHOLD" || normalized == "CUSTOM") {
-    return FleetLabelDetail::Threshold;
-  }
-  if (normalized == "NATIVE" || normalized == "AUTO" || normalized == "NONE" || normalized == "OFF"
-      || normalized.empty()) {
-    return FleetLabelDetail::Native;
-  }
-
-  spdlog::warn("invalid config value graphics.{}: '{}'; using native", key, value);
-  return FleetLabelDetail::Native;
-}
-
-FleetLabelDetail get_fleet_label_detail(toml::table& config, toml::table& new_config, std::string_view key,
-                                        std::string_view default_value, bool write_log)
-{
-  const auto value  = config["graphics"][key].value<std::string>().value_or(std::string(default_value));
-  const auto detail = parse_fleet_label_detail(key, value);
-
-  new_config.emplace<toml::table>("graphics", toml::table());
-  new_config["graphics"].as_table()->insert_or_assign(key, std::string(to_string(detail)));
-
-  if (write_log) {
-    spdlog::debug("config value graphics.{} value: {}", key, to_string(detail));
-  }
-
-  return detail;
-}
-
-float get_fleet_label_zoom_threshold(toml::table& config, toml::table& new_config, std::string_view key,
-                                     float default_value, bool write_log)
-{
-  auto threshold = config["graphics"][key].value<float>().value_or(default_value);
-  if (!std::isfinite(threshold) || threshold < 0.0f || threshold > 1.0f) {
-    spdlog::warn("invalid config value graphics.{}: {}; using {}", key, threshold, default_value);
-    threshold = default_value;
-  }
-
-  new_config.emplace<toml::table>("graphics", toml::table());
-  new_config["graphics"].as_table()->insert_or_assign(key, threshold);
-
-  if (write_log) {
-    spdlog::debug("config value graphics.{} value: {}", key, threshold);
-  }
-
-  return threshold;
-}
-
-void parse_ship_filter(std::string_view value, std::vector<std::string>& names, bool& match_all)
-{
+  const auto value = reader.Get("ui", key, fallback);
   names.clear();
-  match_all = false;
-  if (AsciiStrToUpper(StripAsciiWhitespace(value)) == "*") {
-    match_all = true;
+  match_all = StripAsciiWhitespace(value) == "*";
+  if (match_all)
     return;
-  }
-  for (const auto& token : StrSplit(std::string(value), ',')) {
-    auto stripped = StripAsciiWhitespace(token);
-    if (stripped.empty()) continue;
-    if (auto normalized = ShipNameMatch::NormalizeKey(stripped); !normalized.empty()) {
-      names.emplace_back(std::move(normalized));
-    }
-  }
+  for (const auto& token : StrSplit(value, ','))
+    if (auto normalized = ShipNameMatch::NormalizeKey(token); !normalized.empty())
+      names.push_back(std::move(normalized));
 }
 
-void read_instant_warp_filter(toml::table& config, toml::table& new_config, std::string_view key,
-                              std::vector<std::string>& names, bool& match_all,
-                              std::string_view default_value, bool write_log)
+std::vector<std::string> ReadFactions(Reader& reader)
 {
-  const auto value = config["ui"][key].value<std::string>().value_or(std::string(default_value));
-  parse_ship_filter(value, names, match_all);
+  static constexpr std::string_view kKnownFactions[] = {"federation", "klingon", "romulan"};
 
-  new_config.emplace<toml::table>("ui", toml::table());
-  new_config["ui"].as_table()->insert_or_assign(std::string(key), std::string(value));
-
-  if (write_log) {
-    spdlog::debug("config value ui.{}: {}", key, value);
+  std::vector<std::string> factions;
+  auto                     value = reader.Get("ui", "daily_bulk_claim_factions", DCU::daily_bulk_claim_factions);
+  if (StripAsciiWhitespace(value).empty()) {
+    value = DCU::daily_bulk_claim_factions;
+    reader.Section("ui").insert_or_assign("daily_bulk_claim_factions", value);
   }
-}
-
-void parse_faction_filter(std::string_view value, std::vector<std::string>& factions)
-{
-  static constexpr std::array kKnownFactions{"federation", "klingon", "romulan"};
-
-  factions.clear();
   bool none = false;
-  for (const auto& token : StrSplit(std::string(value), ',')) {
-    const auto stripped = StripAsciiWhitespace(token);
-    if (stripped.empty())
-      continue;
-
-    auto lowered = AsciiStrToLower(std::string(stripped));
-
-    if (lowered == "none") {
+  for (const auto& token : StrSplit(value, ',')) {
+    auto faction = AsciiStrToLower(token);
+    if (faction == "none") {
       none = true;
       continue;
     }
-    if (std::ranges::find(kKnownFactions, lowered) == kKnownFactions.end()) {
+    if (std::ranges::find(kKnownFactions, faction) == std::end(kKnownFactions)) {
       spdlog::warn("Unrecognised faction '{}' in daily_bulk_claim_factions; expected one of: federation, klingon, "
                    "romulan, or none by itself. Ignoring.",
-                   stripped);
-      continue;
-    }
-
-    if (std::ranges::find(factions, lowered) == factions.end()) {
-      factions.emplace_back(std::move(lowered));
+                   token);
+    } else if (std::ranges::find(factions, faction) == factions.end()) {
+      factions.push_back(std::move(faction));
     }
   }
   if (none) {
@@ -622,675 +248,436 @@ void parse_faction_filter(std::string_view value, std::vector<std::string>& fact
       spdlog::warn("daily_bulk_claim_factions: none overrides named factions; use none by itself.");
     factions = {"none"};
   }
+  return factions;
 }
 
-void read_daily_bulk_claim_factions(toml::table& config, toml::table& new_config, std::vector<std::string>& factions,
-                                    std::string_view default_value, bool write_log)
+// A comma list of banner names, or "All". The vars file gets the names that matched.
+std::vector<int> ReadBannerTypes(Reader& reader, std::string_view key, const char* fallback)
 {
-  auto value = config["ui"]["daily_bulk_claim_factions"].value<std::string>().value_or(std::string(default_value));
-  // Blank has the same meaning as an omitted setting. Materialize the default
-  // for both gameplay and generated config values; none is the explicit opt-out.
-  if (StripAsciiWhitespace(value).empty())
-    value = std::string(default_value);
-  parse_faction_filter(value, factions);
+  std::vector<std::string> wanted;
+  for (const auto& token : StrSplit(reader.Get("ui", key, fallback), ','))
+    wanted.push_back(AsciiStrToUpper(token));
+  const bool all = std::erase(wanted, "ALL") > 0;
 
-  new_config.emplace<toml::table>("ui", toml::table());
-  new_config["ui"].as_table()->insert_or_assign("daily_bulk_claim_factions", std::string(value));
-
-  if (write_log) {
-    spdlog::debug("config value ui.daily_bulk_claim_factions: {}", value);
+  std::vector<int> types;
+  std::string      names;
+  for (const auto& [name, state] : kBannerTypes) {
+    if (!all && std::erase(wanted, AsciiStrToUpper(name)) == 0)
+      continue;
+    types.push_back(state);
+    names += names.empty() ? "" : ", ";
+    names += name;
   }
+  for (const auto& unknown : wanted)
+    spdlog::warn("Unknown banner type '{}' in ui.{}", unknown, key);
+
+  reader.Record("ui", key, names);
+  return types;
 }
 
-void read_sync_targets(toml::table& config, toml::table& new_config,
-                       std::map<std::string, SyncTargetConfig>& sync_targets, const SyncConfig& defaults)
+void ReadSyncTargets(Reader& reader, std::map<std::string, SyncTargetConfig>& sync_targets, const SyncConfig& defaults)
 {
-  if (!config.contains("sync")) {
-    return;
-  }
+  // The built-in targets are listed in the vars file as examples; they only sync once given a token.
+  auto& parsed_targets =
+      *reader.Section("sync")
+           .insert_or_assign("targets",
+                             toml::table{
+                                 {"stfcdata", toml::table{{"token", ""}, {"url", DCS::stfcdata_url}}},
+                                 {"nextspocksclub", toml::table{{"token", ""}, {"url", DCS::nextspocksclub_url}}},
+                                 {"spocksclub", toml::table{{"token", ""}, {"url", DCS::spocksclub_url}}},
+                             })
+           .first->second.as_table();
 
-  const auto sync = config["sync"].as_table();
-  if (!sync || !sync->contains("targets")) {
+  const auto* targets = reader.Config()["sync"]["targets"].as_table();
+  if (!targets)
     return;
-  }
 
-  const auto targets = config["sync"]["targets"].as_table();
-  if (!targets) {
-    return;
-  }
+  for (const auto& [name, node] : *targets) {
+    const auto* values = node.as_table();
+    if (!values)
+      continue;
 
-  for (const auto& [target_key, target_config] : *targets) {
-    if (!target_config.is_table()) {
+    const auto section = "sync.targets." + std::string(name.str());
+    if (!values->contains("url") || !values->contains("token")) {
+      spdlog::warn("Skipping invalid target [{}]. Missing url or token.", section);
       continue;
     }
-
-    const std::string target_section = "sync.targets." + std::string(target_key.str());
+    const auto url   = (*values)["url"].value<std::string>();
+    const auto token = (*values)["token"].value<std::string>();
+    if (!url || !token || url->empty() || token->empty())
+      continue;
 
     SyncTargetConfig target;
-    toml::table      parsed_target;
+    target.url        = *url;
+    target.token      = *token;
+    target.proxy      = (*values)["proxy"].value<std::string>().value_or(defaults.proxy);
+    target.verify_ssl = (*values)["verify_ssl"].value<bool>().value_or(defaults.verify_ssl);
 
-    const auto& values = *target_config.as_table();
-    if (values.contains("url") && values.contains("token")) {
-      auto url   = values["url"].value<std::string>();
-      auto token = values["token"].value<std::string>();
-      auto proxy = values["proxy"].value<std::string>();
-
-      if (!url.has_value() || !token.has_value() || url->empty() || token->empty()) {
-        continue;
-      }
-
-      target.url        = url.value();
-      target.token      = token.value();
-      target.proxy      = proxy.value_or(defaults.proxy);
-      target.verify_ssl = values["verify_ssl"].value<bool>().value_or(defaults.verify_ssl);
-
-      parsed_target.insert("url", target.url);
-      parsed_target.insert("token", target.token);
-      parsed_target.insert("proxy", target.proxy);
-      parsed_target.insert("verify_ssl", target.verify_ssl);
-    } else {
-      spdlog::warn("Skipping invalid target [{}]. Missing url or token.", target_section);
-      continue;
+    toml::table parsed{
+        {"url", target.url}, {"token", target.token}, {"proxy", target.proxy}, {"verify_ssl", target.verify_ssl}};
+    for (const auto& option : SyncOptions) {
+      const auto key =
+          !values->contains(option.option_str) && !OldName(option).empty() ? OldName(option) : option.option_str;
+      target.*option.option = (*values)[key].value<bool>().value_or(defaults.*option.option);
+      parsed.insert(option.option_str, target.*option.option);
     }
 
-    for (const auto& opt : SyncOptions) {
-      if (opt.type == SyncConfig::Type::Officer && !values.contains(opt.option_str)) {
-        target.*opt.option = values["officer"].value<bool>().value_or(defaults.*opt.option);
-      } else {
-        target.*opt.option = values[opt.option_str].value<bool>().value_or(defaults.*opt.option);
-      }
-      parsed_target.insert(opt.option_str, target.*opt.option);
-    }
-
-    if (sync_targets.emplace(target_key.str(), target).second) {
-      new_config["sync"]["targets"].as_table()->insert_or_assign(target_key.str(), parsed_target);
-      spdlog::debug("config value {} url: {}, token: {}", target_section, target.url, mask_token(target.token));
-      spdlog::info("target [{}] proxy: '{}', verify_ssl: {}", target_section, target.proxy, target.verify_ssl);
+    if (sync_targets.emplace(name.str(), target).second) {
+      parsed_targets.insert_or_assign(name.str(), std::move(parsed));
+      spdlog::debug("config value {} url: {}, token: {}", section, target.url, MaskToken(target.token));
+      spdlog::info("target [{}] proxy: '{}', verify_ssl: {}", section, target.proxy, target.verify_ssl);
     }
   }
 }
 
-void migrate_mac_config_if_needed(const char* filename)
+void Save(const toml::table& table, const std::string& name, bool warning_header)
 {
-#if !_WIN32
-  namespace fs = std::filesystem;
-
-  fs::path file_path = File::MakePath(filename);
-  auto     new_dir   = file_path.parent_path();
-  if (fs::exists(file_path) || fs::exists(new_dir))
-    return;
-
-  spdlog::info("mac config migration: config dir does not exist, checking for migration...");
-
-  fs::path old_path = File::MakePath(filename, false, true);
-  if (!fs::exists(old_path)) {
-    spdlog::info("mac config migration: old config does not exist. nothing to migrate.");
-    return;
+  std::ofstream file(File::Path(name, true));
+  if (warning_header) {
+    file << "#######################################################################\n";
+    file << "#######################################################################\n";
+    file << "####                                                               ####\n";
+    file << "#### NOTE: This file is not the configuration file that is used    ####\n";
+    file << "####       by the STFC Community Mod.  It is provided to help      ####\n";
+    file << "####       see what configuration is being used by the runtime     ####\n";
+    file << "####       and any desired settings should be copied to the same   ####\n";
+    file << "####       section in: " << File::DefaultConfig() << "\n";
+    file << "####                                                               ####\n";
+    file << "####        Config in: " << File::Config() << "\n";
+    file << "####                                                               ####\n";
+    file << "#######################################################################\n";
+    file << "#######################################################################\n\n";
   }
+  file << table;
+}
+} // namespace
 
-  auto stat = fs::status(old_path);
-  if (stat.type() == fs::file_type::regular) {
-    spdlog::info("mac config migration: old config found. attempting to migrate...");
-
-    try {
-      // move
-      auto old_dir = old_path.parent_path();
-      fs::rename(old_dir, new_dir);
-
-      // re-create old dir, create symlink
-      fs::create_directories(old_dir);
-      fs::create_symlink(file_path, old_path);
-
-      // drop update-info.txt
-      std::ofstream info;
-      info.open(old_dir / "update-info.txt");
-      info << "Your config has been moved!\n\n";
-      info << "You can now find your config at " << file_path << "\n\n";
-      info << "A symlink has been placed for your convenience, but it is generally recommended, that you use the new "
-              "path and delete this directory going forward.";
-      info.close();
-
-      spdlog::info("mac config migration: config migration done.");
-    } catch (std::exception& ex) {
-      spdlog::warn("mac config migration: migration failed = {}", ex.what());
-    }
-  }
-#endif
+bool SyncConfig::enabled(SyncConfig::Type type) const
+{
+  for (const auto& opt : SyncOptions)
+    if (opt.type == type)
+      return this->*opt.option;
+  return false;
 }
 
-void delete_old_vars()
-{
-  namespace fs = std::filesystem;
+Config::Config()
+{ Load(); }
 
-  fs::path        old_vars = fs::path(File::MakePath(File::Vars())).parent_path() / FILE_DEF_VARS_OLD;
-  std::error_code ignore;
-  fs::remove(old_vars, ignore);
+Config& Config::Get()
+{
+  static Config config;
+  return config;
+}
+
+MissionHudVisibility Config::MissionHudButtonVisibility(std::string_view button_name) const
+{
+  const auto it = mission_hud_buttons.find(std::string(button_name));
+  return it == mission_hud_buttons.end() ? MissionHudVisibility::Auto : it->second;
 }
 
 void Config::Load()
 {
-  auto filename = File::Config();
+  File::MigrateLegacyFiles();
 
-  migrate_mac_config_if_needed(filename);
-  delete_old_vars();
-
+  const auto  config_path = File::Path(File::Config());
   toml::table config;
-  toml::table parsed;
-  bool        write_config = false;
-  bool        write_log    = true;
+  bool        loaded = false;
   try {
-    config       = std::move(toml::parse_file(File::MakePath(filename)));
-    write_config = true;
+    const auto path = config_path.u8string();
+    config          = toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
+    loaded          = true;
   } catch (const toml::parse_error& e) {
     spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
-    spdlog::debug("");
-    write_config = false;
-    write_log    = false;
   } catch (...) {
     spdlog::warn("Failed to load config file, falling back to default settings");
-    spdlog::debug("");
-    write_config = false;
-    write_log    = false;
   }
 
-  // Patch switches are honoured in release builds too (previously debug-only):
-  // needed to selectively disable hook groups that collide with BepInEx plugins
-  // hooking the same il2cpp methods (native + managed detour on one prologue crashes).
-  this->installUiScaleHooks =
-      get_config_or_default(config, parsed, "patches", "uiscalehooks", DCP::uiscalehooks, write_config);
-  this->installZoomHooks = get_config_or_default(config, parsed, "patches", "zoomhooks", DCP::zoomhooks, write_config);
-  this->installHavenZoomHooks =
-      get_config_or_default(config, parsed, "patches", "havenzoomhooks", DCP::havenzoomhooks, write_config);
-  this->installInteriorZoomHooks =
-      get_config_or_default(config, parsed, "patches", "interiorzoomhooks", DCP::interiorzoomhooks, write_config);
-  this->installBuffFixHooks =
-      get_config_or_default(config, parsed, "patches", "bufffixhooks", DCP::bufffixhooks, write_config);
-  this->installToastBannerHooks =
-      get_config_or_default(config, parsed, "patches", "toastbannerhooks", DCP::toastbannerhooks, write_config);
-  this->installPanHooks = get_config_or_default(config, parsed, "patches", "panhooks", DCP::panhooks, write_config);
-  this->installHotkeyHooks =
-      get_config_or_default(config, parsed, "patches", "hotkeyhooks", DCP::hotkeyhooks, write_config);
-  this->installFreeResizeHooks =
-      get_config_or_default(config, parsed, "patches", "freeresizehooks", DCP::freeresizehooks, write_config);
-  this->installTempCrashFixes =
-      get_config_or_default(config, parsed, "patches", "tempcrashfixes", DCP::tempcrashfixes, write_config);
-  this->installTestPatches =
-      get_config_or_default(config, parsed, "patches", "testpatches", DCP::testpatches, write_config);
-  this->installMiscPatches =
-      get_config_or_default(config, parsed, "patches", "miscpatches", DCP::miscpatches, write_config);
-  this->installMissionHudTweaksHooks =
-      get_config_or_default(config, parsed, "patches", "missionhudtweakshooks", DCP::missionhudtweakshooks, write_config);
-  this->installChatPatches =
-      get_config_or_default(config, parsed, "patches", "chatpatches", DCP::chatpatches, write_config);
-  this->installPlayerTitleDisplayHooks = get_config_or_default(config, parsed, "patches", "chattitledisplayhooks",
-                                                               DCP::chattitledisplayhooks, write_config);
-  this->installSyncPatches =
-      get_config_or_default(config, parsed, "patches", "syncpatches", DCP::syncpatches, write_config);
-  this->installGameVersionHook =
-      get_config_or_default(config, parsed, "patches", "game_version", DCP::game_version, write_config);
-  this->installObjectTracker =
-      get_config_or_default(config, parsed, "patches", "objecttracker", DCP::objecttracker, write_config);
-  this->installLoadingScreenHooks =
-      get_config_or_default(config, parsed, "patches", "loadingscreenhooks", DCP::loadingscreenhooks, write_config);
-  this->installTransitionScreenHooks =
-      get_config_or_default(config, parsed, "patches", "transitionscreenhooks", DCP::transitionscreenhooks, write_config);
-  this->installGiftsBulkClaimHooks =
-      get_config_or_default(config, parsed, "patches", "giftsbulkclaimhooks", DCP::giftsbulkclaimhooks, write_config);
-  this->installDailyFactionBulkClaimHooks = get_config_or_default(
-      config, parsed, "patches", "dailyfactionbulkclaimhooks", DCP::dailyfactionbulkclaimhooks, write_config);
-  this->installGalacticAnomalyTimerHooks =
-      get_config_or_default(config, parsed, "patches", "galacticanomalytimerhooks", DCP::galacticanomalytimerhooks, write_config);
-  this->installLoadingTipHooks =
-      get_config_or_default(config, parsed, "patches", "loadingtiphooks", DCP::loadingtiphooks, write_config);
-  this->installDoubleClickAssignShipHooks =
-      get_config_or_default(config, parsed, "patches", "doubleclickassignshiphooks", DCP::doubleclickassignshiphooks, write_config);
-  this->installForbiddenTechConfirmationHooks =
-      get_config_or_default(config, parsed, "patches", "forbiddentechconfirmhooks", DCP::forbiddentechconfirmhooks, write_config);
-  this->installForbiddenTechShipNameHooks = get_config_or_default(
-      config, parsed, "patches", "forbiddentechshipnamehooks", DCP::forbiddentechshipnamehooks, write_config);
-  this->installRevealConfirmationHooks =
-      get_config_or_default(config, parsed, "patches", "revealconfirmhooks", DCP::revealconfirmhooks, write_config);
-  this->installQueueAddressGuardHooks = get_config_or_default(
-      config, parsed, "patches", "queueaddressguardhooks", DCP::queueaddressguardhooks, write_config);
-  this->installActionQueueRecoveryHooks =
-      get_config_or_default(config, parsed, "patches", "actionqueuerecoveryhooks", DCP::actionqueuerecoveryhooks, write_config);
-  this->installThinQueueProtectionHooks =
-      get_config_or_default(config, parsed, "patches", "thinqueueprotectionhooks", DCP::thinqueueprotectionhooks, write_config);
-  this->installArtifactExchangeHooks =
-      get_config_or_default(config, parsed, "patches", "artifactexchangehooks", DCP::artifactexchangehooks, write_config);
-  this->installAudioEventHooks =
-      get_config_or_default(config, parsed, "patches", "audioeventhooks", DCP::audioeventhooks, write_config);
-  this->installInstantCargoCounterHooks =
-      get_config_or_default(config, parsed, "patches", "instantcargocounterhooks", DCP::instantcargocounterhooks, write_config);
-  this->installCargoFormatHooks =
-      get_config_or_default(config, parsed, "patches", "cargoformathooks", DCP::cargoformathooks, write_config);
-  this->installOfficerSortHooks =
-      get_config_or_default(config, parsed, "patches", "officersorthooks", DCP::officersorthooks, write_config);
-  this->installPinnedShipSortHooks =
-      get_config_or_default(config, parsed, "patches", "pinnedshiphooks", DCP::pinnedshiphooks, write_config);
-  this->installPinnedShipClickToggle = get_config_or_default(config, parsed, "patches", "pinnedshipclicktoggle",
-                                                             DCP::pinnedshipclicktoggle, write_config);
-  this->installAllianceGamesStoreHooks = get_config_or_default(
-      config, parsed, "patches", "alliancegamesstorehooks", DCP::alliancegamesstorehooks, write_config);
-  this->installHavenHistoryHooks =
-      get_config_or_default(config, parsed, "patches", "havenhistoryhooks", DCP::havenhistoryhooks, write_config);
-  spdlog::debug("");
-  this->kirshara_fixes = get_config_or_default(config, parsed, "control", "kirshara_fixes",
-                                             DCC::kirshara_fixes, write_config);
+  toml::table parsed;
+  Reader      r(config, parsed, loaded);
+  interior_zoom_scale = r.Get("graphics", "interior_zoom_scale", 2.0f);
+  if (!std::isfinite(interior_zoom_scale) || interior_zoom_scale < 1.0f) {
+    spdlog::warn("invalid graphics.interior_zoom_scale {}; using 2", interior_zoom_scale);
+    interior_zoom_scale = 2.0f;
+    r.Record("graphics", "interior_zoom_scale", interior_zoom_scale);
+  }
+  kirshara_fixes = r.Get("control", "kirshara_fixes", true);
   if (!config["control"]["kirshara_fixes"]
       && (config["control"]["faster_queue_recovery"] || config["control"]["thin_queue_protection"]
           || config["control"]["queue_address_guard"] || config["advanced"]["queue"]["thin_queue_protection"]))
     spdlog::warn("The separate queue feature settings have been replaced by [control] kirshara_fixes (default=true). "
                  "Set kirshara_fixes=false to disable the combined fixes; old feature settings are ignored.");
-  this->queue_enabled =
-      get_config_or_default(config, parsed, "control", "queue_enabled", DCC::queue_enabled, write_config);
-  this->hotkeys_enabled =
-      get_config_or_default(config, parsed, "control", "hotkeys_enabled", DCC::hotkeys_enabled, write_config);
-  this->hotkeys_extended =
-      get_config_or_default(config, parsed, "control", "hotkeys_extended", DCC::hotkeys_extended, write_config);
-  this->primary_requires_visible_target = get_config_or_default(
-      config, parsed, "control", "primary_requires_visible_target", DCC::primary_requires_visible_target, write_config);
-  this->use_scopely_hotkeys =
-      get_config_or_default(config, parsed, "control", "use_scopely_hotkeys", DCC::use_scopely_hotkeys, write_config);
-  this->select_timer =
-      get_config_or_default(config, parsed, "control", "select_timer", DCC::select_timer, write_config);
-  this->enable_experimental =
-      get_config_or_default(config, parsed, "control", "enable_experimental", DCC::enable_experimental, write_config);
-
-  spdlog::debug("");
-
-  this->ui_scale = get_config_or_default(config, parsed, "graphics", "ui_scale", DCG::ui_scale, write_config);
-  this->ui_scale_step = get_config_or_default_with_alias(config, parsed, "graphics", "ui_scale_step", "ui_scale_adjust",
-                                                         DCG::ui_scale_step, write_config);
-  this->ui_scale_ship =
-      get_config_or_default(config, parsed, "graphics", "ui_scale_ship", DCG::ui_scale_ship, write_config);
-  this->ui_scale_viewer =
-      get_config_or_default(config, parsed, "graphics", "ui_scale_viewer", DCG::ui_scale_viewer, write_config);
-  this->zoom     = get_config_or_default(config, parsed, "graphics", "zoom", DCG::zoom, write_config);
-  this->haven_zoom = get_config_or_default(config, parsed, "graphics", "haven_zoom", DCG::haven_zoom, write_config);
-  if (!std::isfinite(this->haven_zoom) || this->haven_zoom < 0.0f) {
-    spdlog::warn("Invalid haven_zoom {}; using {}", this->haven_zoom, DCG::haven_zoom);
-    this->haven_zoom = DCG::haven_zoom;
-    parsed["graphics"].as_table()->insert_or_assign("haven_zoom", this->haven_zoom);
+  primary_requires_visible_target = r.Get("control", "primary_requires_visible_target", false);
+  show_player_title               = r.Get("ui", "show_player_title", true);
+  auto_confirm_reveal_ability     = r.Get("ui", "auto_confirm_reveal_ability", false);
+  dock_syncmanagement             = r.Get("ui", "dock_syncmanagement", true);
+  installInteriorZoomHooks        = r.Get("patches", "interiorzoomhooks", true);
+  installPlayerTitleDisplayHooks  = r.Get("patches", "chattitledisplayhooks", true);
+  installRevealConfirmationHooks  = r.Get("patches", "revealconfirmhooks", true);
+  installActionQueueRecoveryHooks = r.Get("patches", "actionqueuerecoveryhooks", true);
+  installQueueAddressGuardHooks   = r.Get("patches", "queueaddressguardhooks", true);
+  installThinQueueProtectionHooks = r.Get("patches", "thinqueueprotectionhooks", true);
+  installPinnedShipClickToggle    = r.Get("patches", "pinnedshipclicktoggle", true);
+  installHavenZoomHooks           = r.Get("patches", "havenzoomhooks", true);
+  installHavenHistoryHooks        = r.Get("patches", "havenhistoryhooks", true);
+  installAllianceGamesStoreHooks  = r.Get("patches", "alliancegamesstorehooks", true);
+  haven_zoom                      = r.Get("graphics", "haven_zoom", 4000.0f);
+  if (!std::isfinite(haven_zoom) || haven_zoom < 0.0f) {
+    spdlog::warn("invalid graphics.haven_zoom {}; using 4000", haven_zoom);
+    haven_zoom = 4000.0f;
+    r.Record("graphics", "haven_zoom", haven_zoom);
   }
-  this->interior_zoom_scale =
-      get_config_or_default(config, parsed, "graphics", "interior_zoom_scale", DCG::interior_zoom_scale, write_config);
-  if (!std::isfinite(this->interior_zoom_scale) || this->interior_zoom_scale < 1.0f) {
-    spdlog::warn("Invalid interior_zoom_scale {}; using {}", this->interior_zoom_scale, DCG::interior_zoom_scale);
-    this->interior_zoom_scale = DCG::interior_zoom_scale;
-    parsed["graphics"].as_table()->insert_or_assign("interior_zoom_scale", this->interior_zoom_scale);
-  }
-  this->fr_scale = get_config_or_default(config, parsed, "graphics", "fr_scale", DCG::fr_scale, write_config);
-  this->zoom_label_player.detail =
-      get_fleet_label_detail(config, parsed, "zoom_label_player_detail", DCG::zoom_label_player_detail, write_config);
-  this->zoom_label_player.zoom_threshold = get_fleet_label_zoom_threshold(
-      config, parsed, "zoom_label_player_threshold", DCG::zoom_label_player_threshold, write_config);
-  this->zoom_label_non_player.detail         = get_fleet_label_detail(config, parsed, "zoom_label_non_player_detail",
-                                                                      DCG::zoom_label_non_player_detail, write_config);
-  this->zoom_label_non_player.zoom_threshold = get_fleet_label_zoom_threshold(
-      config, parsed, "zoom_label_non_player_threshold", DCG::zoom_label_non_player_threshold, write_config);
-  this->free_resize = get_config_or_default(config, parsed, "graphics", "free_resize", DCG::free_resize, write_config);
-  this->allow_cursor =
-      get_config_or_default(config, parsed, "graphics", "allow_cursor", DCG::allow_cursor, write_config);
-  this->keyboard_zoom_speed =
-      get_config_or_default(config, parsed, "graphics", "keyboard_zoom_speed", DCG::keyboard_zoom_speed, write_config);
+  reverse_haven_history = r.Get("ui", "reverse_haven_history", true);
 
-  if (this->enable_experimental) {
-    this->system_pan_momentum = get_config_or_default(config, parsed, "graphics", "system_pan_momentum",
-                                                      DCG::system_pan_momentum, write_config);
-  }
+  // Patch switches are honoured in release builds too: they let users disable hook groups that collide with
+  // BepInEx plugins hooking the same IL2CPP methods (a native and a managed detour on one prologue crash).
+  installUiScaleHooks               = r.Get("patches", "uiscalehooks", DCP::uiscalehooks);
+  installZoomHooks                  = r.Get("patches", "zoomhooks", DCP::zoomhooks);
+  installBuffFixHooks               = r.Get("patches", "bufffixhooks", DCP::bufffixhooks);
+  installToastBannerHooks           = r.Get("patches", "toastbannerhooks", DCP::toastbannerhooks);
+  installPanHooks                   = r.Get("patches", "panhooks", DCP::panhooks);
+  installHotkeyHooks                = r.Get("patches", "hotkeyhooks", DCP::hotkeyhooks);
+  installFreeResizeHooks            = r.Get("patches", "freeresizehooks", DCP::freeresizehooks);
+  installTempCrashFixes             = r.Get("patches", "tempcrashfixes", DCP::tempcrashfixes);
+  installTestPatches                = r.Get("patches", "testpatches", DCP::testpatches);
+  installMiscPatches                = r.Get("patches", "miscpatches", DCP::miscpatches);
+  installMissionHudTweaksHooks      = r.Get("patches", "missionhudtweakshooks", DCP::missionhudtweakshooks);
+  installChatPatches                = r.Get("patches", "chatpatches", DCP::chatpatches);
+  installSyncPatches                = r.Get("patches", "syncpatches", DCP::syncpatches);
+  installGameVersionHook            = r.Get("patches", "game_version", DCP::game_version);
+  installObjectTracker              = r.Get("patches", "objecttracker", DCP::objecttracker);
+  installLoadingScreenHooks         = r.Get("patches", "loadingscreenhooks", DCP::loadingscreenhooks);
+  installTransitionScreenHooks      = r.Get("patches", "transitionscreenhooks", DCP::transitionscreenhooks);
+  installGiftsBulkClaimHooks        = r.Get("patches", "giftsbulkclaimhooks", DCP::giftsbulkclaimhooks);
+  installDailyFactionBulkClaimHooks = r.Get("patches", "dailyfactionbulkclaimhooks", DCP::dailyfactionbulkclaimhooks);
+  installGalacticAnomalyTimerHooks  = r.Get("patches", "galacticanomalytimerhooks", DCP::galacticanomalytimerhooks);
+  installLoadingTipHooks            = r.Get("patches", "loadingtiphooks", DCP::loadingtiphooks);
+  installDoubleClickAssignShipHooks = r.Get("patches", "doubleclickassignshiphooks", DCP::doubleclickassignshiphooks);
+  installForbiddenTechConfirmationHooks = r.Get("patches", "forbiddentechconfirmhooks", DCP::forbiddentechconfirmhooks);
+  installForbiddenTechShipNameHooks     = r.Get("patches", "forbiddentechshipnamehooks", DCP::forbiddentechshipnamehooks);
+  installAudioEventHooks                = r.Get("patches", "audioeventhooks", DCP::audioeventhooks);
+  installInstantCargoCounterHooks       = r.Get("patches", "instantcargocounterhooks", DCP::instantcargocounterhooks);
+  installCargoFormatHooks               = r.Get("patches", "cargoformathooks", DCP::cargoformathooks);
+  installOfficerSortHooks               = r.Get("patches", "officersorthooks", DCP::officersorthooks);
+  installPinnedShipSortHooks            = r.Get("patches", "pinnedshiphooks", DCP::pinnedshiphooks);
+  installArtifactExchangeHooks          = r.Get("patches", "artifactexchangehooks", DCP::artifactexchangehooks);
+  installInstantWarpConfirmationHooks   = true;
 
-  spdlog::debug("");
+  queue_enabled       = r.Get("control", "queue_enabled", DCC::queue_enabled);
+  hotkeys_enabled     = r.Get("control", "hotkeys_enabled", DCC::hotkeys_enabled);
+  hotkeys_extended    = r.Get("control", "hotkeys_extended", DCC::hotkeys_extended);
+  use_scopely_hotkeys = r.Get("control", "use_scopely_hotkeys", DCC::use_scopely_hotkeys);
+  select_timer        = r.Get("control", "select_timer", DCC::select_timer);
+  enable_experimental = r.Get("control", "enable_experimental", DCC::enable_experimental);
 
-  this->system_pan_momentum_falloff = get_config_or_default(config, parsed, "graphics", "system_pan_momentum_falloff",
-                                                            DCG::system_pan_momentum_falloff, write_log);
-  this->disable_target_camera_lock = get_config_or_default(config, parsed, "graphics", "disable_target_camera_lock",
-                                                         DCG::disable_target_camera_lock, write_log);
-  this->borderless_fullscreen =
-      get_config_or_default(config, parsed, "graphics", "borderless_fullscreen", DCG::borderless_fullscreen, write_log);
-  this->transition_time =
-      get_config_or_default(config, parsed, "graphics", "transition_time", DCG::transition_time, write_config);
-  this->default_system_zoom =
-      get_config_or_default(config, parsed, "graphics", "default_system_zoom", DCG::default_system_zoom, write_config);
+  ui_scale        = r.Get("graphics", "ui_scale", DCG::ui_scale);
+  ui_scale_step   = r.GetRenamed("graphics", "ui_scale_step", "ui_scale_adjust", DCG::ui_scale_step);
+  ui_scale_ship   = r.Get("graphics", "ui_scale_ship", DCG::ui_scale_ship);
+  ui_scale_viewer = r.Get("graphics", "ui_scale_viewer", DCG::ui_scale_viewer);
+  zoom            = r.Get("graphics", "zoom", DCG::zoom);
+  fr_scale        = r.Get("graphics", "fr_scale", DCG::fr_scale);
 
-  spdlog::debug("");
-
-  this->system_zoom_preset_1   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_1",
-                                                       DCG::system_zoom_preset_1, write_config);
-  this->system_zoom_preset_2   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_2",
-                                                       DCG::system_zoom_preset_2, write_config);
-  this->system_zoom_preset_3   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_3",
-                                                       DCG::system_zoom_preset_3, write_config);
-  this->system_zoom_preset_4   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_4",
-                                                       DCG::system_zoom_preset_4, write_config);
-  this->system_zoom_preset_5   = get_config_or_default(config, parsed, "graphics", "system_zoom_preset_5",
-                                                       DCG::system_zoom_preset_5, write_config);
-  this->use_presets_as_default = get_config_or_default(config, parsed, "graphics", "use_presets_as_default",
-                                                       DCG::use_presets_as_default, write_config);
-
-  spdlog::debug("");
-
-  this->use_out_of_dock_power = get_config_or_default(config, parsed, "buffs", "use_out_of_dock_power",
-                                                      DCBS::use_out_of_dock_power, write_config);
-
-  spdlog::debug("");
-
-  this->disable_escape_exit =
-      get_config_or_default(config, parsed, "ui", "disable_escape_exit", DCU::disable_escape_exit, write_config);
-  this->disable_escape_exit_timer = get_config_or_default(config, parsed, "ui", "disable_escape_exit_timer",
-                                                          DCU::disable_escape_exit_timer, write_config);
-  this->disable_preview_locate =
-      get_config_or_default(config, parsed, "ui", "disable_preview_locate", DCU::disable_preview_locate, write_config);
-  this->disable_preview_recall =
-      get_config_or_default(config, parsed, "ui", "disable_preview_recall", DCU::disable_preview_recall, write_config);
-  this->only_show_first_popup = get_config_or_default(config, parsed, "ui", "only_show_first_popup",
-                                                      DCU::only_show_first_popup, write_config);
-  this->disable_move_keys =
-      get_config_or_default(config, parsed, "ui", "disable_move_keys", DCU::disable_move_keys, write_config);
-  this->disable_toast_banners =
-      get_config_or_default(config, parsed, "ui", "disable_toast_banners", DCU::disable_toast_banners, write_config);
-  this->trace_audio_events =
-      get_config_or_default(config, parsed, "audio", "trace_events", DCA::trace_events, write_config);
-  auto disabled_audio_events = get_config_or_default<std::string>(
-      config, parsed, "audio", "disabled_events", DCA::disabled_events, write_config);
-  this->disable_all_audio_events = false;
-  this->disabled_audio_events.clear();
-  for (const auto& event : StrSplit(disabled_audio_events, ',')) {
-    auto stripped = StripAsciiWhitespace(event);
-    if (is_all_audio_wildcard(stripped)) {
-      this->disable_all_audio_events = true;
-    } else if (!stripped.empty()) {
-      this->disabled_audio_events.emplace_back(stripped);
+  for (auto [profile, prefix, detail, threshold] :
+       {std::tuple{&zoom_label_player, "zoom_label_player", DCG::zoom_label_player_detail,
+                   DCG::zoom_label_player_threshold},
+        std::tuple{&zoom_label_non_player, "zoom_label_non_player", DCG::zoom_label_non_player_detail,
+                   DCG::zoom_label_non_player_threshold}}) {
+    const std::string key = prefix;
+    profile->detail       = r.Choose("graphics", key + "_detail", detail, kFleetLabelDetail);
+    auto zoom_threshold   = r.Get("graphics", key + "_threshold", threshold);
+    if (!std::isfinite(zoom_threshold) || zoom_threshold < 0.0f || zoom_threshold > 1.0f) {
+      spdlog::warn("invalid config value graphics.{}_threshold: {}; using {}", key, zoom_threshold, threshold);
+      zoom_threshold = threshold;
+      r.Record("graphics", key + "_threshold", zoom_threshold);
     }
+    profile->zoom_threshold = zoom_threshold;
   }
-  bool any_toast_audio_alert_configured = false;
-  for (const auto& alert : kToastAudioAlerts) {
-    const auto sound = get_notification_sound(config, parsed, alert.config_name, alert.default_sound, write_config);
-    this->*(alert.config_member) = sound;
-    any_toast_audio_alert_configured |= sound != NotificationSound::None;
+
+  free_resize         = r.Get("graphics", "free_resize", DCG::free_resize);
+  allow_cursor        = r.Get("graphics", "allow_cursor", DCG::allow_cursor);
+  keyboard_zoom_speed = r.Get("graphics", "keyboard_zoom_speed", DCG::keyboard_zoom_speed);
+  if (enable_experimental)
+    system_pan_momentum = r.Get("graphics", "system_pan_momentum", DCG::system_pan_momentum);
+  system_pan_momentum_falloff = r.Get("graphics", "system_pan_momentum_falloff", DCG::system_pan_momentum_falloff);
+  disable_target_camera_lock  = r.Get("graphics", "disable_target_camera_lock", DCG::disable_target_camera_lock);
+  borderless_fullscreen       = r.Get("graphics", "borderless_fullscreen", DCG::borderless_fullscreen);
+  transition_time             = r.Get("graphics", "transition_time", DCG::transition_time);
+  default_system_zoom         = r.Get("graphics", "default_system_zoom", DCG::default_system_zoom);
+  system_zoom_preset_1        = r.Get("graphics", "system_zoom_preset_1", DCG::system_zoom_preset_1);
+  system_zoom_preset_2        = r.Get("graphics", "system_zoom_preset_2", DCG::system_zoom_preset_2);
+  system_zoom_preset_3        = r.Get("graphics", "system_zoom_preset_3", DCG::system_zoom_preset_3);
+  system_zoom_preset_4        = r.Get("graphics", "system_zoom_preset_4", DCG::system_zoom_preset_4);
+  system_zoom_preset_5        = r.Get("graphics", "system_zoom_preset_5", DCG::system_zoom_preset_5);
+  use_presets_as_default      = r.Get("graphics", "use_presets_as_default", DCG::use_presets_as_default);
+
+  loader_enabled          = r.Get("graphics", "loader_enabled", DCG::loader_enabled);
+  loader_transition       = r.Get("graphics", "loader_transition", DCG::loader_transition);
+  loader_transition_black = r.Get("graphics", "loader_transition_black", DCG::loader_transition_black);
+#ifdef _USE_ORIGINAL_BG
+  loader_transition_black = true;
+#endif
+  // Without transition customization the game's own black background stays.
+  if (!loader_transition)
+    loader_transition_black = true;
+  loader_image           = r.Get("graphics", "loader_image", DCG::loader_image);
+  loader_logo_scale      = r.Get("graphics", "loader_logo_scale", DCG::loader_logo_scale);
+  loader_tip_enabled     = r.Get("graphics", "loader_tip_enabled", DCG::loader_tip_enabled);
+  galactic_anomaly_timer = r.Get("graphics", "galactic_anomaly_timer", DCG::galactic_anomaly_timer);
+
+  use_out_of_dock_power = r.Get("buffs", "use_out_of_dock_power", DCBS::use_out_of_dock_power);
+
+  trace_audio_events       = r.Get("audio", "trace_events", DCA::trace_events);
+  disable_all_audio_events = false;
+  disabled_audio_events.clear();
+  for (const auto& event : StrSplit(r.Get<std::string>("audio", "disabled_events", ""), ',')) {
+    if (AsciiStrToLower(event) == "all")
+      disable_all_audio_events = true;
+    else
+      disabled_audio_events.push_back(event);
   }
-  if (!this->installToastBannerHooks && any_toast_audio_alert_configured) {
+  bool has_audio_alert = false;
+  for (auto [key, value] : std::initializer_list<std::pair<const char*, NotificationSound*>>{
+           {"alert_victory", &alert_victory},
+           {"alert_defeat", &alert_defeat},
+           {"alert_armada_created", &alert_armada_created},
+           {"alert_armada_battle_won", &alert_armada_battle_won},
+           {"alert_armada_battle_lost", &alert_armada_battle_lost}}) {
+    const auto name  = r.Get<std::string>("audio", key, "none");
+    const auto sound = notification_sound_from_name(StripAsciiWhitespace(name));
+    if (!sound)
+      spdlog::warn("invalid config value audio.{}: '{}'; using none", key, name);
+    *value = sound.value_or(NotificationSound::None);
+    r.Record("audio", key, notification_sound_name(*value));
+    has_audio_alert |= *value != NotificationSound::None;
+  }
+  if (has_audio_alert && !installToastBannerHooks)
     spdlog::warn("audio alerts require patches.toastbannerhooks = true");
-  }
-  this->auto_open_bulk_claim_flyout = get_config_or_default(config, parsed, "ui", "auto_open_bulk_claim_flyout",
-                                                            DCU::auto_open_bulk_claim_flyout, write_config);
 
-  read_daily_bulk_claim_factions(config, parsed, this->daily_bulk_claim_factions, DCU::daily_bulk_claim_factions,
-                                 write_config);
-  this->daily_bulk_claim_toggle_default_on =
-      get_config_or_default(config, parsed, "ui", "daily_bulk_claim_toggle_default_on",
-                            DCU::daily_bulk_claim_toggle_default_on, write_config);
-  this->auto_confirm_instant_warp =
-      get_auto_confirm_instant_warp(config, parsed, DCU::auto_confirm_instant_warp, write_config);
-  this->installInstantWarpConfirmationHooks = true;
-  read_instant_warp_filter(config, parsed, "instant_warp_auto_jump", this->instant_warp_auto_jump,
-                           this->instant_warp_auto_jump_all, DCU::instant_warp_auto_jump, write_config);
-  read_instant_warp_filter(config, parsed, "instant_warp_auto_warp", this->instant_warp_auto_warp,
-                           this->instant_warp_auto_warp_all, DCU::instant_warp_auto_warp, write_config);
-  read_instant_warp_filter(config, parsed, "instant_warp_always_ask", this->instant_warp_always_ask,
-                           this->instant_warp_always_ask_all, DCU::instant_warp_always_ask, write_config);
+  disable_escape_exit       = r.Get("ui", "disable_escape_exit", DCU::disable_escape_exit);
+  disable_escape_exit_timer = r.Get("ui", "disable_escape_exit_timer", DCU::disable_escape_exit_timer);
+  disable_preview_locate    = r.Get("ui", "disable_preview_locate", DCU::disable_preview_locate);
+  disable_preview_recall    = r.Get("ui", "disable_preview_recall", DCU::disable_preview_recall);
+  disable_first_popup       = r.Get("ui", "disable_first_popup", DCU::disable_first_popup);
+  only_show_first_popup     = r.Get("ui", "only_show_first_popup", false);
+  disable_move_keys         = r.Get("ui", "disable_move_keys", DCU::disable_move_keys);
+  disable_toast_banners     = r.Get("ui", "disable_toast_banners", DCU::disable_toast_banners);
+  default_chat_width        = r.Get("ui", "default_chat_width", DCU::default_chat_width);
+  auto_open_chat            = r.Get("ui", "auto_open_chat", DCU::auto_open_chat);
+  disable_galaxy_chat       = r.Get("ui", "disable_galaxy_chat", DCU::disable_galaxy_chat);
+  disable_veil_chat         = r.Get("ui", "disable_veil_chat", DCU::disable_veil_chat);
 
-  {
-    bool unused_match_all = false;
-    read_instant_warp_filter(config, parsed, "pinned_ships", this->pinned_ships, unused_match_all, DCU::pinned_ships,
-                             write_config);
-  }
+  auto_open_bulk_claim_flyout = r.Get("ui", "auto_open_bulk_claim_flyout", DCU::auto_open_bulk_claim_flyout);
+  daily_bulk_claim_factions   = ReadFactions(r);
+  daily_bulk_claim_toggle_default_on =
+      r.Get("ui", "daily_bulk_claim_toggle_default_on", DCU::daily_bulk_claim_toggle_default_on);
 
-  this->double_click_to_assign_ship = get_config_or_default(config, parsed, "ui", "double_click_to_assign_ship",
-                                                            DCU::double_click_to_assign_ship, write_config);
-  this->focus_search = get_config_or_default(config, parsed, "ui", "focus_search", DCU::focus_search, write_config);
-  this->format_cargo_values = get_config_or_default_with_alias(
-      config, parsed, "ui", "format_cargo_values", "cargo_format", DCU::format_cargo_values, write_config);
-  this->officer_sort = get_config_or_default(config, parsed, "ui", "officer_sort", DCU::officer_sort, write_config);
-  this->reverse_haven_history = get_config_or_default(config, parsed, "ui", "reverse_haven_history",
-                                                       DCU::reverse_haven_history, write_config);
+  auto_confirm_instant_warp = r.Choose("ui", "auto_confirm_instant_warp", DCU::auto_confirm_instant_warp, kInstantWarp);
+  ReadShipFilter(r, "instant_warp_auto_jump", DCU::instant_warp_auto_jump, instant_warp_auto_jump,
+                 instant_warp_auto_jump_all);
+  ReadShipFilter(r, "instant_warp_auto_warp", DCU::instant_warp_auto_warp, instant_warp_auto_warp,
+                 instant_warp_auto_warp_all);
+  ReadShipFilter(r, "instant_warp_always_ask", DCU::instant_warp_always_ask, instant_warp_always_ask,
+                 instant_warp_always_ask_all);
+  bool pin_all = false; // "*" pins nothing
+  ReadShipFilter(r, "pinned_ships", DCU::pinned_ships, pinned_ships, pin_all);
 
-  this->dock_syncmanagement =
-      get_config_or_default(config, parsed, "ui", "dock_syncmanagement",
-                            DCU::dock_syncmanagement, write_config);
-  this->arrow_keys_to_select_ship = get_config_or_default(config, parsed, "ui", "arrow_keys_to_select_ship",
-                                                          DCU::arrow_keys_to_select_ship, write_config);
+  double_click_to_assign_ship = r.Get("ui", "double_click_to_assign_ship", DCU::double_click_to_assign_ship);
+  focus_search                = r.Get("ui", "focus_search", DCU::focus_search);
+  format_cargo_values         = r.GetRenamed("ui", "format_cargo_values", "cargo_format", DCU::format_cargo_values);
+  officer_sort                = r.Get("ui", "officer_sort", DCU::officer_sort);
+  arrow_keys_to_select_ship   = r.Get("ui", "arrow_keys_to_select_ship", DCU::arrow_keys_to_select_ship);
+  auto_confirm_ft_upgrade     = r.Get("ui", "auto_confirm_ft_upgrade", DCU::auto_confirm_ft_upgrade);
+  forbidden_tech_ship_name    = r.Get("ui", "forbidden_tech_ship_name", DCU::forbidden_tech_ship_name);
+  auto_confirm_alliance_contribution =
+      r.Get("ui", "auto_confirm_alliance_contribution", DCU::auto_confirm_alliance_contribution);
 
-  this->auto_confirm_ft_upgrade =
-      get_config_or_default(config, parsed, "ui", "auto_confirm_ft_upgrade",
-                                                        DCU::auto_confirm_ft_upgrade, write_config);
-  this->forbidden_tech_ship_name = get_config_or_default(
-      config, parsed, "ui", "forbidden_tech_ship_name", DCU::forbidden_tech_ship_name, write_config);
-  this->auto_confirm_reveal_ability =
-      get_config_or_default(config, parsed, "ui", "auto_confirm_reveal_ability",
-                                                        DCU::auto_confirm_reveal_ability, write_config);
-  this->auto_confirm_alliance_contribution =
-      get_config_or_default(config, parsed, "ui", "auto_confirm_alliance_contribution",
-                            DCU::auto_confirm_alliance_contribution, write_config);
+  extend_chest_purchase_max = r.Get("ui", "extend_chest_purchase_max", DCU::extend_chest_purchase_max);
+  extend_donation_slider    = r.Get("ui", "extend_donation_slider", DCU::extend_donation_slider);
+  extend_donation_max       = r.Get("ui", "extend_donation_max", DCU::extend_donation_max);
 
-  this->extend_chest_purchase_max = get_config_or_default(config, parsed, "ui", "extend_chest_purchase_max",
-                                                          DCU::extend_chest_purchase_max, write_config);
-  this->extend_donation_slider =
-      get_config_or_default(config, parsed, "ui", "extend_donation_slider", DCU::extend_donation_slider, write_config);
-  this->extend_donation_max =
-      get_config_or_default(config, parsed, "ui", "extend_donation_max", DCU::extend_donation_max, write_config);
+  show_cargo_default         = r.Get("ui", "show_cargo_default", DCU::show_cargo_default);
+  show_player_cargo          = r.Get("ui", "show_player_cargo", DCU::show_player_cargo);
+  show_station_cargo         = r.Get("ui", "show_station_cargo", DCU::show_station_cargo);
+  show_hostile_cargo         = r.Get("ui", "show_hostile_cargo", DCU::show_hostile_cargo);
+  show_armada_cargo          = r.Get("ui", "show_armada_cargo", DCU::show_armada_cargo);
+  instant_cargo_counter      = r.Get("ui", "instant_cargo_counter", DCU::instant_cargo_counter);
+  cargo_significant_decimals = r.Get("ui", "cargo_significant_decimals", DCU::cargo_significant_decimals);
 
-  this->default_chat_width =
-      get_config_or_default(config, parsed, "ui", "default_chat_width", DCU::default_chat_width, write_config);
-  this->auto_open_chat =
-      get_config_or_default(config, parsed, "ui", "auto_open_chat", DCU::auto_open_chat, write_config);
-  this->disable_galaxy_chat =
-      get_config_or_default(config, parsed, "ui", "disable_galaxy_chat", DCU::disable_galaxy_chat, write_config);
-  this->disable_veil_chat =
-      get_config_or_default(config, parsed, "ui", "disable_veil_chat", DCU::disable_veil_chat, write_config);
-  this->show_player_title =
-      get_config_or_default(config, parsed, "ui", "show_player_title", DCU::show_player_title, write_config);
-  this->show_cargo_default =
-      get_config_or_default(config, parsed, "ui", "show_cargo_default", DCU::show_cargo_default, write_config);
-  this->show_player_cargo =
-      get_config_or_default(config, parsed, "ui", "show_player_cargo", DCU::show_player_cargo, write_config);
-  this->show_station_cargo =
-      get_config_or_default(config, parsed, "ui", "show_station_cargo", DCU::show_station_cargo, write_config);
-  this->show_hostile_cargo =
-      get_config_or_default(config, parsed, "ui", "show_hostile_cargo", DCU::show_hostile_cargo, write_config);
-  this->show_armada_cargo =
-      get_config_or_default(config, parsed, "ui", "show_armada_cargo", DCU::show_armada_cargo, write_config);
+  always_skip_reveal_sequence = r.Get("ui", "always_skip_reveal_sequence", DCU::always_skip_reveal_sequence);
+  disable_exchange_all =
+      r.GetRenamed("ui", "disable_exchange_all", "hide_artifact_exchange_all", DCU::disable_exchange_all);
+  mission_hud_buttons = {
+      {"q_trials", r.Choose("ui", "hud_q_trials", DCU::hud_q_trials, kHudVisibility)},
+      {"field_training", r.Choose("ui", "hud_field_training", DCU::hud_field_training, kHudVisibility)},
+      {"outposts", r.Choose("ui", "hud_outposts", DCU::hud_outposts, kHudVisibility)},
+      {"daily_goals", r.Choose("ui", "hud_daily_goals", DCU::hud_daily_goals, kHudVisibility)},
+      {"missions", r.Choose("ui", "hud_missions", DCU::hud_missions, kHudVisibility)},
+  };
 
-  this->instant_cargo_counter =
-      get_config_or_default(config, parsed, "ui", "instant_cargo_counter", DCU::instant_cargo_counter, write_config);
-  this->cargo_significant_decimals =
-      get_config_or_default(config, parsed, "ui", "cargo_significant_decimals", DCU::cargo_significant_decimals, write_config);
+  disabled_banner_types = ReadBannerTypes(r, "disabled_banner_types", DCU::disabled_banner_types);
+  notify_banner_types   = ReadBannerTypes(r, "notify_banner_types", DCU::notify_banner_types);
 
-  this->always_skip_reveal_sequence = get_config_or_default(config, parsed, "ui", "always_skip_reveal_sequence",
-                                                            DCU::always_skip_reveal_sequence, write_config);
-  this->mission_hud_buttons.clear();
-  this->mission_hud_buttons.emplace(
-      "q_trials", get_mission_hud_visibility(config, parsed, "hud_q_trials", DCU::hud_q_trials, write_config));
-  this->mission_hud_buttons.emplace(
-      "field_training", get_mission_hud_visibility(config, parsed, "hud_field_training", DCU::hud_field_training,
-                                                     write_config));
-  this->mission_hud_buttons.emplace(
-      "outposts", get_mission_hud_visibility(config, parsed, "hud_outposts", DCU::hud_outposts, write_config));
-  this->mission_hud_buttons.emplace(
-      "missions", get_mission_hud_visibility(config, parsed, "hud_missions", DCU::hud_missions, write_config));
-  this->disable_exchange_all = get_config_or_default_with_alias(
-      config, parsed, "ui", "disable_exchange_all", "hide_artifact_exchange_all", DCU::disable_exchange_all, write_config);
-
-  spdlog::debug("");
-
-  this->sync_debug   = get_config_or_default(config, parsed, "sync", "debug", DCS::debug, write_config);
-  this->sync_logging = get_config_or_default(config, parsed, "sync", "logging", DCS::logging, write_config);
-  this->sync_resolver_cache_ttl =
-      get_config_or_default(config, parsed, "sync", "resolver_cache_ttl", DCS::resolver_cache_ttl, write_config);
+  sync_debug              = r.Get("sync", "debug", DCS::debug);
+  sync_logging            = r.Get("sync", "logging", DCS::logging);
+  sync_resolver_cache_ttl = r.Get("sync", "resolver_cache_ttl", DCS::resolver_cache_ttl);
 
   SyncConfig sync_defaults;
-  sync_defaults.proxy      = get_config_or_default<std::string>(config, parsed, "sync", "proxy", DCS::proxy, write_log);
-  sync_defaults.verify_ssl = get_config_or_default(config, parsed, "sync", "verify_ssl", DCS::verify_ssl, write_config);
+  sync_defaults.proxy      = r.Get("sync", "proxy", DCS::proxy);
+  sync_defaults.verify_ssl = r.Get("sync", "verify_ssl", DCS::verify_ssl);
+  for (const auto& option : SyncOptions)
+    sync_defaults.*option.option = OldName(option).empty()
+                                       ? r.Get("sync", option.option_str, false)
+                                       : r.GetRenamed("sync", option.option_str, OldName(option), false);
+  ReadSyncTargets(r, sync_targets, sync_defaults);
 
-  for (const auto& opt : SyncOptions) {
-    if (opt.type == SyncConfig::Type::Officer) {
-      sync_defaults.*opt.option = get_config_or_default_with_alias(
-          config, parsed, "sync", opt.option_str, "officer", false, write_config);
-    } else {
-      sync_defaults.*opt.option = get_config_or_default(config, parsed, "sync", opt.option_str, false, write_config);
-    }
-  }
-
-  spdlog::debug("");
-
-  toml::table default_targets{
-      {"stfcdata", toml::table{{"token", ""}, {"url", DCS::stfcdata_url}}},
-      {"nextspocksclub", toml::table{{"token", ""}, {"url", DCS::nextspocksclub_url}}},
-      {"spocksclub", toml::table{{"token", ""}, {"url", DCS::spocksclub_url}}},
-  };
-  parsed["sync"].as_table()->emplace<toml::table>("targets", std::move(default_targets));
-
-  read_sync_targets(config, parsed, this->sync_targets, sync_defaults);
-
-  if (auto sync_file = config["sync"]["file"].value<std::string>();
-      sync_file.has_value() && !sync_file.value().empty()) {
+  if (auto sync_file = config["sync"]["file"].value<std::string>(); sync_file && !sync_file->empty()) {
     spdlog::error("Deprecation Notice: The 'sync_file' config option has been deprecated and removed. "
                   "For capturing sync output, please use a local HTTP server instead.");
   }
 
-  // set global sync options to what's actually used in targets
-  const auto targets_view = this->sync_targets | std::views::values;
-
-  this->sync_options.proxy      = sync_defaults.proxy;
-  this->sync_options.verify_ssl = sync_defaults.verify_ssl;
-
-  for (const auto& opt : SyncOptions) {
-    this->sync_options.*opt.option =
-        std::ranges::any_of(targets_view, [opt](const auto& target) { return target.*opt.option; });
+  // The global options say whether any target wants a category, so the game hooks can skip the rest.
+  sync_options.proxy      = sync_defaults.proxy;
+  sync_options.verify_ssl = sync_defaults.verify_ssl;
+  for (const auto& option : SyncOptions) {
+    sync_options.*option.option = std::ranges::any_of(sync_targets | std::views::values,
+                                                      [&](const auto& target) { return target.*option.option; });
   }
 
-  spdlog::debug("");
+  config_settings_url        = r.Get("config", "settings_url", DCSC::settings_url);
+  config_assets_url_override = r.Get("config", "assets_url_override", DCSC::assets_url_override);
 
-  // must explicitly include std::string typing here, or we get back char * which fails us!
-  auto disabled_banner_types_str = get_config_or_default<std::string>(config, parsed, "ui", "disabled_banner_types",
-                                                                      DCU::disabled_banner_types, write_log);
+  Shortcut::Load(config, parsed, hotkeys_extended, enable_experimental);
 
-  this->config_settings_url =
-      get_config_or_default<std::string>(config, parsed, "config", "settings_url", DCSC::settings_url, write_log);
-  this->config_assets_url_override = get_config_or_default<std::string>(config, parsed, "config", "assets_url_override",
-                                                                        DCSC::assets_url_override, write_log);
-
-  // Loading Screen / Transition Screen settings
-  this->loader_enabled =
-      get_config_or_default(config, parsed, "graphics", "loader_enabled", DCG::loader_enabled, write_log);
-  this->loader_transition =
-      get_config_or_default(config, parsed, "graphics", "loader_transition", DCG::loader_transition, write_log);
-  this->loader_transition_black =
-      get_config_or_default(config, parsed, "graphics", "loader_transition_black", DCG::loader_transition_black, write_log);
-  // If transition customization is disabled, force black mode (game's default background)
-  if (!this->loader_transition)
-    this->loader_transition_black = true;
-#ifdef _USE_ORIGINAL_BG
-  this->loader_transition_black = true;
-#endif
-  this->loader_image =
-      get_config_or_default<std::string>(config, parsed, "graphics", "loader_image", DCG::loader_image, write_log);
-  this->loader_logo_scale =
-      get_config_or_default(config, parsed, "graphics", "loader_logo_scale", DCG::loader_logo_scale, write_log);
-  this->galactic_anomaly_timer =
-      get_config_or_default(config, parsed, "graphics", "galactic_anomaly_timer", DCG::galactic_anomaly_timer, write_log);
-  this->loader_tip_enabled =
-      get_config_or_default(config, parsed, "graphics", "loader_tip_enabled", DCG::loader_tip_enabled, write_log);
-
-  std::vector<std::string> types = StrSplit(disabled_banner_types_str, ',');
-
-  spdlog::debug("");
-
-  std::string       bannerString;
-  std::stringstream message;
-  message << "Parsing banner strings";
-
-  spdlog::debug(message.str());
-
-  for (const auto& [key, value] : bannerTypes) {
-    auto upper_key = AsciiStrToUpper(key);
-
-    for (const std::string_view _type : types) {
-      auto stripped_type = StripLeadingAsciiWhitespace(_type);
-      auto upper_type    = AsciiStrToUpper(stripped_type);
-
-      if ("ALL" == upper_type || upper_key == upper_type) {
-        this->disabled_banner_types.emplace_back(value);
-        if (!bannerString.empty()) {
-          bannerString.append(", ");
-        }
-        bannerString.append(key);
-      }
-    }
+  if (!std::filesystem::exists(config_path)) {
+    spdlog::warn("Creating {} (default config file)", File::Config());
+    Save(parsed, File::Config(), false);
   }
-
-  message.str("");
-  message << "Final disabledbanner types: " << bannerString;
-  spdlog::debug(message.str());
-
-  parsed["ui"].as_table()->insert_or_assign("disabled_banner_types", bannerString);
-
-  // Parse notify_banner_types using the same bannerTypes lookup table
-  auto notify_banner_types_str = get_config_or_default<std::string>(config, parsed, "ui", "notify_banner_types",
-                                                                    DCU::notify_banner_types, write_log);
-
-  std::vector<std::string> notify_types = StrSplit(notify_banner_types_str, ',');
-  std::string              notifyString;
-
-  for (const auto& [key, value] : bannerTypes) {
-    auto upper_key = AsciiStrToUpper(key);
-    for (const std::string_view _type : notify_types) {
-      auto stripped_type = StripLeadingAsciiWhitespace(_type);
-      auto upper_type    = AsciiStrToUpper(stripped_type);
-      spdlog::warn("TEMP: Notify {} == {}", upper_type, upper_key);
-      if ("ALL" == upper_type || upper_key == upper_type) {
-        this->notify_banner_types.emplace_back(value);
-        if (!notifyString.empty())
-          notifyString.append(", ");
-        notifyString.append(key);
-      }
-    }
-  }
-
-  spdlog::debug("Final notify banner types: {}", notifyString);
-  parsed["ui"].as_table()->insert_or_assign("notify_banner_types", notifyString);
-
-  spdlog::debug("");
-
-  Shortcut::Load(config, parsed, this->hotkeys_extended, this->enable_experimental);
-
-  spdlog::debug("");
-
-  if (!std::filesystem::exists(File::MakePath(File::Config()))) {
-    message.str("");
-    message << "Creating " << File::Config() << " (default config file)";
-    spdlog::warn(message.str());
-
-    Config::Save(parsed, File::Config(), false);
-  }
-
-  message.str("");
-  message << "Creating " << File::Vars() << " (final config file)";
-  spdlog::info(message.str());
-
-  if (std::filesystem::exists(FILE_DEF_PARSED)) {
-    message.str("");
-    message << "Removing " << FILE_DEF_PARSED << " (old parsed file)";
-    spdlog::info(message.str());
-
-    std::filesystem::remove(FILE_DEF_PARSED);
-  }
-
-  Config::Save(parsed, File::Vars());
+  spdlog::info("Creating {} (final config file)", File::Vars());
+  Save(parsed, File::Vars(), true);
 
   std::cout << "\n\n-----------------------------\n\n"
-            << parsed << "\n\n-----------------------------\nVersion "
-
+            << parsed << "\n\n-----------------------------\n"
 #if VERSION_PATCH
             << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Patch "
-            << VERSION_PATCH << ")\n\n"
-            << "NOTE: Beta versions may have unexpected bugs and issues.\n\n"
+            << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
 #else
-            << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
-            << " (Release)"
+            << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << "\n\n";
 #endif
+}
 
-            << "\n\nPlease see https://github.com/STFC-Mod/mod for latest configuration help, examples and future "
-               "releases\n"
-            << "or visit the STFC Community Mod discord server at https://discord.gg/PrpHgs7Vjs\n\n";
+NotificationSound Config::NotificationSoundForToast(int toast_state) const
+{
+  switch (toast_state) {
+    case static_cast<int>(ToastState::Victory):
+      return alert_victory;
+    case static_cast<int>(ToastState::Defeat):
+      return alert_defeat;
+    case static_cast<int>(ToastState::ArmadaCreated):
+      return alert_armada_created;
+    case static_cast<int>(ToastState::ArmadaBattleWon):
+      return alert_armada_battle_won;
+    case static_cast<int>(ToastState::ArmadaBattleLost):
+      return alert_armada_battle_lost;
+    default:
+      return NotificationSound::None;
+  }
 }

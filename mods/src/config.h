@@ -1,18 +1,15 @@
 #pragma once
 
+#include "patches/notification_audio.h"
+
+// User settings: the values the patches read, loaded once from the settings TOML at startup. A few are toggled
+// at runtime by hotkeys; everything runs on the game thread except sync, which only reads.
+
 #include <array>
 #include <map>
 #include <string>
 #include <string_view>
 #include <vector>
-
-#include <toml++/toml.h>
-
-#include "patches/notification_audio.h"
-
-#if _WIN32
-#include <Windows.h>
-#endif
 
 class SyncConfig
 {
@@ -106,14 +103,10 @@ constexpr std::string to_string(const SyncConfig::Type type)
 }
 
 constexpr std::string operator+(const std::string& prefix, const SyncConfig::Type type)
-{
-  return prefix + to_string(type);
-}
+{ return prefix + to_string(type); }
 
 constexpr std::string operator+(const SyncConfig::Type type, const std::string& suffix)
-{
-  return to_string(type) + suffix;
-}
+{ return to_string(type) + suffix; }
 
 class SyncTargetConfig : public SyncConfig
 {
@@ -146,30 +139,21 @@ struct FleetLabelProfile {
   float            zoom_threshold;
 };
 
-// Part of UI Scale
-void ApplyUiShipScaleToLoadedShips(float old_multiplier, float new_multiplier);
-
 class Config final
 {
 public:
+  bool installPinnedShipClickToggle;
+  bool installInteriorZoomHooks;
+  bool show_player_title;
+  float interior_zoom_scale;
+  bool only_show_first_popup = false;
+  [[nodiscard]] NotificationSound NotificationSoundForToast(int toast_state) const;
   Config();
 
   [[nodiscard]] static Config& Get();
-  [[nodiscard]] static float   GetDPI();
-  static float                 RefreshDPI();
-
-#ifdef _WIN32
-  [[nodiscard]] static HWND WindowHandle();
-#endif
-
-  static void Save(const toml::table& config, std::string_view filename, bool apply_warning = true);
-  void        Load();
-  void        AdjustUiScale(bool scaleUp);
-  void        AdjustUiShipScale(bool scaleUp);
-  void        AdjustUiViewerScale(bool scaleUp);
+  void                         Load();
 
   [[nodiscard]] MissionHudVisibility MissionHudButtonVisibility(std::string_view button_name) const;
-  [[nodiscard]] NotificationSound    NotificationSoundForToast(int toast_state) const;
 
   // Disallow copying/moving to enforce singleton
   Config(const Config&)            = delete;
@@ -182,16 +166,20 @@ public:
   float             ui_scale_ship;
   float             ui_scale_viewer;
   float             zoom;
-  float             haven_zoom;
-  float             interior_zoom_scale;
   float             fr_scale;
   FleetLabelProfile zoom_label_player;
   FleetLabelProfile zoom_label_non_player;
+  bool installHavenZoomHooks = true;
+  bool installHavenHistoryHooks = true;
+  bool installAllianceGamesStoreHooks = true;
+  float haven_zoom = 4000.0f;
+  bool reverse_haven_history = true;
+
   bool              allow_cursor;
   bool              free_resize;
-  bool              adjust_scale_res;
 
-  bool  use_out_of_dock_power;
+  bool use_out_of_dock_power;
+  // TODO: read (with enable_experimental) but nothing applies it.
   float system_pan_momentum;
   float system_pan_momentum_falloff;
   bool disable_target_camera_lock;
@@ -214,35 +202,39 @@ public:
   float system_zoom_preset_3;
   float system_zoom_preset_4;
   float system_zoom_preset_5;
+  // TODO: read but nothing applies it.
   float transition_time;
 
+  // TODO: the F11 borderless toggle needs a SetWindowLongW detour that was never installed, so this does nothing.
   bool             borderless_fullscreen;
   std::vector<int> disabled_banner_types;
   std::vector<int> notify_banner_types;
 
-  int                      extend_chest_purchase_max;
-  int                      extend_donation_max;
-  bool                     extend_donation_slider;
-  bool                     disable_move_keys;
-  bool                     disable_preview_locate;
-  bool                     disable_preview_recall;
-  bool                     disable_escape_exit;
-  int                      disable_escape_exit_timer;
-  float                    default_chat_width;
-  bool                     auto_open_chat;
-  bool                     disable_galaxy_chat;
-  bool                     disable_veil_chat;
-  bool                     show_player_title;
+  int  extend_chest_purchase_max;
+  int  extend_donation_max;
+  bool extend_donation_slider;
+  bool disable_move_keys;
+  bool disable_preview_locate;
+  bool disable_preview_recall;
+  bool disable_escape_exit;
+  int  disable_escape_exit_timer;
+
+  float default_chat_width;
+  bool  auto_open_chat;
+
+  bool disable_galaxy_chat;
+  bool disable_veil_chat;
+  // TODO: both are read but have no effect; disable_first_popup was switched off in misc.cc.
   bool                     disable_first_popup;
   bool                     disable_toast_banners;
+  bool                     disable_all_audio_events = false;
+  NotificationSound        alert_victory = NotificationSound::None;
+  NotificationSound        alert_defeat = NotificationSound::None;
+  NotificationSound        alert_armada_created = NotificationSound::None;
+  NotificationSound        alert_armada_battle_won = NotificationSound::None;
+  NotificationSound        alert_armada_battle_lost = NotificationSound::None;
   bool                     trace_audio_events;
-  bool                     disable_all_audio_events;
   std::vector<std::string> disabled_audio_events;
-  NotificationSound alert_victory            = NotificationSound::None;
-  NotificationSound alert_defeat             = NotificationSound::None;
-  NotificationSound alert_armada_created     = NotificationSound::None;
-  NotificationSound alert_armada_battle_won  = NotificationSound::None;
-  NotificationSound alert_armada_battle_lost = NotificationSound::None;
   bool                     auto_open_bulk_claim_flyout;
   bool                     auto_confirm_ft_upgrade;
   bool                     forbidden_tech_ship_name;
@@ -269,11 +261,8 @@ public:
   bool focus_search;
   bool format_cargo_values;
   bool officer_sort;
-  bool reverse_haven_history;
   bool arrow_keys_to_select_ship;
   bool dock_syncmanagement;
-
-  bool only_show_first_popup;
 
   bool show_cargo_default;
   bool show_player_cargo;
@@ -294,8 +283,6 @@ public:
 
   bool installUiScaleHooks;
   bool installZoomHooks;
-  bool installHavenZoomHooks;
-  bool installInteriorZoomHooks;
   bool installBuffFixHooks;
   bool installToastBannerHooks;
   bool installPanHooks;
@@ -351,13 +338,4 @@ public:
 
   // Fleet management dock ship sort: pin configured ships to the front
   bool installPinnedShipSortHooks;
-
-  // Fleet management dock: SHIFT+click a ship tile to pin/unpin it
-  bool installPinnedShipClickToggle;
-
-  // Haven help-history list ordering
-  bool installHavenHistoryHooks;
-
-  // Native Alliance Games store research, currency and purchase refresh
-  bool installAllianceGamesStoreHooks;
 };

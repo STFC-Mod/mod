@@ -1,282 +1,195 @@
 #include "file.h"
-#include "windowtitle.h"
 
-#if __APPLE__
+#include <spdlog/spdlog.h>
+
+#include <fstream>
+#include <vector>
+
+#if _WIN32
+#include <Windows.h>
+#include <shellapi.h>
+#elif __APPLE__
 #include <crt_externs.h>
 #endif
 
-#if _WIN32
-std::string ConvertWStringToString(const std::wstring& wstr)
-{
-  if (wstr.empty())
-    return std::string();
-
-  int         sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), nullptr, 0, nullptr, nullptr);
-  std::string str(sizeNeeded, 0);
-  WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &str[0], sizeNeeded, nullptr, nullptr);
-
-  return str;
-}
-#endif
- 
-std::filesystem::path File::Path()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return configPath;
-}
-
-const char* File::Default()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return cacheNameDefault.c_str();
-}
-
-const char* File::Config()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return cacheNameConfig.c_str();
-}
-
-const char* File::Vars()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return cacheNameVar.c_str();
-}
-
-const char* File::Log()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return cacheNameLog.c_str();
-}
-
-const char* File::Battles()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  return cacheNameBattles.c_str();
-}
-
-std::wstring File::Title()
-{
-  if (!File::initialized) {
-    File::Init();
-  }
-
-  if (cacheNameTitle.empty()) {
-    std::wstring title = WindowTitle::Get();
-
-    if (File::override && !title.empty()) {
-      cacheNameTitle = L"[" + configPath.filename().replace_extension().wstring() + L"] " + title;
-    }
-  }
-
-  return cacheNameTitle;
-}
-
-#if !_WIN32
-std::u8string File::MakePath(std::string_view filename, bool create_dir, bool old_path)
-{
-  std::filesystem::path config_dir;
-  if (File::override) {
-    config_dir = configPath.parent_path();
-  } else {
-    const std::filesystem::path libraryPath =
-        fm::FolderManager::pathForDirectory(fm::NSLibraryDirectory, fm::NSUserDomainMask);
-    const auto packageName = old_path ? "com.tashcan.startrekpatch" : "com.stfcmod.startrekpatch";
-    config_dir             = libraryPath / "Preferences" / packageName;
-  }
-
-  if (create_dir) {
-    std::error_code ec;
-    std::filesystem::create_directories(config_dir, ec);
-  }
-  std::filesystem::path config_path = config_dir / filename;
-  return config_path.u8string();
-}
-#else
-std::string_view File::MakePath(std::string_view filename, bool create_dir, bool old_path)
-{
-  return filename;
-}
+#if __APPLE__
+std::filesystem::path MacLibraryDirectory(); // file_macos.mm
 #endif
 
-void File::Init()
+namespace
 {
-  if (!File::initialized) {
-    File::override = false;
+constexpr std::string_view kDefaultConfig  = "community_patch_settings.toml";
+constexpr std::string_view kDefaultVars    = "community_patch_runtime.vars";
+constexpr std::string_view kDefaultLog     = "community_patch.log";
+constexpr std::string_view kDefaultBattles = "patch_battlelogs_sent.json";
 
-    /*******************************
-     *
-     * Set the default config file name
-     *
-     *******************************/
+// Names used by older releases.
+constexpr std::string_view kLegacyVars   = "community_path_runtime.vars";
+constexpr std::string_view kLegacyParsed = "community_patch_settings_parsed.toml";
 
-    cacheNameDefault = std::filesystem::path(FILE_DEF_CONFIG).string();
-
-    /*******************************
-     *
-     * Check for command line argument
-     * override and set config path
-     *
-     *******************************/
-#if _WIN32
-    // Get the command line
-    LPCWSTR cmdLine = GetCommandLineW();
-
-    // Parse command line into individual arguments
-    int     argc;
-    LPWSTR* argv = CommandLineToArgvW(cmdLine, &argc);
-
-    // If we have some arguments, lets see what we got
-    std::wstring argValue;
-    if (argv != nullptr) {
-      // Output the arguments (for example purposes, we'll just print them)
-      for (int i = 0; i < argc - 1; ++i) {
-        if (std::wstring(argv[i]) == L"-debug") {
-          File::debug = true;
-        }
-
-        if (std::wstring(argv[i]) == L"-trace") {
-          File::trace = true;
-        }
-
-        if (std::wstring(argv[i]) == L"-ccm" && i + 1 < argc) {
-          // Found "-ccm", so take the next argument as the value
-          argValue = argv[i + 1];
-          break;
-        }
-      }
-
-      if (!argValue.empty()) {
-        File::override = true;
-        configPath     = std::filesystem::path(ConvertWStringToString(argValue));
-      }
-
-      // Clean up
-      LocalFree(argv);
-    }
-#elif __APPLE__
-    {
-      int    argc = *_NSGetArgc();
-      char** argv = *_NSGetArgv();
-      for (int i = 0; i < argc - 1; ++i) {
-        if (std::string_view(argv[i]) == "-debug") {
-          File::debug = true;
-        }
-        if (std::string_view(argv[i]) == "-trace") {
-          File::trace = true;
-        }
-        if (std::string_view(argv[i]) == "-ccm" && i + 1 < argc) {
-          configPath     = std::filesystem::path(argv[i + 1]);
-          File::override = true;
-          break;
-        }
-      }
-    }
-#endif
-
-    if (configPath.empty()) {
-      File::override = false;
-      configPath     = std::filesystem::path(cacheNameDefault);
-    }
-
-    /*******************************
-     *
-     * Set the battle log file name
-     *
-     *******************************/
-    if (File::override) {
-      cacheNameBattles = configPath.replace_extension(FILE_EXT_JSON).string();
-    } else {
-      cacheNameBattles = std::string(FILE_DEF_BL);
-    }
-
-    /*******************************
-     *
-     * Set the log file name
-     *
-     *******************************/
-    if (File::override) {
-      cacheNameLog = configPath.replace_extension(FILE_EXT_LOG).string();
-    } else {
-      cacheNameLog = std::string(FILE_DEF_LOG);
-    }
-
-    /*******************************
-     *
-     * Set the vars file name
-     *
-     *******************************/
-
-    if (File::override) {
-      cacheNameVar = configPath.replace_extension(FILE_EXT_VARS).string();
-    } else {
-      cacheNameVar = std::string(FILE_DEF_VARS);
-    }
-
-    /*******************************
-     *
-     * Set the config file name
-     *
-     *******************************/
-    if (File::override) {
-      cacheNameConfig = configPath.replace_extension(FILE_EXT_TOML).string();
-    } else {
-      cacheNameConfig = std::string(FILE_DEF_CONFIG);
-    }
-
-    File::initialized = true;
-  }
-}
-
-bool File::hasCustomNames()
-{
-  return File::override;
-}
-
-bool File::hasDebug()
-{
-  return File::debug;
-}
-
-bool File::hasTrace()
-{
-  return File::trace;
-}
-
+std::string           config_name, vars_name, log_name, battles_name, profile;
+const std::string     default_config{kDefaultConfig};
+std::filesystem::path profile_path;
 #ifdef _MODDBG
-bool File::debug = true;
+bool debug = true;
 #else
-bool File::debug = false;
+bool debug = false;
 #endif
+bool trace = false;
 
-bool File::trace       = false;
-bool File::override    = false;
-bool File::initialized = false;
+// std::filesystem::path(std::string) uses the ANSI code page on Windows; the mod's strings are UTF-8.
+std::filesystem::path FromUtf8(std::string_view text)
+{ return std::u8string(text.begin(), text.end()); }
 
-std::wstring File::cacheNameTitle = L"";
+std::string ToUtf8(const std::filesystem::path& path)
+{
+  const auto text = path.u8string();
+  return {text.begin(), text.end()};
+}
 
-std::string File::cacheNameBattles = "";
-std::string File::cacheNameLog     = "";
-std::string File::cacheNameVar     = "";
-std::string File::cacheNameConfig  = "";
-std::string File::cacheNameDefault = "";
+std::vector<std::string> Arguments()
+{
+  std::vector<std::string> args;
+#if _WIN32
+  int  argc = 0;
+  auto argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+  if (!argv)
+    return args;
+  for (int i = 0; i < argc; ++i) {
+    const auto  size = WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, nullptr, 0, nullptr, nullptr);
+    std::string arg(size > 0 ? size - 1 : 0, '\0');
+    WideCharToMultiByte(CP_UTF8, 0, argv[i], -1, arg.data(), size, nullptr, nullptr);
+    args.push_back(std::move(arg));
+  }
+  LocalFree(argv);
+#elif __APPLE__
+  const int argc = *_NSGetArgc();
+  char**    argv = *_NSGetArgv();
+  args.assign(argv, argv + argc);
+#endif
+  return args;
+}
 
-std::filesystem::path File::configPath = "";
+std::filesystem::path Directory(bool legacy = false)
+{
+  if (!profile_path.empty())
+    return profile_path.parent_path();
+#if __APPLE__
+  return MacLibraryDirectory() / "Preferences" / (legacy ? "com.tashcan.startrekpatch" : "com.stfcmod.startrekpatch");
+#else
+  (void)legacy;
+  return {};
+#endif
+}
+
+// Settings used to live in com.tashcan.startrekpatch. Move that folder over once and leave a symlink and a note
+// behind for anyone who still looks there.
+void MigrateMacPreferences()
+{
+#if __APPLE__
+  namespace fs         = std::filesystem;
+  const auto file_path = File::Path(config_name);
+  const auto new_dir   = file_path.parent_path();
+  if (fs::exists(file_path) || fs::exists(new_dir))
+    return;
+
+  const auto old_dir  = Directory(true);
+  const auto old_path = old_dir / config_name;
+  if (!fs::is_regular_file(old_path))
+    return;
+
+  spdlog::info("mac config migration: moving {} to {}", ToUtf8(old_dir), ToUtf8(new_dir));
+  try {
+    fs::rename(old_dir, new_dir);
+    fs::create_directories(old_dir);
+    fs::create_symlink(file_path, old_path);
+
+    std::ofstream info(old_dir / "update-info.txt");
+    info << "Your config has been moved!\n\n";
+    info << "You can now find your config at " << file_path << "\n\n";
+    info << "A symlink has been placed for your convenience, but it is generally recommended, that you use the new "
+            "path and delete this directory going forward.";
+  } catch (const std::exception& error) {
+    spdlog::warn("mac config migration failed: {}", error.what());
+  }
+#endif
+}
+} // namespace
+
+namespace File
+{
+void Init()
+{
+  const auto args = Arguments();
+  for (size_t i = 1; i < args.size(); ++i) {
+    if (args[i] == "-debug")
+      debug = true;
+    else if (args[i] == "-trace")
+      trace = true;
+    else if (args[i] == "-ccm" && i + 1 < args.size())
+      profile_path = FromUtf8(args[++i]);
+  }
+
+  if (profile_path.empty()) {
+    config_name  = kDefaultConfig;
+    vars_name    = kDefaultVars;
+    log_name     = kDefaultLog;
+    battles_name = kDefaultBattles;
+    return;
+  }
+
+  profile             = ToUtf8(profile_path.stem());
+  auto with_extension = [](const char* extension) {
+    return ToUtf8(std::filesystem::path(profile_path).replace_extension(extension));
+  };
+  config_name  = with_extension(".toml");
+  vars_name    = with_extension(".vars");
+  log_name     = with_extension(".log");
+  battles_name = with_extension(".json");
+}
+
+const std::string& Config()
+{ return config_name; }
+
+const std::string& Vars()
+{ return vars_name; }
+
+const std::string& Log()
+{ return log_name; }
+
+const std::string& Battles()
+{ return battles_name; }
+
+const std::string& DefaultConfig()
+{ return default_config; }
+
+const std::string& Profile()
+{ return profile; }
+
+bool Debug()
+{ return debug; }
+
+bool Trace()
+{ return trace; }
+
+std::filesystem::path Path(std::string_view name, bool create_dir)
+{
+  const auto dir = Directory();
+  if (create_dir && !dir.empty()) {
+    std::error_code ignored;
+    std::filesystem::create_directories(dir, ignored);
+  }
+  // A -ccm profile path is already complete; joining an absolute path replaces the directory.
+  return dir / FromUtf8(name).filename();
+}
+
+void MigrateLegacyFiles()
+{
+  MigrateMacPreferences();
+
+  std::error_code ignored;
+  std::filesystem::remove(Path(kLegacyVars), ignored);
+  if (std::filesystem::remove(Path(kLegacyParsed), ignored))
+    spdlog::info("Removed {} (old parsed file)", kLegacyParsed);
+}
+} // namespace File

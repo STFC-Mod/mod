@@ -1,5 +1,9 @@
 #include "config.h"
 
+#if _WIN32
+#include <Windows.h>
+#endif
+
 #include "prime/fleet.h"
 #include "prime/ui.h"
 #include "prime/navigation.h"

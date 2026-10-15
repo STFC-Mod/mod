@@ -1,5 +1,6 @@
 #include <filesystem>
 #include "patches.h"
+#include "config.h"
 #include "file.h"
 #include "version.h"
 
@@ -82,7 +83,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
 
   std::string rotation_error;
   try {
-    const auto backup = [](int index) { return std::filesystem::path(std::string(File::Log()) + "." + std::to_string(index)); };
+    const auto backup = [](int index) { return std::filesystem::path(File::Log() + "." + std::to_string(index)); };
     std::filesystem::remove(backup(5));
     for (int index = 4; index >= 1; --index)
       if (std::filesystem::exists(backup(index)))
@@ -99,7 +100,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
   spdlog::set_default_logger(file_logger);
 
   const auto log_level =
-      File::hasTrace() ? spdlog::level::trace : (File::hasDebug() ? spdlog::level::debug : spdlog::level::info);
+      File::Trace() ? spdlog::level::trace : (File::Debug() ? spdlog::level::debug : spdlog::level::info);
 
   spdlog::set_level(log_level);
   spdlog::flush_on(log_level);
@@ -117,7 +118,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
   spdlog::info("Initializing STFC Community Mod ({})", VER_PRODUCT_VERSION_STR);
 #endif
   spdlog::info("");
-  if (File::hasCustomNames()) {
+  if (!File::Profile().empty()) {
     spdlog::info("Using custom names");
   } else {
     spdlog::info("Using standard names");

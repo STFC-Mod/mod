@@ -1,16 +1,24 @@
+// UI, object viewer, and system ship scaling, and the hotkeys that adjust them at runtime.
+
+#include "config.h"
 #include "patches/object_tracker.h"
-#include <config.h>
+#include "patches/patches.h"
+#include "str_utils.h"
 
-#include <il2cpp/il2cpp.h>
-
-#include <prime/unity.h>
 #include <prime/fleet.h>
 #include <prime/ui.h>
+#include <prime/unity.h>
 
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
-#include <str_utils.h>
+#include <algorithm>
+#include <cmath>
+
+#if _WIN32
+#include <Windows.h>
+#endif
 
 namespace
 {
@@ -20,33 +28,20 @@ float ShipScaleMultiplier()
   return multiplier > 0.0f ? multiplier : 1.0f;
 }
 
-Transform* GetGameObjectTransform(GameObject* game_object)
+// Ships already in the system keep the scale they were loaded with, so rescale them by the change.
+void RescaleLoadedShips(float old_multiplier, float new_multiplier)
 {
-  return game_object ? game_object->Get<"transform", Transform*>() : nullptr;
-}
-} // namespace
-
-void ApplyUiShipScaleToLoadedShips(float old_multiplier, float new_multiplier)
-{
-  if (old_multiplier <= 0.0f || new_multiplier <= 0.0f) {
+  if (old_multiplier <= 0.0f || new_multiplier <= 0.0f)
     return;
-  }
 
   const auto ratio = new_multiplier / old_multiplier;
-
   for (auto* selector : ObjectFinder<FleetMeshSelector>::GetAll()) {
-    if (selector == nullptr) {
+    auto* object    = selector ? selector->LoadedObject() : nullptr;
+    auto* transform = object ? object->Get<"transform", Transform*>() : nullptr;
+    if (!transform)
       continue;
-    }
-
-    auto* transform = GetGameObjectTransform(selector->LoadedObject());
-    if (transform == nullptr) {
-      continue;
-    }
-
-    auto    local_scale = transform->localScale();
-    Vector3 adjusted_scale{local_scale.x * ratio, local_scale.y * ratio, local_scale.z * ratio};
-    transform->SetLocalScale(adjusted_scale);
+    const auto scale = transform->localScale();
+    transform->SetLocalScale({scale.x * ratio, scale.y * ratio, scale.z * ratio});
   }
 }
 
@@ -54,9 +49,8 @@ bool SystemViewShip_TryGetShipAssetBundleResource_Hook(auto original, void* _thi
                                                        void** asset_bundle_resource)
 {
   const auto result = original(_this, scale, asset_bundle_resource);
-  if (result && scale != nullptr) {
+  if (result && scale)
     *scale *= ShipScaleMultiplier();
-  }
   return result;
 }
 
@@ -64,50 +58,70 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 {
   original(_this);
 
-  #if _WIN32
-  static auto cursor = LoadCursor(NULL, IDC_ARROW);
-  if (!Config::Get().allow_cursor) {
+#if _WIN32
+  static auto cursor = LoadCursor(nullptr, IDC_ARROW);
+  if (!Config::Get().allow_cursor)
     SetCursor(cursor);
-  }
-  #endif
+#endif
 
-  if (Config::Get().ui_scale != 0.0f) {
-    static auto get_height_method = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_height()");
-    static auto get_width_method  = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_width()");
+  const auto ui_scale = Config::Get().ui_scale;
+  if (ui_scale == 0.0f)
+    return;
 
-    static auto ref_height = 1080;
-    static auto ref_width  = 1920;
-
-    auto scr_height = (float)get_height_method();
-    auto scr_width  = (float)get_width_method();
-    auto dpi        = Config::GetDPI();
-
-    auto adjustedFactor = scr_height / (float)ref_height;
-
-    if (!Config::Get().adjust_scale_res) {
-      adjustedFactor = 1.0f;
-    }
-
-    auto n = (Config::Get().ui_scale * adjustedFactor * dpi);
-    if (isnan(n)) {
-      n = 1.0f;
-    }
-    n = std::clamp(n, 0.1f, 5.0f);
-
-    // Property setter, not the managed SetScaleFactor method; the scaler applies it on its next Update.
-    if (auto* scaler = _this->canvasRootScaler())
-      scaler->set_scaleFactor(n);
-  }
+  auto factor = ui_scale * WindowDpiScale();
+  factor      = std::isnan(factor) ? 1.0f : std::clamp(factor, 0.1f, 5.0f);
+  // Property setter, not the managed SetScaleFactor method; the scaler applies it on its next Update.
+  if (auto* scaler = _this->canvasRootScaler())
+    scaler->set_scaleFactor(factor);
 }
 
 void CanvasController_Show(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
 {
-  const auto ui_scale_viewer = Config::Get().ui_scale_viewer;
-  if (_this && ui_scale_viewer != 0.0f && to_string(_this->name()) == "ObjectViewerTemplate_Canvas") {
+  const auto viewer_scale = Config::Get().ui_scale_viewer;
+  if (_this && viewer_scale != 0.0f && to_string(_this->name()) == "ObjectViewerTemplate_Canvas") {
     if (auto* transform = _this->transform())
-      transform->SetLocalScale(Vector3{ui_scale_viewer, ui_scale_viewer, ui_scale_viewer});
+      transform->SetLocalScale({viewer_scale, viewer_scale, viewer_scale});
   }
   return original(_this, desiredEntryPoint, instant);
+}
+} // namespace
+
+void AdjustUiScale(bool up)
+{
+  auto& config = Config::Get();
+  if (config.ui_scale == 0.0f)
+    return;
+
+  const auto old_scale = config.ui_scale;
+  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step;
+  config.ui_scale      = std::clamp(new_scale, 0.1f, 2.0f);
+  spdlog::info("UI has been scaled {}, was {}, now {} (unclamped {}) @ {} DPI Scaling", up ? "UP" : "DOWN", old_scale,
+               config.ui_scale, new_scale, WindowDpiScale(true));
+}
+
+void AdjustUiViewerScale(bool up)
+{
+  auto& config = Config::Get();
+  if (config.ui_scale_viewer == 0.0f)
+    return;
+
+  // Viewers change in quarter steps; a full step is too coarse at their size.
+  const auto old_scale   = config.ui_scale_viewer;
+  const auto new_scale   = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step * 0.25f;
+  config.ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
+  spdlog::info("UI Viewer has been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
+               config.ui_scale_viewer, new_scale);
+}
+
+void AdjustUiShipScale(bool up)
+{
+  auto&      config    = Config::Get();
+  const auto old_scale = config.ui_scale_ship;
+  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step;
+  config.ui_scale_ship = std::clamp(new_scale, 0.1f, 20.0f);
+  spdlog::info("System ship models have been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
+               config.ui_scale_ship, new_scale);
+  RescaleLoadedShips(old_scale, config.ui_scale_ship);
 }
 
 void InstallUiScaleHooks()
@@ -123,5 +137,5 @@ void InstallUiScaleHooks()
   if (auto method = CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}))
     SPUD_STATIC_DETOUR(method.Pointer(), CanvasController_Show);
 
-  Config::RefreshDPI();
+  WindowDpiScale(true);
 }

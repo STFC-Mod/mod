@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -61,8 +62,8 @@ void PersistPinnedShips(const std::vector<std::string>& names)
 
   toml::table table;
   try {
-    if (std::filesystem::exists(File::Config())) {
-      table = toml::parse_file(File::Config());
+    if (std::filesystem::exists(File::Path(File::Config()))) {
+      table = toml::parse_file(File::Path(File::Config()).string());
     }
   } catch (const std::exception& error) {
     spdlog::warn("[PinnedShipClick] could not read '{}' to persist pinned ships: {}", File::Config(), error.what());
@@ -76,7 +77,11 @@ void PersistPinnedShips(const std::vector<std::string>& names)
     ui->insert_or_assign("pinned_ships", joined);
   }
 
-  Config::Save(table, File::Config(), false);
+  std::ofstream file(File::Path(File::Config(), true));
+  file << table;
+  file.close();
+  if (!file)
+    spdlog::warn("[PinnedShipClick] could not persist pinned ships to '{}'", File::Config());
 }
 
 const MethodInfo* FindMethodInHierarchy(Il2CppClass* cls, const char* name, int argc)

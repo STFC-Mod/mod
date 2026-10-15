@@ -1104,17 +1104,17 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       } else if (Shortcut::IsDown(GameFunction::ShowSettings)) {
         return GotoSection(SectionID::GameSettings);
       } else if (Shortcut::IsPressed(GameFunction::UiScaleUp)) {
-        config->AdjustUiScale(true);
+        AdjustUiScale(true);
       } else if (Shortcut::IsPressed(GameFunction::UiScaleDown)) {
-        config->AdjustUiScale(false);
+        AdjustUiScale(false);
       } else if (Shortcut::IsPressed(GameFunction::UiShipScaleUp)) {
-        config->AdjustUiShipScale(true);
+        AdjustUiShipScale(true);
       } else if (Shortcut::IsPressed(GameFunction::UiShipScaleDown)) {
-        config->AdjustUiShipScale(false);
+        AdjustUiShipScale(false);
       } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleUp)) {
-        config->AdjustUiViewerScale(true);
+        AdjustUiViewerScale(true);
       } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleDown)) {
-        config->AdjustUiViewerScale(false);
+        AdjustUiViewerScale(false);
       } else if (Shortcut::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
         CycleAutoConfirmInstantWarp(*config);
       } else if (Shortcut::IsDown(GameFunction::TogglePreviewLocate)) {
