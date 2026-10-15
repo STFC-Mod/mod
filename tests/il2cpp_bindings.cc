@@ -1,7 +1,10 @@
 // Typed bindings against a controlled managed runtime: lookup, signature checks, native calls,
 // fields, dispatch, and failure reporting.
 #include "il2cpp_test_api.h"
+#include <unity/input.h>
+#include <unity/ui.h>
 
+#include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
@@ -15,6 +18,43 @@
 
 namespace
 {
+void Require(bool condition, const char* message);
+
+int                                                        input_frame = 0, held_reads = 0, down_reads = 0;
+bool                                                       any_held = false, any_down = false;
+std::array<bool, static_cast<size_t>(unity::KeyCode::Max)> held_keys{}, down_keys{};
+
+void KeyboardSnapshot()
+{
+  using namespace unity;
+  Key::Poll();
+  Require(!Key::Pressed(KeyCode::A) && !Key::Down(KeyCode::A), "idle keyboard reads false");
+  Require(held_reads == 0 && down_reads == 0, "idle keyboard avoids key queries");
+
+  ++input_frame;
+  any_held = any_down                        = true;
+  held_keys[static_cast<size_t>(KeyCode::A)] = true;
+  down_keys[static_cast<size_t>(KeyCode::A)] = true;
+  Key::Poll();
+  for (int i = 0; i < 100; ++i) {
+    Key::Poll();
+    Require(Key::Pressed(KeyCode::A) && Key::Down(KeyCode::A), "held and down snapshot");
+    Require(!Key::Pressed(KeyCode::B) && !Key::Down(KeyCode::B), "negative key queries are cached too");
+  }
+  Require(held_reads == 2 && down_reads == 2, "each key is queried once per state per frame");
+  ++input_frame;
+  held_keys[static_cast<size_t>(KeyCode::A)] = false;
+  down_keys[static_cast<size_t>(KeyCode::A)] = false;
+  Key::Poll();
+  Require(!Key::Pressed(KeyCode::A) && !Key::Down(KeyCode::A), "new frames refresh the snapshot");
+  Require(held_reads == 3 && down_reads == 3, "new frame queries keys again");
+  ++input_frame;
+  any_held = any_down = false;
+  Key::Poll();
+  Require(!Key::Pressed(KeyCode::A) && !Key::Down(KeyCode::A), "return to idle clears held keys");
+  Require(held_reads == 3 && down_reads == 3, "idle frame stays query-free");
+}
+
 struct FakeClass {
   // MSVC cannot embed Il2CppClass because its vtable is a zero-length trailing array.
   std::unique_ptr<Il2CppClass>   metadata = std::make_unique<Il2CppClass>();
@@ -123,6 +163,63 @@ FakeClass& list_b_class  = Define("Game", "ListB", IL2CPP_TYPE_CLASS, &object_cl
 FakeClass& delegate_base = Define("System", "Delegate", IL2CPP_TYPE_CLASS, &object_class);
 FakeClass& action_class  = Define("System", "Action", IL2CPP_TYPE_CLASS, &delegate_base);
 FakeClass& intptr_class  = Define("System", "IntPtr", IL2CPP_TYPE_I, nullptr, sizeof(void*));
+
+FakeClass& event_system_class = Define("UnityEngine.EventSystems", "EventSystem", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& game_object_class  = Define("UnityEngine", "GameObject", IL2CPP_TYPE_CLASS, &object_class);
+FakeClass& input_field_class  = Define("TMPro", "TMP_InputField", IL2CPP_TYPE_CLASS, &object_class);
+
+unity::EventSystem    event_system{};
+unity::GameObject     selected_object{};
+unity::TMP_InputField input_field{};
+unity::GameObject*    selected         = &selected_object;
+bool                  has_event_system = true, has_input_field = true, redirect_selection = false;
+int                   event_system_reads = 0;
+
+unity::EventSystem* EventSystem_get_current(const MethodInfo*)
+{
+  ++event_system_reads;
+  return has_event_system ? &event_system : nullptr;
+}
+unity::GameObject* EventSystem_get_selected(unity::EventSystem*, const MethodInfo*)
+{ return selected; }
+void EventSystem_set_selected(unity::EventSystem*, unity::GameObject* value, const MethodInfo*)
+{ selected = redirect_selection ? &selected_object : value; }
+unity::TMP_InputField* GameObject_get_component(unity::GameObject*, Il2CppObject*, const MethodInfo*)
+{ return has_input_field ? &input_field : nullptr; }
+bool InputField_get_focused(unity::TMP_InputField*, const MethodInfo*)
+{ return true; }
+
+void InputFocus()
+{
+  using namespace unity;
+  ++input_frame;
+  Key::Poll();
+  Require(Key::IsInputFocused(), "selected text field has focus");
+  const int reads = event_system_reads;
+  Require(Key::IsInputFocused() && event_system_reads == reads, "focus is cached within a frame");
+  Key::ClearInputFocus();
+  Require(event_system_reads == reads + 1, "clearing focus reads the event system once");
+  Require(selected == nullptr && !Key::IsInputFocused(), "clearing selection invalidates focus within the frame");
+
+  selected           = &selected_object;
+  redirect_selection = true;
+  Key::ClearInputFocus();
+  Require(Key::IsInputFocused(), "selection callbacks can focus another field when focus is cleared");
+  redirect_selection = false;
+
+  has_input_field = false;
+  ++input_frame;
+  Key::Poll();
+  Require(!Key::IsInputFocused(), "a selected object without a text field is not text focus");
+  Key::ClearInputFocus();
+  Require(selected == &selected_object, "clearing text focus preserves a selected non-text object");
+
+  has_event_system = false;
+  ++input_frame;
+  Key::Poll();
+  Require(!Key::IsInputFocused(), "no event system has no text focus");
+  Key::ClearInputFocus();
+}
 
 TestObject     base_object{}, derived_object{}, other_object{}, list_a{}, list_b{}, allocated{};
 Il2CppObject   string_object{}, type_object{};
@@ -256,6 +353,23 @@ void BuildRuntime()
   AddMethod(base_class, "OnEvent", reinterpret_cast<void*>(&NativeTarget), T(void_class), {},
             METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
 
+  auto& current = AddMethod(event_system_class, "get_current", reinterpret_cast<void*>(&EventSystem_get_current),
+                            T(event_system_class), {}, METHOD_ATTRIBUTE_PUBLIC | METHOD_ATTRIBUTE_STATIC);
+  AddProperty(event_system_class, "current", &current);
+  auto& selected_getter = AddMethod(event_system_class, "get_currentSelectedGameObject",
+                                    reinterpret_cast<void*>(&EventSystem_get_selected), T(game_object_class), {});
+  AddProperty(event_system_class, "currentSelectedGameObject", &selected_getter);
+  AddMethod(event_system_class, "SetSelectedGameObject", reinterpret_cast<void*>(&EventSystem_set_selected),
+            T(void_class), {T(game_object_class)});
+  AddMethod(game_object_class, "GetComponent", reinterpret_cast<void*>(&GameObject_get_component), T(input_field_class),
+            {T(type_class)});
+  auto& focused = AddMethod(input_field_class, "get_isFocused", reinterpret_cast<void*>(&InputField_get_focused),
+                            T(bool_class), {});
+  AddProperty(input_field_class, "isFocused", &focused);
+  event_system.klass    = &event_system_class.klass;
+  selected_object.klass = &game_object_class.klass;
+  input_field.klass     = &input_field_class.klass;
+
   inner_class.klass.declaringType = &outer_class.klass;
   outer_class.nested.push_back(&inner_class.klass);
 
@@ -371,9 +485,30 @@ API(const Il2CppType*, il2cpp_class_get_type, (Il2CppClass * klass))
 END_API
 API(Il2CppMethodPointer, il2cpp_resolve_icall, (const char* name))
 {
-  // The only internal call the fake runtime has.
   static constexpr auto answer = +[]() -> int32_t { return 42; };
-  return std::string_view(name) == "Test::Answer()" ? reinterpret_cast<Il2CppMethodPointer>(answer) : nullptr;
+  static constexpr auto frame  = +[]() -> int32_t { return input_frame; };
+  static constexpr auto held   = +[]() { return any_held; };
+  static constexpr auto down   = +[]() { return any_down; };
+  static constexpr auto key    = +[](unity::KeyCode key) {
+    ++held_reads;
+    return held_keys[static_cast<size_t>(key)];
+  };
+  static constexpr auto key_down = +[](unity::KeyCode key) {
+    ++down_reads;
+    return down_keys[static_cast<size_t>(key)];
+  };
+  const std::pair<std::string_view, Il2CppMethodPointer> calls[] = {
+      {"Test::Answer()", reinterpret_cast<Il2CppMethodPointer>(answer)},
+      {"UnityEngine.Time::get_frameCount()", reinterpret_cast<Il2CppMethodPointer>(frame)},
+      {"UnityEngine.Input::get_anyKey()", reinterpret_cast<Il2CppMethodPointer>(held)},
+      {"UnityEngine.Input::get_anyKeyDown()", reinterpret_cast<Il2CppMethodPointer>(down)},
+      {"UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)", reinterpret_cast<Il2CppMethodPointer>(key)},
+      {"UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)", reinterpret_cast<Il2CppMethodPointer>(key_down)},
+  };
+  for (const auto& [key, function] : calls)
+    if (key == name)
+      return function;
+  return nullptr;
 }
 END_API
 API(Il2CppObject*, il2cpp_type_get_object, (const Il2CppType*))
@@ -685,5 +820,7 @@ int main()
   Require(base->TryCall<"Select", void(int32_t)>(5) && seen_int == 5, "tried void call");
   Require(!base->TryCall<"Vanished", int32_t()>(), "tried missing method is empty");
 
+  KeyboardSnapshot();
+  InputFocus();
   std::cout << "IL2CPP binding tests passed\n";
 }

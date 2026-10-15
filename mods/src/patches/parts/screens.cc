@@ -14,6 +14,7 @@
 #include "prime/ui.h"
 
 #include <il2cpp/il2cpp.h>
+#include <optional>
 #include <spdlog/spdlog.h>
 #include <unity/tracker.h>
 
@@ -24,12 +25,13 @@ namespace
 // frames is a few seconds at the game's frame rate.
 constexpr int kButtonWaitFrames = 300;
 
-struct Waits {
-  int  ship_swap         = 0;
-  int  officer_swap      = 0;
-  int  officer_presets   = 0;
-  bool assignment_opened = false;
-} waits;
+enum class ButtonStage { kShipSwap, kOfficerSwap, kOfficerAssignment, kOfficerPresets };
+
+struct ButtonWait {
+  ButtonStage stage;
+  int         frames = kButtonWaitFrames;
+};
+std::optional<ButtonWait> pending_button;
 
 // Runs one of the game's own shortcut handlers. A handler missing from this client is reported once by the binding
 // layer and does nothing.
@@ -132,22 +134,23 @@ bool OpenManageShipsFor(const char* what)
 void ShowShipSwap()
 {
   if (!PressShipSwapButton() && OpenManageShipsFor("Ship Swap"))
-    waits.ship_swap = kButtonWaitFrames;
+    pending_button = ButtonWait{ButtonStage::kShipSwap};
 }
 
 void ShowOfficerSwap()
 {
   if (!PressOfficerSwapButton() && OpenManageShipsFor("Officer Swap"))
-    waits.officer_swap = kButtonWaitFrames;
+    pending_button = ButtonWait{ButtonStage::kOfficerSwap};
 }
 
 void ShowOfficerPresets()
 {
   if (PressOfficerPresetsButton())
     return;
-  waits.assignment_opened = PressOfficerSwapButton();
-  if (waits.assignment_opened || OpenManageShipsFor("Officer Presets"))
-    waits.officer_presets = kButtonWaitFrames;
+  if (PressOfficerSwapButton())
+    pending_button = ButtonWait{ButtonStage::kOfficerPresets};
+  else if (OpenManageShipsFor("Officer Presets"))
+    pending_button = ButtonWait{ButtonStage::kOfficerAssignment};
 }
 
 struct ScreenShortcut {
@@ -291,37 +294,41 @@ bool FocusSearchBox()
 
 bool PressAwaitedButton()
 {
-  if (waits.officer_presets > 0) {
-    if (PressOfficerPresetsButton()) {
-      waits.officer_presets   = 0;
-      waits.assignment_opened = false;
-      return true;
-    }
-    // Manage Ships is up but officer assignment not yet: open it on the way.
-    if (!waits.assignment_opened && PressOfficerSwapButton())
-      waits.assignment_opened = true;
-    if (--waits.officer_presets == 0) {
-      waits.assignment_opened = false;
-      spdlog::warn("[Hotkeys] timed out waiting for the Officer Presets button");
-    }
+  const auto& control = Config::Get().control;
+  if (!control.hotkeys_enabled || control.use_scopely_hotkeys) {
+    pending_button.reset();
+    return false;
   }
+  if (!pending_button)
+    return false;
 
-  if (waits.officer_swap > 0) {
-    if (PressOfficerSwapButton()) {
-      waits.officer_swap = 0;
-      return true;
-    }
-    if (--waits.officer_swap == 0)
-      spdlog::warn("[Hotkeys] timed out waiting for the Officer Swap button");
+  bool        pressed = false;
+  const char* name    = "Officer Presets";
+  switch (pending_button->stage) {
+    case ButtonStage::kShipSwap:
+      name    = "Ship Swap";
+      pressed = PressShipSwapButton();
+      break;
+    case ButtonStage::kOfficerSwap:
+      name    = "Officer Swap";
+      pressed = PressOfficerSwapButton();
+      break;
+    case ButtonStage::kOfficerAssignment:
+      pressed = PressOfficerPresetsButton();
+      if (!pressed && PressOfficerSwapButton())
+        pending_button->stage = ButtonStage::kOfficerPresets;
+      break;
+    case ButtonStage::kOfficerPresets:
+      pressed = PressOfficerPresetsButton();
+      break;
   }
-
-  if (waits.ship_swap > 0) {
-    if (PressShipSwapButton()) {
-      waits.ship_swap = 0;
-      return true;
-    }
-    if (--waits.ship_swap == 0)
-      spdlog::warn("[Hotkeys] timed out waiting for the Ship Swap button");
+  if (pressed) {
+    pending_button.reset();
+    return true;
+  }
+  if (--pending_button->frames == 0) {
+    pending_button.reset();
+    spdlog::warn("[Hotkeys] timed out waiting for the {} button", name);
   }
   return false;
 }
@@ -336,6 +343,8 @@ bool ScreenShortcuts()
     return true;
   for (const auto& screen : kScreens) {
     if (Shortcut::IsDown(screen.shortcut)) {
+      // A new screen request replaces any button still waiting on the previous screen.
+      pending_button.reset();
       screen.run();
       return screen.consumes;
     }

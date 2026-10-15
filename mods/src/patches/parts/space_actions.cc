@@ -152,7 +152,7 @@ bool RequestFleetAction(FleetBarViewController* fleet_bar, ActionType type, std:
     requested = panel->RequestAction(fleet, type, 0, ActionBehaviour::Default);
   }
   if (help_state != FleetState::Unknown && (requested || fleet->CurrentState() == help_state))
-    requested = requested || panel->RequestAction(fleet, type, 0, ActionBehaviour::AskHelp);
+    requested = panel->RequestAction(fleet, type, 0, ActionBehaviour::AskHelp) || requested;
   spdlog::trace("Fleet action {} on fleet {} in state {}: {}", type.flagValue, fleet->Id(),
                 static_cast<int>(fleet->CurrentState()), requested);
   return requested;
