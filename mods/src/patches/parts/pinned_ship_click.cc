@@ -5,10 +5,10 @@
 #include "ship_name_match.h"
 
 #include "pinned_ship_click.h"
-#include "prime/AssignShipsWidget.h"
-#include "prime/CanvasController.h"
-#include "prime/ShipManagementViewContext.h"
-#include "prime/ShipManagementViewController.h"
+#include "prime/fleet.h"
+#include "prime/ui.h"
+#include "prime/fleet.h"
+#include "prime/fleet.h"
 #include "ship_tile_click.h"
 
 #include <il2cpp/il2cpp-functions.h>

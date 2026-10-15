@@ -1,12 +1,9 @@
 #include "config.h"
-#include "prime/InterstitialViewController.h"
+#include "prime/ui.h"
 
-#include <prime/BundleDataWidget.h>
-#include <prime/ClientModifierType.h>
+#include <prime/inventory.h>
+#include <prime/server.h>
 #include <prime/Hub.h>
-#include <prime/InventoryForPopup.h>
-#include <prime/InventoryUseRowWidget.h>
-#include <prime/ShopSummaryDirector.h>
 
 #include <il2cpp/il2cpp.h>
 
@@ -19,8 +16,8 @@
 
 #include <algorithm>
 #include <atomic>
-#include <prime/ActionQueueManager.h>
-#include <prime/InterstitialViewController.h>
+#include <prime/fleet.h>
+#include <prime/ui.h>
 
 namespace
 {

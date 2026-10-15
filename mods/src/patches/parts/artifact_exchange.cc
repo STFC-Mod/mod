@@ -2,7 +2,7 @@
 
 #include "config.h"
 
-#include "prime/Component.h"
+#include "prime/unity.h"
 
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>

@@ -3,8 +3,8 @@
 #include "patches/object_tracker.h"
 
 #include "double_click_assign_ship.h"
-#include "prime/AssignShipsWidget.h"
-#include "prime/CanvasController.h"
+#include "prime/fleet.h"
+#include "prime/ui.h"
 #include "prime/KeyCode.h"
 #include "ship_tile_click.h"
 

@@ -2,14 +2,7 @@
 
 #include "config.h"
 
-#include <prime/Canvas.h>
-#include <prime/Color.h>
-#include <prime/Component.h>
-#include <prime/GameObject.h>
-#include <prime/Image.h>
-#include <prime/RectTransform.h>
-#include <prime/Transform.h>
-#include <prime/Vector2.h>
+#include <prime/unity.h>
 
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>

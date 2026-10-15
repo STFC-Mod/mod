@@ -2,8 +2,8 @@
 #include "patches/instant_warp_policy.h"
 #include "ship_name_match.h"
 
-#include <prime/CourseData.h>
-#include <prime/CoursePromptPopupWidget.h>
+#include <prime/fleet.h>
+#include <prime/navigation.h>
 
 #include <spud/detour.h>
 

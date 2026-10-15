@@ -1,6 +1,6 @@
 #pragma once
 
-#include <prime/FleetPlayerData.h>
+#include <prime/fleet.h>
 
 namespace fleet_watch
 {

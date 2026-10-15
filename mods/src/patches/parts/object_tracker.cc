@@ -2,27 +2,12 @@
 
 #include <il2cpp/il2cpp.h>
 
-#include "prime/AllianceStarbaseObjectViewerWidget.h"
-#include "prime/AnimatedRewardsScreenViewController.h"
-#include "prime/ArmadaObjectViewerWidget.h"
-#include "prime/ArtifactHallDetailsViewController.h"
-#include "prime/AssignShipsWidget.h"
-#include "prime/CelestialObjectViewerWidget.h"
-#include "prime/EmbassyObjectViewer.h"
-#include "prime/FleetBarViewController.h"
-#include "prime/FleetMeshSelector.h"
-#include "prime/FullScreenChatViewController.h"
-#include "prime/HousingObjectViewerWidget.h"
-#include "prime/InventoryListViewController.h"
-#include "prime/MiningObjectViewerWidget.h"
-#include "prime/OfficerAssignmentViewController.h"
-#include "prime/MissionsObjectViewerWidget.h"
-#include "prime/NavigationInteractionUIViewController.h"
-#include "prime/PreScanTargetWidget.h"
-#include "prime/ElementSelectorViewController.h"
-#include "prime/ShipManagementViewController.h"
-#include "prime/ShipManagementScreenStateViewController.h"
-#include "prime/StarNodeObjectViewerWidget.h"
+#include "prime/viewers.h"
+#include "prime/ui.h"
+#include "prime/fleet.h"
+#include "prime/chat.h"
+#include "prime/inventory.h"
+#include "prime/navigation.h"
 
 #include <EASTL/unordered_map.h>
 #include <EASTL/unordered_set.h>

@@ -1,5 +1,5 @@
 #include "config.h"
-#include "prime/TextLocalizer.h"
+#include "prime/ui.h"
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>

@@ -5,13 +5,10 @@
 
 #include <il2cpp/il2cpp.h>
 #include <il2cpp/method_contract.h>
-#include <prime/BundleDataWidget.h>
-#include <prime/Component.h>
-#include <prime/GameObject.h>
 #include <prime/Hub.h>
-#include <prime/LocaleTextContext.h>
-#include <prime/Transform.h>
-#include <prime/Vector2.h>
+#include <prime/inventory.h>
+#include <prime/ui.h>
+#include <prime/unity.h>
 
 #include <spud/detour.h>
 #if _WIN32

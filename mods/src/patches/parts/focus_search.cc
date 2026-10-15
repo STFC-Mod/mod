@@ -3,11 +3,10 @@
 
 #include "config.h"
 
-#include "prime/AssignShipsWidget.h"
-#include "prime/CanvasController.h"
-#include "prime/ChatMessageListLocalViewController.h"
-#include "prime/InventoryListViewController.h"
-#include "prime/OfficerAssignmentViewController.h"
+#include "prime/fleet.h"
+#include "prime/ui.h"
+#include "prime/chat.h"
+#include "prime/inventory.h"
 
 #include <il2cpp/il2cpp.h>
 

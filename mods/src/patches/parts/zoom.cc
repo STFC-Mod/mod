@@ -4,12 +4,8 @@
 
 #include <il2cpp/il2cpp.h>
 
-#include <prime/NavigationFleetWidget.h>
-#include <prime/NavigationLOD.h>
-#include <prime/NavigationPan.h>
-#include <prime/NavigationZoom.h>
-#include <prime/PlanetViewUtils.h>
-#include <prime/Transform.h>
+#include <prime/navigation.h>
+#include <prime/unity.h>
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>

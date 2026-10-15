@@ -3,10 +3,9 @@
 
 #include "patches/instant_warp_policy.h"
 #include "patches/screen_update_hook.h"
-#include "prime/DeploymentManager.h"
-#include "prime/FleetsManager.h"
-#include "prime/StarNodeObjectViewerWidget.h"
-#include "prime/TextLocalizer.h"
+#include "prime/fleet.h"
+#include "prime/viewers.h"
+#include "prime/ui.h"
 #include "str_utils.h"
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>

@@ -15,11 +15,6 @@ static void SyncMsg(const char* section, const std::string& msg)
   spdlog::error("Failed to send {} sync data: {}", section, msg);
 }
 
-static void SyncMsg(const char* section, const std::wstring& msg)
-{
-  spdlog::error("Failed to send {} sync data: {}", section, to_string(msg));
-}
-
 static void SyncRuntime(const char* section, const std::runtime_error& e)
 {
   spdlog::error("Runtime error sending {} sync data: {}", section, e.what());

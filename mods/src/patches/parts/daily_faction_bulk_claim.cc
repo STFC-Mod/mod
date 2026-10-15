@@ -1,10 +1,7 @@
 #include "config.h"
 #include "str_utils.h"
 
-#include <prime/Component.h>
-#include <prime/EventSystem.h>
-#include <prime/GameObject.h>
-#include <prime/Transform.h>
+#include <prime/unity.h>
 
 #include <il2cpp/il2cpp.h>
 #include <spud/detour.h>

@@ -3,15 +3,13 @@
 
 #include <il2cpp/il2cpp.h>
 
-#include <prime/CanvasScaler.h>
-#include <prime/FleetMeshSelector.h>
-#include <prime/ScreenManager.h>
-#include <prime/Transform.h>
+#include <prime/unity.h>
+#include <prime/fleet.h>
+#include <prime/ui.h>
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
-#include <prime/Vector3.h>
 #include <str_utils.h>
 
 namespace
@@ -105,7 +103,7 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 void CanvasController_Show(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
 {
   const auto ui_scale_viewer = Config::Get().ui_scale_viewer;
-  if (_this && ui_scale_viewer != 0.0f && to_wstring(_this->name()) == L"ObjectViewerTemplate_Canvas") {
+  if (_this && ui_scale_viewer != 0.0f && to_string(_this->name()) == "ObjectViewerTemplate_Canvas") {
     if (auto* transform = _this->transform())
       transform->SetLocalScale(Vector3{ui_scale_viewer, ui_scale_viewer, ui_scale_viewer});
   }

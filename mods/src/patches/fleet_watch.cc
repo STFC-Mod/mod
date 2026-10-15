@@ -3,7 +3,7 @@
 #include "errormsg.h"
 #include "patches/screen_update_hook.h"
 
-#include <prime/FleetsManager.h>
+#include <prime/fleet.h>
 
 #include <spdlog/spdlog.h>
 

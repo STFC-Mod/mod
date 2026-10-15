@@ -1,7 +1,7 @@
 #include "config.h"
 
 #include <il2cpp/il2cpp.h>
-#include <prime/Component.h>
+#include <prime/unity.h>
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>

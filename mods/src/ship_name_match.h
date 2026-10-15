@@ -4,9 +4,8 @@
 
 #include <il2cpp/il2cpp.h>
 
-#include <prime/FleetPlayerData.h>
-#include <prime/HullSpec.h>
-#include <prime/LocaleTextContext.h>
+#include <prime/fleet.h>
+#include <prime/ui.h>
 
 #include <string>
 #include <string_view>

@@ -1,9 +1,7 @@
 #include "config.h"
-#include "prime_types.h"
 
 #include <il2cpp/il2cpp.h>
-#include <prime/IBuffComparer.h>
-#include <prime/IBuffData.h>
+#include <prime/server.h>
 
 #include <spud/detour.h>
 

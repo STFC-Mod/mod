@@ -6,8 +6,16 @@
 
 #include <spud/detour.h>
 
-#include "prime/AspectRatioConstraintHandler.h"
 #include "windowtitle.h"
+
+#include <il2cpp/il2cpp.h>
+
+struct AspectRatioConstraintHandler {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Utils", "AspectRatioConstraintHandler">;
+
+  static WNDPROC _unityWndProc()
+  { return reinterpret_cast<WNDPROC>(Class::Field<"_unityWndProc", intptr_t>()); }
+};
 
 static bool            WndProcInstalled  = false;
 static LONG_PTR        oWndProc          = NULL;

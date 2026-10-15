@@ -1,6 +1,6 @@
 // Show actual cargo totals through the native text renderer, without its count-up animation.
 #include "config.h"
-#include "prime/TextLocalizer.h"
+#include "prime/ui.h"
 
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>

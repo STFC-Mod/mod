@@ -3,12 +3,9 @@
 #include "str_utils.h"
 
 #include <il2cpp/il2cpp.h>
-#include <prime/BattleResultHeader.h>
-#include <prime/HullSpec.h>
-#include <prime/LocaleTextContext.h>
-#include <prime/SpecService.h>
-#include <prime/Toast.h>
-#include <prime/UserProfile.h>
+#include <prime/server.h>
+#include <prime/fleet.h>
+#include <prime/ui.h>
 
 #include <spdlog/spdlog.h>
 #include <spdlog/fmt/fmt.h>

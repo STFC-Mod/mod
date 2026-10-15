@@ -1,6 +1,6 @@
 #include "config.h"
 
-#include <prime/Widget.h>
+#include <prime/ui.h>
 
 #include <il2cpp/il2cpp.h>
 #include <spud/detour.h>

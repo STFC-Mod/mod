@@ -1,8 +1,7 @@
 #include "config.h"
 #include "ship_name_match.h"
 
-#include <prime/FleetPlayerData.h>
-#include <prime/ShipManagementViewContext.h>
+#include <prime/fleet.h>
 
 #include <il2cpp/il2cpp.h>
 

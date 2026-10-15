@@ -5,9 +5,7 @@
 #include "str_utils.h"
 
 #include <il2cpp/il2cpp.h>
-#include <prime/LanguageManager.h>
-#include <prime/LocaleTextContext.h>
-#include <prime/Toast.h>
+#include <prime/ui.h>
 
 #include <spdlog/spdlog.h>
 

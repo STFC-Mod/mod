@@ -2,12 +2,10 @@
 
 #include <il2cpp/il2cpp.h>
 
-#include <prime/Camera.h>
+#include <prime/unity.h>
 #include <prime/Hub.h>
-#include <prime/NavigationPan.h>
-#include <prime/OrbitFrameProvider.h>
-#include <prime/ShortcutsManager.h>
-#include <prime/TKTouch.h>
+#include <prime/navigation.h>
+#include <prime/ui.h>
 
 #include <patches/key.h>
 #include <patches/mapkey.h>

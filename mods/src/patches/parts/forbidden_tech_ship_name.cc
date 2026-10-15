@@ -1,14 +1,9 @@
 #include "config.h"
 #include "ship_name_match.h"
 
-#include <prime/Color.h>
-#include <prime/Component.h>
-#include <prime/HullSpec.h>
-#include <prime/MonoSingleton.h>
-#include <prime/RectTransform.h>
-#include <prime/TextLocalizer.h>
-#include <prime/Vector2.h>
-#include <prime/Widget.h>
+#include <prime/fleet.h>
+#include <prime/ui.h>
+#include <prime/unity.h>
 
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>

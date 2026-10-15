@@ -1,6 +1,6 @@
-#include "prime/ChatMessageWidget.h"
-#include "prime/GameObject.h"
-#include "prime/UserProfileWidget.h"
+#include "prime/chat.h"
+#include "prime/unity.h"
+#include "prime/chat.h"
 
 #include "config.h"
 #include "errormsg.h"

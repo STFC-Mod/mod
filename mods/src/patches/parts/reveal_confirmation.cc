@@ -4,7 +4,7 @@
 #include <il2cpp/il2cpp_helper.h>
 #include <il2cpp/method_contract.h>
 
-#include <prime/ActivatedAbilityManager.h>
+#include "prime/fleet.h"
 
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>

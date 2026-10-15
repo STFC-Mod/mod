@@ -1,24 +1,14 @@
 #include "config.h"
 
-#include "prime/ActionQueueManager.h"
-#include "prime/ActionRequirement.h"
-#include "prime/BlurController.h"
-#include "prime/BookmarksManager.h"
-#include "prime/ChatManager.h"
-#include "prime/ChatMessageListLocalViewController.h"
-#include "prime/ClientModifierType.h"
-#include "prime/DeploymentManager.h"
-#include "prime/FleetLocalViewController.h"
-#include "prime/FleetsManager.h"
-#include "prime/FullScreenChatViewController.h"
+#include "prime/fleet.h"
+#include "prime/ui.h"
+#include "prime/navigation.h"
+#include "prime/chat.h"
+#include "prime/server.h"
 #include "prime/Hub.h"
-#include "prime/InventoryForPopup.h"
+#include "prime/inventory.h"
 #include "prime/KeyCode.h"
-#include "prime/NavigationSectionManager.h"
-#include "prime/ScanTargetViewController.h"
-#include "prime/SceneManager.h"
-#include "prime/ScreenManager.h"
-#include <prime/UIBehaviour.h>
+#include <prime/unity.h>
 
 #include <il2cpp/il2cpp.h>
 #include <spud/detour.h>

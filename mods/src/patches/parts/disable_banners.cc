@@ -2,7 +2,7 @@
 #include "patches/notification_service.h"
 
 #include <il2cpp/il2cpp.h>
-#include <prime/Toast.h>
+#include <prime/ui.h>
 
 #include <spud/detour.h>
 

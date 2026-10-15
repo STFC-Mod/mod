@@ -1,6 +1,5 @@
-#include "prime/ChatPreviewController.h"
-#include "prime/FullScreenChatViewController.h"
-#include "prime/GenericButtonContext.h"
+#include "prime/chat.h"
+#include "prime/ui.h"
 
 #include "config.h"
 
@@ -13,7 +12,6 @@
 #include "patches/chat_startup.h"
 #include "patches/screen_update_hook.h"
 #include "prime/Hub.h"
-#include "prime/ScreenManager.h"
 
 namespace
 {

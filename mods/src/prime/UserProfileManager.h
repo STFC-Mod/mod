@@ -1,6 +1,6 @@
 #pragma once
 
-#include "MonoSingleton.h"
+#include "ui.h"
 #include "UserProfile.h"
 
 struct UserProfileManager : MonoSingleton<UserProfileManager> {
