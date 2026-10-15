@@ -159,6 +159,11 @@ public:
     if (now < next_update_)
       return;
     next_update_ = now + std::chrono::milliseconds(250);
+    if (!Config::Get().graphics.galactic_anomaly_timer) {
+      DestroyPanel();
+      navigation_.Reset();
+      return;
+    }
 
     auto* nav = Navigation();
     // Remaining ticks of the active anomaly in the viewed system.

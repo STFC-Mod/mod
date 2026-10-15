@@ -1,29 +1,52 @@
 #pragma once
 
+// Live instances of a fixed set of game UI classes, found without asking Unity. Constructors and OnDestroy are
+// detoured, and a GC finalizer and the liveness pass drop instances the game has released.
+
 #include <il2cpp/il2cpp.h>
-#include <EASTL/span.h>
+
 #include <EASTL/unordered_map.h>
 #include <EASTL/vector.h>
 
-// Game objects registered by the mod's Unity lifecycle hooks. These are borrowed pointers.
-extern eastl::unordered_map<Il2CppClass*, eastl::vector<uintptr_t>> tracked_objects;
+#include <mutex>
 
-template <typename T> class ObjectFinder
+namespace object_tracker
 {
-public:
+// Borrowed pointers, keyed by class and every parent class. GC finalizers update this from their own thread.
+struct Registry {
+  std::mutex mutex;
+  // Class -> instances, oldest first.
+  eastl::unordered_map<Il2CppClass*, eastl::vector<Il2CppObject*>> objects;
+
+  eastl::vector<Il2CppObject*>* Find(Il2CppClass* klass)
+  {
+    const auto it = objects.find(klass);
+    return it == objects.end() ? nullptr : &it->second;
+  }
+};
+
+Registry& registry();
+} // namespace object_tracker
+
+template <typename T> struct ObjectFinder {
+  // The newest live instance, or null. Only classes InstallObjectTrackers registers are ever found.
   static T* Get()
   {
-    auto& objects = tracked_objects[T::Class::Raw()];
-    if (objects.empty()) {
-      // TODO: assert?
-      return nullptr;
-    }
-    return reinterpret_cast<T*>(objects.back());
+    auto&            registry = object_tracker::registry();
+    std::scoped_lock lock(registry.mutex);
+    auto*            objects = registry.Find(T::Class::Raw());
+    return objects && !objects->empty() ? static_cast<T*>(objects->back()) : nullptr;
   }
 
-  static eastl::span<T*> GetAll()
+  // A snapshot, so the caller can call into the game while the finalizer thread keeps updating the registry.
+  static eastl::vector<T*> GetAll()
   {
-    auto& objects = tracked_objects[T::Class::Raw()];
-    return {reinterpret_cast<T**>(objects.data()), reinterpret_cast<T**>(objects.data()) + objects.size()};
+    auto&             registry = object_tracker::registry();
+    std::scoped_lock  lock(registry.mutex);
+    eastl::vector<T*> result;
+    if (auto* objects = registry.Find(T::Class::Raw()))
+      for (auto* object : *objects)
+        result.push_back(static_cast<T*>(object));
+    return result;
   }
 };

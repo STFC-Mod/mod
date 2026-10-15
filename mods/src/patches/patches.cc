@@ -31,8 +31,9 @@ struct Patch {
   bool (*enabled)(const Config&);
 };
 
-// Installed in this order; the log numbers them. Most are switched by their [patches] setting; the rest only
-// install when the feature they serve is turned on.
+// Installed in this order; the log numbers them. Only the [patches] hook groups decide what is installed, so users
+// can avoid clashing with other mods. Feature settings are read inside the hooks, which keeps every feature
+// switchable at runtime; a hook whose feature is off must return early and cheaply.
 constexpr Patch kPatches[] = {
     {"interiorzoomhooks", InstallInteriorZoomHooks, [](const Config& c) { return c.patches.interiorzoomhooks; }},
     {"chattitledisplayhooks", InstallChatTitleDisplayHooks, [](const Config& c) { return c.patches.chattitledisplayhooks; }},
@@ -149,27 +150,41 @@ int64_t il2cpp_init_hook(auto original, const char* domain_name)
   freopen_s(&console, "CONOUT$", "w", stdout);
 #endif
 
-  File::Init();
-  StartLogging();
-  LogBanner();
+  // Nothing here may throw into the game: a mod that cannot set itself up leaves the game running without it.
+  const Config* config = nullptr;
+  try {
+    File::Init();
+    StartLogging();
+    LogBanner();
 
-  spdlog::info("Loading Configuration...");
-  spdlog::info("");
-  auto& config = Config::Get();
-  spdlog::info("");
-  spdlog::info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=");
-  spdlog::info("");
+    spdlog::info("Loading Configuration...");
+    spdlog::info("");
+    config = &Config::Get();
+    spdlog::info("");
+    spdlog::info("=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=");
+    spdlog::info("");
+  } catch (const std::exception& error) {
+    // The file logger may not exist; spdlog falls back to its console logger.
+    spdlog::error("Community mod setup failed, not installing any patches: {}", error.what());
+  }
 
   // Bindings resolve against the runtime's metadata, so nothing is installed before the domain exists.
   const auto result = original(domain_name);
+  if (!config)
+    return result;
 
   spdlog::info("Initializing code hooks:");
   for (size_t i = 0; i < std::size(kPatches); ++i) {
     const auto& patch   = kPatches[i];
-    const bool  enabled = patch.enabled(config);
+    const bool  enabled = patch.enabled(*config);
     spdlog::info(" {} {:>2} of {} ({})", enabled ? "+ Patching" : "x Skipping", i + 1, std::size(kPatches), patch.name);
-    if (enabled)
+    if (!enabled)
+      continue;
+    try {
       patch.install();
+    } catch (const std::exception& error) {
+      spdlog::error("{} failed to install: {}", patch.name, error.what());
+    }
   }
 
   spdlog::info("");

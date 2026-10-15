@@ -97,10 +97,8 @@ void InstallMiscPatches()
     SPUD_STATIC_DETOUR(m.Pointer(), InventoryForPopup_set_MaxItemsToUse);
 #endif
 
-  if (Config::Get().ui.extend_chest_purchase_max > 0) {
-    if (auto m = InventoryUseRowWidget::Class::Method("SetWidgetData", 0))
-      SPUD_STATIC_DETOUR(m.Pointer(), InventoryUseRowWidget_SetWidgetData);
-  }
+  if (auto m = InventoryUseRowWidget::Class::Method("SetWidgetData", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), InventoryUseRowWidget_SetWidgetData);
 
 #if __APPLE__
   using Slider = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Slider">;
@@ -208,18 +206,16 @@ struct Model : il2cpp::Object {
   { return Field<"_appConfig", AppConfig*>(); }
 };
 
-void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* hotspot, int cursorMode)
-{
 #if _WIN32
-  if (!Config::Get().graphics.allow_cursor) {
-    SetCursor(LoadCursor(NULL, IDC_ARROW));
-    ClipCursor(nullptr); // free cursor from any Unity clipping
-    return;
-  }
-#endif
-
-  return original(_this, texture, hotspot, cursorMode);
+// allow_cursor = false: the plain arrow, never clipped to the window.
+void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* hotspot, int mode)
+{
+  if (Config::Get().graphics.allow_cursor)
+    return original(_this, texture, hotspot, mode);
+  SetCursor(LoadCursor(NULL, IDC_ARROW));
+  ClipCursor(nullptr);
 }
+#endif
 
 void Model_LoadConfigs(auto original, Model* _this)
 {
@@ -239,20 +235,16 @@ void Model_LoadConfigs(auto original, Model* _this)
 }
 
 bool IsQueueEnabled(auto original, void* _this)
-{
-  if (Config::Get().control.queue_enabled) {
-    return original(_this);
-  }
-
-  return false;
-}
+{ return Config::Get().control.queue_enabled && original(_this); }
 } // namespace
 
 void InstallTestPatches()
 {
+#if _WIN32
   using Cursor = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Cursor">;
   if (auto m = Cursor::Method("SetCursor_Injected"))
     SPUD_STATIC_DETOUR(m.Pointer(), Cursor_SetCursor);
+#endif
 
   if (auto m = Model::Class::Method("LoadConfigs", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), Model_LoadConfigs);

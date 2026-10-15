@@ -134,6 +134,15 @@ void UpdateLabel()
     return;
   next = now + std::chrono::milliseconds(100);
 
+  // Without a default or a jump/warp filter every prompt resolves to "ask"; skip the fleet lookups.
+  const auto& ui = Config::Get().ui;
+  if (ui.auto_confirm_instant_warp == InstantWarpConfirmation::None && !ui.instant_warp_auto_jump.all
+      && ui.instant_warp_auto_jump.names.empty() && !ui.instant_warp_auto_warp.all
+      && ui.instant_warp_auto_warp.names.empty()) {
+    action_label.Clear();
+    return;
+  }
+
   auto*       widget  = ObjectFinder<StarNodeObjectViewerWidget>::Get();
   const bool  active  = UnityObject::Alive(widget) && widget->isActiveAndEnabled();
   auto*       button  = active ? widget->visitButton() : nullptr;

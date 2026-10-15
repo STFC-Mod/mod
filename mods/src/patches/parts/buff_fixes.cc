@@ -15,7 +15,7 @@ bool BuffService_IsBuffConditionMet(auto original, void* _this, BuffCondition cu
                                     IBuffComparer* buffComparer, IBuffData* buffToCompare, bool excludeFactionBuffs,
                                     bool isAllianceLoyalty)
 {
-  if (currentCondition == BuffCondition::CondSelfAtStation)
+  if (currentCondition == BuffCondition::CondSelfAtStation && Config::Get().buffs.use_out_of_dock_power)
     return false;
   return original(_this, currentCondition, buffComparer, buffToCompare, excludeFactionBuffs, isAllianceLoyalty);
 }
@@ -24,9 +24,6 @@ bool BuffService_IsBuffConditionMet(auto original, void* _this, BuffCondition cu
 void InstallBuffFixHooks()
 {
   using BuffService = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "BuffService">;
-
-  if (Config::Get().buffs.use_out_of_dock_power) {
-    if (auto method = BuffService::Method("IsBuffConditionMet"))
-      SPUD_STATIC_DETOUR(method.Pointer(), BuffService_IsBuffConditionMet);
-  }
+  if (auto method = BuffService::Method("IsBuffConditionMet"))
+    SPUD_STATIC_DETOUR(method.Pointer(), BuffService_IsBuffConditionMet);
 }

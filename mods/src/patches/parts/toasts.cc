@@ -405,6 +405,20 @@ std::string NotificationBody(Toast* toast)
 #if _WIN32
 void ShowWindowsNotification(const char* title, const std::string& body)
 {
+  // Notifications need a WinRT apartment on the game thread, set up by the first one. The game may already have
+  // one in another mode, which only matters if notifications then fail.
+  static const bool apartment = [] {
+    try {
+      winrt::init_apartment(winrt::apartment_type::single_threaded);
+    } catch (const winrt::hresult_error& e) {
+      spdlog::warn("[Notify] Windows notification service failed: {:#x} {}", static_cast<unsigned long>(e.code()),
+                   winrt::to_string(e.message()));
+    } catch (...) {
+      spdlog::warn("[Notify] Windows notification service failed (unknown error)");
+    }
+    return true;
+  }();
+  (void)apartment;
   try {
     using namespace winrt::Windows::UI::Notifications;
     auto xml   = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02);
@@ -444,7 +458,8 @@ bool ShowBanner(Toast* toast)
 {
   if (toast)
     notification_audio_play(Config::Get().NotificationSoundForToast(static_cast<int>(toast->get_State())));
-  if (!toast)
+  const auto& ui = Config::Get().ui;
+  if (!toast || (ui.disabled_banner_types.empty() && ui.notify_banner_types.empty()))
     return true;
   Notify(toast);
   const auto& disabled = Config::Get().ui.disabled_banner_types;
@@ -466,18 +481,6 @@ void ToastObserver_EnqueueOrCombineToast_Hook(auto original, ToastObserver* _thi
 
 void InstallToastBannerHooks()
 {
-#if _WIN32
-  // Notifications need a WinRT apartment on the game thread. The game may already have one in another mode,
-  // which only matters if notifications then fail.
-  try {
-    winrt::init_apartment(winrt::apartment_type::single_threaded);
-  } catch (const winrt::hresult_error& e) {
-    spdlog::warn("[Notify] Windows notification service failed: {:#x} {}", static_cast<unsigned long>(e.code()),
-                 winrt::to_string(e.message()));
-  } catch (...) {
-    spdlog::warn("[Notify] Windows notification service failed (unknown error)");
-  }
-#endif
 
   if (auto m = ToastObserver::Class::Method("EnqueueToast"))
     SPUD_STATIC_DETOUR(m.Pointer(), ToastObserver_EnqueueToast_Hook);

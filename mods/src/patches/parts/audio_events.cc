@@ -22,9 +22,8 @@ bool FabricEventManager_PostEvent_Hook(auto original, FabricEventManager* _this,
                                        Il2CppObject* initialise_parameters, bool add_to_queue,
                                        Il2CppObject* on_event_notify)
 {
-  if (event_name) {
-    const auto& audio = Config::Get().audio;
-    const auto  event = to_string(event_name);
+  if (const auto& audio = Config::Get().audio; event_name && (audio.trace_events || audio.disable_all_events || !audio.disabled_events.empty())) {
+    const auto event = to_string(event_name);
     if (audio.trace_events)
       spdlog::info("Audio event: {}", event);
     if ((audio.disable_all_events ? event_action == 0 || event_action == 3 || event_action == 16 || event_action == 33 : std::ranges::find(audio.disabled_events, event) != audio.disabled_events.end())) {

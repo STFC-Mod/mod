@@ -189,6 +189,5 @@ void InstallDailyFactionBulkClaimHooks()
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToShow_Hook);
   if (auto m = Controller::Method("AboutToHide", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToHide_Hook);
-  if (Config::Get().ui.daily_bulk_claim_toggle_default_on)
-    InstallScreenManagerUpdateHook();
+  InstallScreenManagerUpdateHook();
 }

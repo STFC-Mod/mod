@@ -18,6 +18,7 @@
 #include <fstream>
 #include <random>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // Generated into the Zig build cache from assets/ (or -Dbg_image).
@@ -569,22 +570,35 @@ void MonoSingleton_PrepareAllForReload_Hook(auto original)
   tips.Reset();
   original();
 }
+
+// Shared by the login, tip and transition installs, whichever of them run.
+void InstallReloadReset()
+{
+  static bool installed = false;
+  if (std::exchange(installed, true))
+    return;
+  if (auto m = MonoSingletonBase::Method("PrepareAllForReload"))
+    SPUD_STATIC_DETOUR(m.Pointer(), MonoSingleton_PrepareAllForReload_Hook);
+}
 } // namespace
 
 void InstallLoadingScreenHooks()
 {
+  InstallReloadReset();
   if (auto m = LoginSequence::Class::Method("Awake"))
     SPUD_STATIC_DETOUR(m.Pointer(), LoginSequence_Awake_Hook);
 }
 
 void InstallLoadingTipHooks()
 {
+  InstallReloadReset();
   if (auto m = LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"))
     SPUD_STATIC_DETOUR(m.Pointer(), LoadingTipViewController_SetRandomTipLocalisedText_Hook);
 }
 
 void InstallTransitionScreenHooks()
 {
+  InstallReloadReset();
   if (auto m = TransitionViewController::Class::Method("Awake"))
     SPUD_STATIC_DETOUR(m.Pointer(), TransitionViewController_Awake_Hook);
   if (auto m = TransitionViewController::Class::Method("AboutToShow"))
@@ -593,8 +607,4 @@ void InstallTransitionScreenHooks()
     SPUD_STATIC_DETOUR(m.Pointer(), TransitionViewController_AboutToHide_Hook);
   if (auto m = SlideShowViewController::Class::Method("ShowCurrentSlide"))
     SPUD_STATIC_DETOUR(m.Pointer(), SlideShowViewController_ShowCurrentSlide_Hook);
-  // TODO: the reload reset is only installed with the transition hooks, so with transitionscreenhooks off the
-  // welcome tip and login logos are not reset by a reload.
-  if (auto m = MonoSingletonBase::Method("PrepareAllForReload"))
-    SPUD_STATIC_DETOUR(m.Pointer(), MonoSingleton_PrepareAllForReload_Hook);
 }
