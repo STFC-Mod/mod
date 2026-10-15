@@ -21,7 +21,7 @@ struct InventoryUsePopupViewController : il2cpp::Object {
 void InventoryUsePopupViewController_OnDidBindCanvasContext_Hook(auto original, InventoryUsePopupViewController* _this)
 {
   original(_this);
-  if (!_this || !Config::Get().disable_exchange_all)
+  if (!_this || !Config::Get().ui.disable_exchange_all)
     return;
   auto* button = _this->convertAllButton();
   if (auto* object = button ? button->gameObject() : nullptr)

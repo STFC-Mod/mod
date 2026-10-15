@@ -253,7 +253,7 @@ namespace
 
 void InstallFleetSync()
 {
-  if (!Config::Get().sync_options.fleets)
+  if (!Config::Get().sync.options.fleets)
     return;
   if (!fleet_watch::Subscribe({.on_transition = OnTransition, .on_baseline = OnBaseline})) {
     spdlog::warn("Sync: fleet state subscriber could not be installed; fleet sync disabled");

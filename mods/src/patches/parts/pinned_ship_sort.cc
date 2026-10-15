@@ -13,7 +13,7 @@
 #include <vector>
 
 // Fleet management dock ship sort: hooks ShipManagementViewContext.Sort()
-// and stable-partitions cfg.pinned_ships to the front of SortedIdleShips,
+// and stable-partitions cfg.ui.pinned_ships to the front of SortedIdleShips,
 // keeping the active sort field's order within both the pinned group and
 // everyone else. Only the concrete class is hooked, not ISortedFleetsContext,
 // so HailingFrequenciesInventoryContext is unaffected. Matching is shared
@@ -49,14 +49,14 @@ ShipEntry BuildShipEntry(FleetPlayerData* ship)
 }
 
 // Stable-partitions `list` (a List<FleetPlayerData>) so that ships matching
-// cfg.pinned_ships come first, while both the pinned group and everyone else
+// cfg.ui.pinned_ships come first, while both the pinned group and everyone else
 // keep their existing relative order (i.e. whatever sort field is active).
 void ReorderPinnedShips(il2cpp::List<FleetPlayerData*>* list)
 {
   if (!list) return;
 
   const auto& cfg = Config::Get();
-  if (cfg.pinned_ships.empty()) return;
+  if (cfg.ui.pinned_ships.empty()) return;
 
   const auto count = list->Count();
   if (count <= 1) return;
@@ -65,11 +65,11 @@ void ReorderPinnedShips(il2cpp::List<FleetPlayerData*>* list)
     return;
   }
 
-  // cfg.pinned_ships entries are already normalized (see parse_ship_filter /
+  // cfg.ui.pinned_ships entries are already normalized (see ReadShipFilter /
   // ShipNameMatch::NormalizeKey in config.cc); just split them into words.
   std::vector<std::vector<std::string>> pinned_words;
-  pinned_words.reserve(cfg.pinned_ships.size());
-  for (const auto& name : cfg.pinned_ships) pinned_words.push_back(ShipNameMatch::SplitWords(name));
+  pinned_words.reserve(cfg.ui.pinned_ships.size());
+  for (const auto& name : cfg.ui.pinned_ships) pinned_words.push_back(ShipNameMatch::SplitWords(name));
 
   std::vector<ShipEntry> ships;
   ships.reserve(count);
@@ -104,7 +104,7 @@ void ReorderPinnedShips(il2cpp::List<FleetPlayerData*>* list)
     } else {
       spdlog::warn("[PinnedShipSort] pinned_ships entry '{}' matched no idle ship (entries match the "
                    "game's own display name for a ship that is idle in its dock)",
-                   cfg.pinned_ships[p]);
+                   cfg.ui.pinned_ships[p]);
     }
   }
 

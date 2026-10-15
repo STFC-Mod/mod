@@ -25,20 +25,20 @@ namespace
 // The action auto-confirm takes for `fleet`: always-ask wins, then auto-jump, then auto-warp, then the default.
 InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
 {
-  const auto& cfg           = Config::Get();
-  const auto  display_words = ShipNameMatch::DisplayWords(fleet);
-  const auto  matches       = [&display_words](const std::vector<std::string>& names, bool all) {
-    return all || (!display_words.empty() && std::ranges::any_of(names, [&](const auto& configured) {
-             return ShipNameMatch::MatchesDisplay(display_words, ShipNameMatch::SplitWords(configured));
+  const auto& ui      = Config::Get().ui;
+  const auto  words   = ShipNameMatch::DisplayWords(fleet);
+  const auto  matches = [&words](const ShipFilter& filter) {
+    return filter.all || (!words.empty() && std::ranges::any_of(filter.names, [&](const auto& name) {
+             return ShipNameMatch::MatchesDisplay(words, ShipNameMatch::SplitWords(name));
            }));
   };
-  if (matches(cfg.instant_warp_always_ask, cfg.instant_warp_always_ask_all))
+  if (matches(ui.instant_warp_always_ask))
     return InstantWarpConfirmation::None;
-  if (matches(cfg.instant_warp_auto_jump, cfg.instant_warp_auto_jump_all))
+  if (matches(ui.instant_warp_auto_jump))
     return InstantWarpConfirmation::Jump;
-  if (matches(cfg.instant_warp_auto_warp, cfg.instant_warp_auto_warp_all))
+  if (matches(ui.instant_warp_auto_warp))
     return InstantWarpConfirmation::Warp;
-  return cfg.auto_confirm_instant_warp;
+  return ui.auto_confirm_instant_warp;
 }
 
 void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromptPopupViewController* _this)

@@ -33,7 +33,7 @@ std::atomic_bool                   ready{false};
 Il2CppClass *                      queueClass{}, *actionClass{}, *int64Class{};
 
 bool Enabled()
-{ return ready.load() && Config::Get().kirshara_fixes && Config::Get().queue_enabled; }
+{ return ready.load() && Config::Get().control.kirshara_fixes && Config::Get().control.queue_enabled; }
 void ClearRequests()
 {
   std::lock_guard lock(requestsMutex);

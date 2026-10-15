@@ -425,7 +425,7 @@ void Notify(Toast* toast)
 {
 #if _WIN32
   const auto  state = toast->get_State();
-  const auto& types = Config::Get().notify_banner_types;
+  const auto& types = Config::Get().ui.notify_banner_types;
   if (std::ranges::find(types, state) == types.end())
     return;
   const auto title = std::ranges::find(kTitles, state, &std::pair<int, const char*>::first);
@@ -447,7 +447,7 @@ bool ShowBanner(Toast* toast)
   if (!toast)
     return true;
   Notify(toast);
-  const auto& disabled = Config::Get().disabled_banner_types;
+  const auto& disabled = Config::Get().ui.disabled_banner_types;
   return std::ranges::find(disabled, toast->get_State()) == disabled.end();
 }
 

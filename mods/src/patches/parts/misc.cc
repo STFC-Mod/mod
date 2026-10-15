@@ -35,8 +35,8 @@ void InventoryForPopup_set_MaxItemsToUse(auto original, InventoryForPopup* a1, i
     return;
   }
 
-  if (a1->IsDonationUse() && a2 == 50 && Config::Get().extend_donation_slider) {
-    const auto max = Config::Get().extend_donation_max;
+  if (a1->IsDonationUse() && a2 == 50 && Config::Get().ui.extend_donation_slider) {
+    const auto max = Config::Get().ui.extend_donation_max;
     if (max > 0) {
       a2 = max;
     } else {
@@ -56,7 +56,7 @@ void InventoryUseRowWidget_SetWidgetData(auto original, InventoryUseRowWidget* w
   if (widget) {
     if (auto* context = widget->Context(); context && context->IsChestPurchase()) {
       const auto native_max    = context->MaxItemsToUse();
-      const auto requested_max = static_cast<int64_t>(Config::Get().extend_chest_purchase_max);
+      const auto requested_max = static_cast<int64_t>(Config::Get().ui.extend_chest_purchase_max);
       const auto bounded_max   = std::min(requested_max, kMaximumChestPurchaseMax);
       if (native_max > 0 && bounded_max > native_max) {
         context->SetMaxItemsToUse(bounded_max);
@@ -70,8 +70,8 @@ void InventoryUseRowWidget_SetWidgetData(auto original, InventoryUseRowWidget* w
 #if __APPLE__
 void UnitySlider_set_maxValue(auto original, void* a1, float a2)
 {
-  if ((a2 == 50.0f || a2 == 100.0f) && Config::Get().extend_donation_slider && Config::Get().extend_donation_max > 0) {
-    a2 = (float)Config::Get().extend_donation_max;
+  if ((a2 == 50.0f || a2 == 100.0f) && Config::Get().ui.extend_donation_slider && Config::Get().ui.extend_donation_max > 0) {
+    a2 = (float)Config::Get().ui.extend_donation_max;
   }
   original(a1, a2);
 }
@@ -93,7 +93,7 @@ void InstallMiscPatches()
     SPUD_STATIC_DETOUR(m.Pointer(), InventoryForPopup_set_MaxItemsToUse);
 #endif
 
-  if (Config::Get().extend_chest_purchase_max > 0) {
+  if (Config::Get().ui.extend_chest_purchase_max > 0) {
     if (auto m = InventoryUseRowWidget::Class::Method("SetWidgetData", 0))
       SPUD_STATIC_DETOUR(m.Pointer(), InventoryUseRowWidget_SetWidgetData);
   }
@@ -125,7 +125,7 @@ il2cpp::List<il2cpp::Object*>* ExtractBuffsOfType_Hook(auto original, ClientModi
 bool ShouldShowRevealHook(auto original, void* _this, bool ignore)
 {
   auto result = original(_this, ignore);
-  if (Config::Get().always_skip_reveal_sequence) {
+  if (Config::Get().ui.always_skip_reveal_sequence) {
     return false;
   }
   return result;
@@ -143,13 +143,13 @@ bool ShouldSuppressAdditionalPopup()
 void InterstitialViewController_AboutToShow_Hook(auto original, InterstitialViewController* _this)
 {
   original(_this);
-  if (Config::Get().only_show_first_popup && _this && ShouldSuppressAdditionalPopup())
+  if (Config::Get().ui.only_show_first_popup && _this && ShouldSuppressAdditionalPopup())
     _this->CloseWhenReady();
 }
 
 void ShopSceneManager_ShowPlcOfferPopup_Hook(auto original, void* _this)
 {
-  if (!Config::Get().only_show_first_popup || !ShouldSuppressAdditionalPopup())
+  if (!Config::Get().ui.only_show_first_popup || !ShouldSuppressAdditionalPopup())
     original(_this);
 }
 
@@ -202,7 +202,7 @@ struct Model : il2cpp::Object {
 void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* hotspot, int cursorMode)
 {
 #if _WIN32
-  if (!Config::Get().allow_cursor) {
+  if (!Config::Get().graphics.allow_cursor) {
     SetCursor(LoadCursor(NULL, IDC_ARROW));
     ClipCursor(nullptr); // free cursor from any Unity clipping
     return;
@@ -220,18 +220,18 @@ void Model_LoadConfigs(auto original, Model* _this)
     return;
   }
 
-  if (!Config::Get().config_settings_url.empty()) {
-    config->SetPlatformSettingsUrl(il2cpp_string_new(Config::Get().config_settings_url.c_str()));
+  if (!Config::Get().game.settings_url.empty()) {
+    config->SetPlatformSettingsUrl(il2cpp_string_new(Config::Get().game.settings_url.c_str()));
   }
 
-  if (!Config::Get().config_assets_url_override.empty()) {
-    config->SetAssetUrlOverride(il2cpp_string_new(Config::Get().config_assets_url_override.c_str()));
+  if (!Config::Get().game.assets_url_override.empty()) {
+    config->SetAssetUrlOverride(il2cpp_string_new(Config::Get().game.assets_url_override.c_str()));
   }
 }
 
 bool IsQueueEnabled(auto original, void* _this)
 {
-  if (Config::Get().queue_enabled) {
+  if (Config::Get().control.queue_enabled) {
     return original(_this);
   }
 

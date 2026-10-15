@@ -57,7 +57,7 @@ std::vector<MissionHudButtonDefinition*> LoadConfiguredButtons()
 {
   std::vector<MissionHudButtonDefinition*> configured_buttons;
   for (auto& definition : g_button_definitions) {
-    definition.visibility = Config::Get().MissionHudButtonVisibility(definition.canonical_name);
+    definition.visibility = Config::Get().ui.MissionHudButtonVisibility(definition.canonical_name);
     configured_buttons.emplace_back(&definition);
   }
   return configured_buttons;
@@ -98,7 +98,7 @@ int32_t MissionsHudViewController_UpdateButtons_Hook(auto original, MissionsHudV
   const auto result = original(controller);
 
   for (auto* button : g_configured_buttons) {
-    button->visibility = Config::Get().MissionHudButtonVisibility(button->canonical_name);
+    button->visibility = Config::Get().ui.MissionHudButtonVisibility(button->canonical_name);
     if (button->visibility != MissionHudVisibility::Auto) {
       ApplyButtonVisibility(controller, *button);
     }

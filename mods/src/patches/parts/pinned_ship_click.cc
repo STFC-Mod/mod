@@ -139,7 +139,7 @@ void RefreshPinnedShipSortNow()
 void PinShipClickOnTileClicked(FleetPlayerData* ship)
 {
   auto& cfg = Config::Get();
-  if (!cfg.installPinnedShipClickToggle) return;
+  if (!cfg.patches.pinnedshipclicktoggle) return;
   if (!IsShiftHeld()) return;
   if (!IsShipManagementScreenVisible()) return;
   if (!ship) return;
@@ -147,7 +147,7 @@ void PinShipClickOnTileClicked(FleetPlayerData* ship)
   const auto key = ShipNameMatch::NormalizeKey(ShipNameMatch::GameDisplayName(ship));
   if (key.empty()) return; // placeholder tiles (e.g. "build ship") have no name
 
-  auto& names = cfg.pinned_ships;
+  auto& names = cfg.ui.pinned_ships;
 
   const bool was_pinned = std::find(names.begin(), names.end(), key) != names.end();
   if (was_pinned) {

@@ -44,7 +44,7 @@ bool InvokeActivationAction(Il2CppDelegate* action)
 void MessageUtility_ShowFreeAbilityConfirmationPopup_Hook(auto original, int64_t abilityId, int64_t cooldownTicks,
                                                           Il2CppDelegate* action)
 {
-  if (Config::Get().auto_confirm_reveal_ability && IsExcelsiorDecloakAbility(abilityId)
+  if (Config::Get().ui.auto_confirm_reveal_ability && IsExcelsiorDecloakAbility(abilityId)
       && InvokeActivationAction(action)) {
     spdlog::debug("RevealConfirmation: auto-confirmed the Excelsior's decloaking ability {}", abilityId);
     return;

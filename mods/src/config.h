@@ -2,8 +2,9 @@
 
 #include "patches/notification_audio.h"
 
-// User settings: the values the patches read, loaded once from the settings TOML at startup. A few are toggled
-// at runtime by hotkeys; everything runs on the game thread except sync, which only reads.
+// User settings, loaded once from the settings TOML at startup. Each struct is a TOML section and each member is
+// named after its key, with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale.
+// A few are toggled at runtime by hotkeys. Everything runs on the game thread except sync, which only reads.
 
 #include <array>
 #include <map>
@@ -11,9 +12,8 @@
 #include <string_view>
 #include <vector>
 
-class SyncConfig
-{
-public:
+// Which categories of game data are uploaded, globally ([sync]) or for one target ([sync.targets.<name>]).
+struct SyncConfig {
   enum class Type {
     AwayAssignments,
     Battles,
@@ -44,26 +44,25 @@ public:
   };
 
   std::string proxy;
-
-  bool verify_ssl       = true;
-  bool away_assignments = false;
-  bool battlelogs       = false;
-  bool buffs            = false;
-  bool buildings        = true;
-  bool fleets           = false;
-  bool haven            = true;
-  bool inventory        = false;
-  bool jobs             = false;
-  bool missions         = false;
-  bool officers         = false;
-  bool profile          = false;
-  bool research         = true;
-  bool resources        = false;
-  bool ships            = false;
-  bool slots            = false;
-  bool store_offers     = false;
-  bool tech             = false;
-  bool traits           = false;
+  bool        verify_ssl       = true;
+  bool        away_assignments = false;
+  bool        battlelogs       = false;
+  bool        buffs            = false;
+  bool        buildings        = false;
+  bool        fleets           = false;
+  bool        haven            = false;
+  bool        inventory        = false;
+  bool        jobs             = false;
+  bool        missions         = false;
+  bool        officers         = false;
+  bool        profile          = false;
+  bool        research         = false;
+  bool        resources        = false;
+  bool        ships            = false;
+  bool        slots            = false;
+  bool        store_offers     = false;
+  bool        tech             = false;
+  bool        traits           = false;
 
   [[nodiscard]] bool enabled(Type type) const;
 };
@@ -93,12 +92,9 @@ constexpr std::array SyncOptions{
 
 constexpr std::string to_string(const SyncConfig::Type type)
 {
-  for (const auto& opt : SyncOptions) {
-    if (opt.type == type) {
+  for (const auto& opt : SyncOptions)
+    if (opt.type == type)
       return std::string(opt.type_str);
-    }
-  }
-
   return {};
 }
 
@@ -108,9 +104,7 @@ constexpr std::string operator+(const std::string& prefix, const SyncConfig::Typ
 constexpr std::string operator+(const SyncConfig::Type type, const std::string& suffix)
 { return to_string(type) + suffix; }
 
-class SyncTargetConfig : public SyncConfig
-{
-public:
+struct SyncTargetConfig : SyncConfig {
   std::string url;
   std::string token;
 };
@@ -135,207 +129,229 @@ enum class FleetLabelDetail {
 };
 
 struct FleetLabelProfile {
-  FleetLabelDetail detail;
-  float            zoom_threshold;
+  FleetLabelDetail detail         = FleetLabelDetail::Native;
+  float            zoom_threshold = 0.5f;
+};
+
+// Ship names from a comma list, normalized for ShipNameMatch, or every ship for "*".
+struct ShipFilter {
+  std::vector<std::string> names;
+  bool                     all = false;
 };
 
 class Config final
 {
 public:
-  bool installPinnedShipClickToggle;
-  bool installInteriorZoomHooks;
-  bool show_player_title;
-  float interior_zoom_scale;
-  bool only_show_first_popup = false;
   [[nodiscard]] NotificationSound NotificationSoundForToast(int toast_state) const;
-  Config();
-
   [[nodiscard]] static Config& Get();
-  void                         Load();
-
-  [[nodiscard]] MissionHudVisibility MissionHudButtonVisibility(std::string_view button_name) const;
-
-  // Disallow copying/moving to enforce singleton
   Config(const Config&)            = delete;
   Config& operator=(const Config&) = delete;
-  Config(Config&&)                 = delete;
-  Config& operator=(Config&&)      = delete;
 
-  float             ui_scale;
-  float             ui_scale_step;
-  float             ui_scale_ship;
-  float             ui_scale_viewer;
-  float             zoom;
-  float             fr_scale;
-  FleetLabelProfile zoom_label_player;
-  FleetLabelProfile zoom_label_non_player;
-  bool installHavenZoomHooks = true;
-  bool installHavenHistoryHooks = true;
-  bool installAllianceGamesStoreHooks = true;
-  float haven_zoom = 4000.0f;
-  bool reverse_haven_history = true;
+  // Hook groups. Users switch these off when another mod (such as a BepInEx plugin) hooks the same methods.
+  struct Patches {
+    bool pinnedshipclicktoggle = true;
+    bool thinqueueprotectionhooks = true;
+    bool queueaddressguardhooks = true;
+    bool actionqueuerecoveryhooks = true;
+    bool revealconfirmhooks = true;
+    bool chattitledisplayhooks = true;
+    bool interiorzoomhooks = true;
+    bool uiscalehooks               = true;
+    bool zoomhooks                  = true;
+    bool havenzoomhooks = true;
+    bool havenhistoryhooks = true;
+    bool alliancegamesstorehooks = true;
+    bool bufffixhooks               = true;
+    bool toastbannerhooks           = true;
+    bool panhooks                   = true;
+    bool hotkeyhooks                = true;
+    bool freeresizehooks            = true;
+    bool tempcrashfixes             = true;
+    bool testpatches                = true;
+    bool miscpatches                = true;
+    bool missionhudtweakshooks      = true;
+    bool chatpatches                = true;
+    bool syncpatches                = true;
+    bool game_version               = true;
+    bool objecttracker              = true;
+    bool loadingscreenhooks         = true;
+    bool transitionscreenhooks      = true;
+    bool giftsbulkclaimhooks        = true;
+    bool dailyfactionbulkclaimhooks = true;
+    bool galacticanomalytimerhooks  = true;
+    bool loadingtiphooks            = true;
+    bool doubleclickassignshiphooks = true;
+    bool forbiddentechconfirmhooks  = true;
+    bool forbiddentechshipnamehooks = true;
+    bool audioeventhooks            = true;
+    bool instantcargocounterhooks   = true;
+    bool cargoformathooks           = true;
+    bool officersorthooks           = true;
+    bool pinnedshiphooks            = true;
+    bool artifactexchangehooks      = true;
+  } patches;
 
-  bool              allow_cursor;
-  bool              free_resize;
+  struct Control {
+    bool primary_requires_visible_target = false;
+    bool kirshara_fixes = true;
+    bool queue_enabled       = true;
+    bool hotkeys_enabled     = true;
+    bool hotkeys_extended    = true;
+    bool use_scopely_hotkeys = false;
+    // Milliseconds within which pressing a ship's number again flies the camera to it.
+    int  select_timer        = 500;
+    bool enable_experimental = false;
+  } control;
 
-  bool use_out_of_dock_power;
-  // TODO: read (with enable_experimental) but nothing applies it.
-  float system_pan_momentum;
-  float system_pan_momentum_falloff;
-  bool disable_target_camera_lock;
+  struct Graphics {
+    float interior_zoom_scale = 2.0f;
+    float ui_scale        = 0.6f;
+    float ui_scale_step   = 0.05f;
+    float ui_scale_ship   = 1.0f;
+    float ui_scale_viewer = 1.2f;
+    // The farthest system zoom; presets and zoom shortcuts are in the same unit.
+    float             zoom     = 5000.0f;
+    float haven_zoom = 4000.0f;
+    float             fr_scale = 2.0f;
+    FleetLabelProfile zoom_label_player;
+    FleetLabelProfile zoom_label_non_player;
+    bool              free_resize         = true;
+    bool              allow_cursor        = true;
+    float             keyboard_zoom_speed = 350.0f;
+    // TODO: read (with enable_experimental) but nothing applies it.
+    float system_pan_momentum         = 0.4f;
+    float system_pan_momentum_falloff = 0.8f;
+    bool  disable_target_camera_lock  = false;
+    // TODO: the F11 borderless toggle needs a SetWindowLongW detour that was never installed, so this does nothing.
+    bool borderless_fullscreen = true;
+    // TODO: read but nothing applies it.
+    float transition_time        = 0.01f;
+    float default_system_zoom    = 1750.0f;
+    float system_zoom_preset_1   = 50.0f;
+    float system_zoom_preset_2   = 500.0f;
+    float system_zoom_preset_3   = 1250.0f;
+    float system_zoom_preset_4   = 2750.0f;
+    float system_zoom_preset_5   = 5000.0f;
+    bool  use_presets_as_default = true;
+    // Replace the login background, and the transition (section change) backgrounds.
+    bool loader_enabled    = true;
+    bool loader_transition = true;
+    // Transitions keep the game's black background and only get the logos.
+#ifdef _USE_ORIGINAL_BG
+    bool loader_transition_black = true;
+#else
+    bool loader_transition_black = false;
+#endif
+    // A PNG to use instead of the embedded loading image.
+    std::string loader_image;
+    float       loader_logo_scale      = 1.0f;
+    bool        loader_tip_enabled     = true;
+    bool        galactic_anomaly_timer = false;
+  } graphics;
 
-  float keyboard_zoom_speed;
-  int   select_timer;
+  struct Buffs {
+    bool use_out_of_dock_power = true;
+  } buffs;
 
-  bool  queue_enabled;
-  bool  kirshara_fixes;
-  bool  hotkeys_enabled;
-  bool  hotkeys_extended;
-  bool  primary_requires_visible_target;
-  bool  use_scopely_hotkeys;
-  bool  use_presets_as_default;
-  bool  enable_experimental;
-  float default_system_zoom;
+  struct Audio {
+    bool                     disable_all_events = false;
+    NotificationSound        alert_victory = NotificationSound::None;
+    NotificationSound        alert_defeat = NotificationSound::None;
+    NotificationSound        alert_armada_created = NotificationSound::None;
+    NotificationSound        alert_armada_battle_won = NotificationSound::None;
+    NotificationSound        alert_armada_battle_lost = NotificationSound::None;
 
-  float system_zoom_preset_1;
-  float system_zoom_preset_2;
-  float system_zoom_preset_3;
-  float system_zoom_preset_4;
-  float system_zoom_preset_5;
-  // TODO: read but nothing applies it.
-  float transition_time;
+    bool                     trace_events = false;
+    std::vector<std::string> disabled_events;
+  } audio;
 
-  // TODO: the F11 borderless toggle needs a SetWindowLongW detour that was never installed, so this does nothing.
-  bool             borderless_fullscreen;
-  std::vector<int> disabled_banner_types;
-  std::vector<int> notify_banner_types;
+  struct Ui {
+    bool dock_syncmanagement = true;
+    bool auto_confirm_reveal_ability = false;
+    bool show_player_title = true;
+    bool only_show_first_popup = false;
+    bool reverse_haven_history = true;
+    bool disable_escape_exit = true;
+    // Maximum gap in milliseconds between two Escape presses that opens the exit prompt; 0 never opens it.
+    int  disable_escape_exit_timer = 0;
+    bool disable_preview_locate    = false;
+    bool disable_preview_recall    = false;
+    // TODO: both are read but have no effect; disable_first_popup was switched off in misc.cc.
+    bool disable_first_popup   = false;
+    bool disable_toast_banners = false;
+    bool disable_move_keys     = false;
+    bool disable_galaxy_chat   = false;
+    bool disable_veil_chat     = false;
 
-  int  extend_chest_purchase_max;
-  int  extend_donation_max;
-  bool extend_donation_slider;
-  bool disable_move_keys;
-  bool disable_preview_locate;
-  bool disable_preview_recall;
-  bool disable_escape_exit;
-  int  disable_escape_exit_timer;
+    // Side chat: its initial width in canvas units (0 keeps the game's), and opening it once per login.
+    float default_chat_width = 0.0f;
+    bool  auto_open_chat     = false;
 
-  float default_chat_width;
-  bool  auto_open_chat;
+    bool                     auto_open_bulk_claim_flyout = false;
+    std::vector<std::string> daily_bulk_claim_factions{"federation", "klingon", "romulan"};
+    bool                     daily_bulk_claim_toggle_default_on = false;
 
-  bool disable_galaxy_chat;
-  bool disable_veil_chat;
-  // TODO: both are read but have no effect; disable_first_popup was switched off in misc.cc.
-  bool                     disable_first_popup;
-  bool                     disable_toast_banners;
-  bool                     disable_all_audio_events = false;
-  NotificationSound        alert_victory = NotificationSound::None;
-  NotificationSound        alert_defeat = NotificationSound::None;
-  NotificationSound        alert_armada_created = NotificationSound::None;
-  NotificationSound        alert_armada_battle_won = NotificationSound::None;
-  NotificationSound        alert_armada_battle_lost = NotificationSound::None;
-  bool                     trace_audio_events;
-  std::vector<std::string> disabled_audio_events;
-  bool                     auto_open_bulk_claim_flyout;
-  bool                     auto_confirm_ft_upgrade;
-  bool                     forbidden_tech_ship_name;
-  bool                     auto_confirm_reveal_ability;
-  bool                     auto_confirm_alliance_contribution;
+    InstantWarpConfirmation  auto_confirm_instant_warp = InstantWarpConfirmation::None;
+    ShipFilter               instant_warp_auto_jump;
+    ShipFilter               instant_warp_auto_warp;
+    ShipFilter               instant_warp_always_ask;
+    std::vector<std::string> pinned_ships;
 
-  std::vector<std::string> daily_bulk_claim_factions;
+    bool double_click_to_assign_ship = false;
+    bool focus_search                = true;
+    // Abbreviated cargo values use cargo_significant_decimals.
+    bool format_cargo_values = true;
+    // Restores the Below Deck Ability officer sort option.
+    bool officer_sort              = true;
+    bool arrow_keys_to_select_ship = true;
+    bool auto_confirm_ft_upgrade   = false;
+    // Shows the equipped ship below the Forbidden Tech header, including ships without a dock.
+    bool forbidden_tech_ship_name  = true;
+    bool auto_confirm_alliance_contribution = false;
 
-  bool daily_bulk_claim_toggle_default_on;
+    int  extend_chest_purchase_max = 160;
+    bool extend_donation_slider    = true;
+    int  extend_donation_max       = 80;
 
-  InstantWarpConfirmation auto_confirm_instant_warp;
+    bool show_cargo_default    = true;
+    bool show_player_cargo     = true;
+    bool show_station_cargo    = true;
+    bool show_hostile_cargo    = true;
+    bool show_armada_cargo     = true;
+    bool instant_cargo_counter = true;
+    // Decimal places in abbreviated cargo values such as 1.25M.
+    int cargo_significant_decimals = 2;
 
-  std::vector<std::string> instant_warp_auto_jump;
-  std::vector<std::string> instant_warp_auto_warp;
-  bool                     instant_warp_auto_jump_all = false;
-  bool                     instant_warp_auto_warp_all = false;
+    bool always_skip_reveal_sequence = true;
+    // Hides the artifact shards popup's Exchange All button; single exchanges stay. Takes effect on the next popup.
+    bool disable_exchange_all = false;
+    // Mission HUD buttons by name (q_trials, field_training, outposts, daily_goals, missions).
+    std::map<std::string, MissionHudVisibility, std::less<>> mission_hud_buttons;
 
-  std::vector<std::string> instant_warp_always_ask;
-  bool                     instant_warp_always_ask_all = false;
+    // ToastState values.
+    std::vector<int> disabled_banner_types;
+    std::vector<int> notify_banner_types;
 
-  std::vector<std::string> pinned_ships;
+    [[nodiscard]] MissionHudVisibility MissionHudButtonVisibility(std::string_view button) const;
+  } ui;
 
-  bool double_click_to_assign_ship;
-  bool focus_search;
-  bool format_cargo_values;
-  bool officer_sort;
-  bool arrow_keys_to_select_ship;
-  bool dock_syncmanagement;
+  struct Sync {
+    bool debug   = false;
+    bool logging = false;
+    // Seconds that resolved player and alliance names stay cached.
+    int resolver_cache_ttl = 300;
+    // The categories any target wants, so the game hooks can skip the rest.
+    SyncConfig                              options;
+    std::map<std::string, SyncTargetConfig> targets;
+  } sync;
 
-  bool show_cargo_default;
-  bool show_player_cargo;
-  bool show_station_cargo;
-  bool show_hostile_cargo;
-  bool show_armada_cargo;
-  bool instant_cargo_counter;
+  // [config]: overrides for the game's own server settings.
+  struct Game {
+    std::string settings_url;
+    std::string assets_url_override;
+  } game;
 
-  bool                                        always_skip_reveal_sequence;
-  std::map<std::string, MissionHudVisibility> mission_hud_buttons;
-
-  bool       sync_logging;
-  bool       sync_debug;
-  int        sync_resolver_cache_ttl;
-  SyncConfig sync_options;
-
-  std::map<std::string, SyncTargetConfig> sync_targets;
-
-  bool installUiScaleHooks;
-  bool installZoomHooks;
-  bool installBuffFixHooks;
-  bool installToastBannerHooks;
-  bool installPanHooks;
-  bool installHotkeyHooks;
-  bool installFreeResizeHooks;
-  bool installTempCrashFixes;
-  bool installTestPatches;
-  bool installMiscPatches;
-  bool installMissionHudTweaksHooks;
-  bool disable_exchange_all;
-  bool installChatPatches;
-  bool installPlayerTitleDisplayHooks;
-  bool installSyncPatches;
-  bool installGameVersionHook;
-  bool installObjectTracker;
-  bool installGiftsBulkClaimHooks;
-  bool installDailyFactionBulkClaimHooks;
-  bool installGalacticAnomalyTimerHooks;
-  bool installLoadingTipHooks;
-  bool installDoubleClickAssignShipHooks;
-  bool installForbiddenTechConfirmationHooks;
-  bool installForbiddenTechShipNameHooks;
-  bool installRevealConfirmationHooks;
-  bool installInstantWarpConfirmationHooks;
-  bool installAudioEventHooks;
-  bool installActionQueueRecoveryHooks;
-  bool installQueueAddressGuardHooks;
-  bool installThinQueueProtectionHooks;
-  bool installArtifactExchangeHooks;
-
-  std::string config_settings_url;
-  std::string config_assets_url_override;
-
-  // Loading Screen / Transition Screen
-  bool        loader_enabled;
-  bool        loader_transition;
-  bool        loader_transition_black;
-  std::string loader_image;
-  float       loader_logo_scale;
-  bool        loader_tip_enabled;
-  bool        galactic_anomaly_timer;
-
-  bool installLoadingScreenHooks;
-  bool installTransitionScreenHooks;
-
-  // Cargo formatting
-  bool installCargoFormatHooks;
-  bool installInstantCargoCounterHooks;
-  int  cargo_significant_decimals;
-
-  // Officer roster/assignment "Below Deck Ability" sort option restore
-  bool installOfficerSortHooks;
-
-  // Fleet management dock ship sort: pin configured ships to the front
-  bool installPinnedShipSortHooks;
+private:
+  Config();
+  void Load();
 };

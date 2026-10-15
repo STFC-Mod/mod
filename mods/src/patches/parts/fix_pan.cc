@@ -44,7 +44,7 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
 {
   auto d = _this->lastDelta();
   const auto& config = Config::Get();
-  const bool disable_target_camera_lock = config.disable_target_camera_lock;
+  const bool disable_target_camera_lock = config.graphics.disable_target_camera_lock;
 
   if (disable_target_camera_lock && _this->trackingPOI()) {
     _this->SetTrackingPOI(nullptr);
@@ -57,8 +57,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   bool by_keys        = false;
   bool native_handled = false;
 
-  if (!config.disable_move_keys && config.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
-    if (config.use_scopely_hotkeys || !config.installHotkeyHooks) {
+  if (!config.ui.disable_move_keys && config.control.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
+    if (config.control.use_scopely_hotkeys || !config.patches.hotkeyhooks) {
       original(_this);
       d              = _this->lastDelta();
       native_handled = true;
@@ -81,8 +81,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
     d.x = 0.0f;
     d.y = 0.0f;
   } else if (!dragging && !by_keys) {
-    d.x               = d.x * Config::Get().system_pan_momentum_falloff;
-    d.y               = d.y * Config::Get().system_pan_momentum_falloff;
+    d.x               = d.x * Config::Get().graphics.system_pan_momentum_falloff;
+    d.y               = d.y * Config::Get().graphics.system_pan_momentum_falloff;
     _this->SetLastDelta(d);
     if (!native_handled) {
       _this->MoveCamera(vec2{d.x, d.y}, true);
@@ -98,7 +98,7 @@ void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* 
   original(_this, primary_camera);
 
   auto section_manager = Hub::get_SectionManager();
-  if (!Config::Get().hotkeys_enabled || Config::Get().use_scopely_hotkeys || Config::Get().disable_move_keys
+  if (!Config::Get().control.hotkeys_enabled || Config::Get().control.use_scopely_hotkeys || Config::Get().ui.disable_move_keys
       || !section_manager || section_manager->CurrentSection() != SectionID::Starbase_Exterior || Key::IsInputFocused()) {
     return;
   }

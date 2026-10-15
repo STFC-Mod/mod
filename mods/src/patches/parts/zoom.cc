@@ -28,8 +28,8 @@ public:
   static bool Enabled()
   {
     const auto& config = Config::Get();
-    return config.zoom_label_player.detail != FleetLabelDetail::Native
-           || config.zoom_label_non_player.detail != FleetLabelDetail::Native;
+    return config.graphics.zoom_label_player.detail != FleetLabelDetail::Native
+           || config.graphics.zoom_label_non_player.detail != FleetLabelDetail::Native;
   }
 
   // The level `lod` should show instead of `native`, or `native` when its fleet is not tracked.
@@ -122,14 +122,15 @@ private:
       return nullptr;
     // A missing FleetType property reads as Nonexistent, which counts as non-player.
     const auto& config = Config::Get();
-    return fleet->FleetType() == DeployedFleetType::Player ? &config.zoom_label_player : &config.zoom_label_non_player;
+    return fleet->FleetType() == DeployedFleetType::Player ? &config.graphics.zoom_label_player
+                                                           : &config.graphics.zoom_label_non_player;
   }
 
   static bool UsesThreshold()
   {
     const auto& config = Config::Get();
-    return config.zoom_label_player.detail == FleetLabelDetail::Threshold
-           || config.zoom_label_non_player.detail == FleetLabelDetail::Threshold;
+    return config.graphics.zoom_label_player.detail == FleetLabelDetail::Threshold
+           || config.graphics.zoom_label_non_player.detail == FleetLabelDetail::Threshold;
   }
 
   // Labels expand when zoomed in at least as far as the threshold. 0 never expands, 1 always does.
@@ -164,10 +165,10 @@ private:
   void UpdateThreshold()
   {
     const auto& config     = Config::Get();
-    const bool  player     = config.zoom_label_player.detail == FleetLabelDetail::Threshold
-                             && ExpandedAt(config.zoom_label_player.zoom_threshold);
-    const bool  non_player = config.zoom_label_non_player.detail == FleetLabelDetail::Threshold
-                             && ExpandedAt(config.zoom_label_non_player.zoom_threshold);
+    const bool  player     = config.graphics.zoom_label_player.detail == FleetLabelDetail::Threshold
+                             && ExpandedAt(config.graphics.zoom_label_player.zoom_threshold);
+    const bool  non_player = config.graphics.zoom_label_non_player.detail == FleetLabelDetail::Threshold
+                             && ExpandedAt(config.graphics.zoom_label_non_player.zoom_threshold);
     if (threshold_known_ && player == player_expanded_ && non_player == non_player_expanded_)
       return;
     threshold_known_     = true;
@@ -195,7 +196,7 @@ bool zoom_to_default = false;
 
 // Camera distance as a share of the zoom range, scaled to the configured maximum (the unit the presets use).
 float CurrentZoom(NavigationZoom* zoom)
-{ return (zoom->Distance() - zoom->minimum()) / (zoom->maximum() - zoom->minimum()) * Config::Get().zoom; }
+{ return (zoom->Distance() - zoom->minimum()) / (zoom->maximum() - zoom->minimum()) * Config::Get().graphics.zoom; }
 
 void StorePreset(const char* label, float& preset, NavigationZoom* zoom)
 {
@@ -207,22 +208,27 @@ void StorePreset(const char* label, float& preset, NavigationZoom* zoom)
 struct Preset {
   GameFunction store;
   GameFunction go;
-  float Config::* value;
-  const char*     label;
+  float Config::Graphics::* value;
+  const char*               label;
 };
 
 constexpr Preset kPresets[] = {
-    {GameFunction::SetZoomPreset1, GameFunction::ZoomPreset1, &Config::system_zoom_preset_1, "System Preset 1"},
-    {GameFunction::SetZoomPreset2, GameFunction::ZoomPreset2, &Config::system_zoom_preset_2, "System Preset 2"},
-    {GameFunction::SetZoomPreset3, GameFunction::ZoomPreset3, &Config::system_zoom_preset_3, "System Preset 3"},
-    {GameFunction::SetZoomPreset4, GameFunction::ZoomPreset4, &Config::system_zoom_preset_4, "System Preset 4"},
-    {GameFunction::SetZoomPreset5, GameFunction::ZoomPreset5, &Config::system_zoom_preset_5, "System Preset 5"},
+    {GameFunction::SetZoomPreset1, GameFunction::ZoomPreset1, &Config::Graphics::system_zoom_preset_1,
+     "System Preset 1"},
+    {GameFunction::SetZoomPreset2, GameFunction::ZoomPreset2, &Config::Graphics::system_zoom_preset_2,
+     "System Preset 2"},
+    {GameFunction::SetZoomPreset3, GameFunction::ZoomPreset3, &Config::Graphics::system_zoom_preset_3,
+     "System Preset 3"},
+    {GameFunction::SetZoomPreset4, GameFunction::ZoomPreset4, &Config::Graphics::system_zoom_preset_4,
+     "System Preset 4"},
+    {GameFunction::SetZoomPreset5, GameFunction::ZoomPreset5, &Config::Graphics::system_zoom_preset_5,
+     "System Preset 5"},
 };
 
 // Widens the system view's zoom range to the configured maximum and pushes the far clip plane out with it.
 void ApplyZoomRange(NavigationZoom* zoom, float radius)
 {
-  const auto max_zoom = Config::Get().zoom;
+  const auto max_zoom = Config::Get().graphics.zoom;
   if (radius > 0.0f) {
     zoom->SetFarRatioSystemNormal(0.55f * max_zoom / radius);
     zoom->SetFarRatioSystemExtended(max_zoom / radius);
@@ -237,7 +243,7 @@ void ApplyZoomRange(NavigationZoom* zoom, float radius)
 // The game resets the range now and then; reapply it around every update.
 void KeepZoomRange(NavigationZoom* zoom)
 {
-  const auto max_zoom = Config::Get().zoom;
+  const auto max_zoom = Config::Get().graphics.zoom;
   if (zoom->depth() != NodeDepth::SolarSystem || max_zoom <= 0.0f)
     return;
   ApplyZoomRange(zoom, zoom->viewRadius());
@@ -258,7 +264,7 @@ void ZoomAtMouse(NavigationZoom* zoom, float value, bool absolute)
   GetMousePosition(&mouse);
   zoom->SetZoomLocation(vec2{.x = mouse.x, .y = mouse.y});
   if (absolute) {
-    zoom->SetDistance(zoom->minimum() + (zoom->maximum() - zoom->minimum()) * (value / Config::Get().zoom));
+    zoom->SetDistance(zoom->minimum() + (zoom->maximum() - zoom->minimum()) * (value / Config::Get().graphics.zoom));
   } else {
     zoom->SetZoomDelta(value);
     zoom->SetLastZoomDelta(value);
@@ -274,44 +280,44 @@ bool KeyboardZoom(NavigationZoom* zoom)
 {
   static auto GetDeltaTime = il2cpp::ResolveICall<float()>("UnityEngine.Time::get_deltaTime()");
   auto&       config       = Config::Get();
-  const bool  shortcuts    = config.hotkeys_enabled && !config.use_scopely_hotkeys;
+  const bool  shortcuts    = config.control.hotkeys_enabled && !config.control.use_scopely_hotkeys;
 
   float target      = 0.0f;
   bool  from_preset = false;
   if (shortcuts) {
     for (const auto& preset : kPresets) {
       if (Shortcut::IsDown(preset.store)) {
-        StorePreset(preset.label, config.*preset.value, zoom);
+        StorePreset(preset.label, config.graphics.*preset.value, zoom);
         return false;
       }
     }
     if (Shortcut::IsDown(GameFunction::SetZoomDefault)) {
-      StorePreset("System Default", config.default_system_zoom, zoom);
+      StorePreset("System Default", config.graphics.default_system_zoom, zoom);
       return false;
     }
     for (const auto& preset : kPresets) {
       if (Shortcut::IsDown(preset.go)) {
-        target      = config.*preset.value;
+        target      = config.graphics.*preset.value;
         from_preset = true;
         break;
       }
     }
-    if (config.hotkeys_extended) {
+    if (config.control.hotkeys_extended) {
       if (Shortcut::IsDown(GameFunction::ZoomReset))
         zoom_to_default = true;
       else if (Shortcut::IsDown(GameFunction::ZoomMin))
-        target = config.zoom;
+        target = config.graphics.zoom;
       else if (Shortcut::IsDown(GameFunction::ZoomMax))
         target = 100.0f;
     }
   }
   if (zoom_to_default)
-    target = config.default_system_zoom;
+    target = config.graphics.default_system_zoom;
 
   if (target != 0.0f) {
     ZoomAtMouse(zoom, target, true);
   } else {
-    const float step = config.keyboard_zoom_speed * GetDeltaTime();
+    const float step = config.graphics.keyboard_zoom_speed * GetDeltaTime();
     if (shortcuts && Shortcut::IsPressed(GameFunction::ZoomIn))
       ZoomAtMouse(zoom, step, false);
     else if (shortcuts && Shortcut::IsPressed(GameFunction::ZoomOut))
@@ -319,8 +325,8 @@ bool KeyboardZoom(NavigationZoom* zoom)
   }
 
   // With use_presets_as_default, jumping to a preset also makes it the zoom used on entering a system.
-  if (from_preset && target > 0.0f && config.use_presets_as_default)
-    StorePreset("System Preset Default from Preset", config.default_system_zoom, zoom);
+  if (from_preset && target > 0.0f && config.graphics.use_presets_as_default)
+    StorePreset("System Preset Default from Preset", config.graphics.default_system_zoom, zoom);
   return true;
 }
 
@@ -398,7 +404,7 @@ void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, Navigatio
 void ScaleFlatRenderable(il2cpp::Object* renderable)
 {
   static float scaled = 0.0f;
-  const float  factor = Config::Get().fr_scale;
+  const float  factor = Config::Get().graphics.fr_scale;
   // FlatRenderable is a Component; transform resolves on its runtime class.
   auto* transform =
       renderable && factor > 0.0f && factor != 1.0f ? renderable->Get<"transform", Transform*>() : nullptr;

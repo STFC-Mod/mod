@@ -76,7 +76,7 @@ void AspectRatioConstraintHandler_Update(auto, void*)
 intptr_t AspectRatioConstraintHandler_WndProc(auto original, HWND hWnd, uint32_t msg, intptr_t wParam, intptr_t lParam)
 {
   // Skip the game's aspect-ratio clamp and hand the message straight to Unity.
-  if (Config::Get().free_resize)
+  if (Config::Get().graphics.free_resize)
     return CallWindowProcA(AspectRatioConstraintHandler::_unityWndProc(), hWnd, msg, wParam, lParam);
   return original(hWnd, msg, wParam, lParam);
 }

@@ -23,7 +23,7 @@ bool options_installed = false;
 
 void ObserveChatPreview(ChatPreviewController* preview)
 {
-  if (!Config::Get().auto_open_chat)
+  if (!Config::Get().ui.auto_open_chat)
     return;
   if (preview_handle && preview_handle.Get() == preview)
     return;
@@ -34,9 +34,9 @@ void ObserveChatPreview(ChatPreviewController* preview)
 
 void UpdateChatOptions()
 {
-  const float configured_width = Config::Get().default_chat_width;
+  const float configured_width = Config::Get().ui.default_chat_width;
   const bool custom_width = std::isfinite(configured_width) && configured_width > 0;
-  if (startup_failed || (!Config::Get().auto_open_chat && !custom_width))
+  if (startup_failed || (!Config::Get().ui.auto_open_chat && !custom_width))
     return;
   try {
     auto* sections = Hub::get_SectionManager();
@@ -51,7 +51,7 @@ void UpdateChatOptions()
       // notification. A destroyed preview naturally resolves to null.
       return;
     }
-    if ((!Config::Get().auto_open_chat || startup.completed) && (!custom_width || width_applied))
+    if ((!Config::Get().ui.auto_open_chat || startup.completed) && (!custom_width || width_applied))
       return;
     auto* manager = ChatManager::Instance();
     if (!manager)
@@ -67,7 +67,7 @@ void UpdateChatOptions()
         width_applied = true;
       }
     }
-    if (!Config::Get().auto_open_chat || startup.completed)
+    if (!Config::Get().ui.auto_open_chat || startup.completed)
       return;
     auto* preview = preview_handle.Get<ChatPreviewController>();
     const bool station = section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
@@ -126,8 +126,8 @@ auto GetChatTabIndices()
 
 void DisableButtons(FullScreenChatViewController* _this)
 {
-  const auto disableGalaxyChat = Config::Get().disable_galaxy_chat;
-  const auto disableVeilChat = Config::Get().disable_veil_chat;
+  const auto disableGalaxyChat = Config::Get().ui.disable_galaxy_chat;
+  const auto disableVeilChat = Config::Get().ui.disable_veil_chat;
 
   if (!(disableGalaxyChat || disableVeilChat))
     return;
@@ -171,7 +171,7 @@ void FullScreenChatViewController_AboutToShow(auto original, FullScreenChatViewC
 void FullScreenChatViewController_OnDidChangeSelectedTab(auto original, FullScreenChatViewController* _this, int32_t tabIdx, void* tab)
 {
   const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
-  if ((tabIdx == galaxyChatIdx && Config::Get().disable_galaxy_chat) || (tabIdx == veilChatIdx && Config::Get().disable_veil_chat)) {
+  if ((tabIdx == galaxyChatIdx && Config::Get().ui.disable_galaxy_chat) || (tabIdx == veilChatIdx && Config::Get().ui.disable_veil_chat)) {
     // don't show disabled chats if the associated tab was selected
     return;
   }
@@ -185,7 +185,7 @@ void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _th
 
   ObserveChatPreview(_this);
 
-  if (Config::Get().disable_galaxy_chat || Config::Get().disable_veil_chat) {
+  if (Config::Get().ui.disable_galaxy_chat || Config::Get().ui.disable_veil_chat) {
     const auto allianceChatIdx = std::get<3>(GetChatTabIndices());
     _this->SetFocusedPanel(ChatChannelCategory::Alliance);
 
@@ -198,8 +198,8 @@ void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _th
 void ChatPreviewController_OnPanelFocused(auto original, ChatPreviewController* _this, int32_t index)
 {
   ObserveChatPreview(_this);
-  static const auto disableGalaxyChat = Config::Get().disable_galaxy_chat;
-  static const auto disableVeilChat   = Config::Get().disable_veil_chat;
+  static const auto disableGalaxyChat = Config::Get().ui.disable_galaxy_chat;
+  static const auto disableVeilChat   = Config::Get().ui.disable_veil_chat;
 
   if (!(disableGalaxyChat || disableVeilChat)) {
     original(_this, index);
@@ -223,7 +223,7 @@ void ChatPreviewController_OnPanelFocused(auto original, ChatPreviewController* 
 
 void ChatPreviewController_OnGlobalMessageReceived(auto original, ChatPreviewController* _this, void* message)
 {
-  if (Config::Get().disable_galaxy_chat)
+  if (Config::Get().ui.disable_galaxy_chat)
     return;
 
   original(_this, message);
@@ -231,7 +231,7 @@ void ChatPreviewController_OnGlobalMessageReceived(auto original, ChatPreviewCon
 
 void ChatPreviewController_OnRegionalMessageReceived(auto original, ChatPreviewController* _this, void* message)
 {
-  if (Config::Get().disable_veil_chat)
+  if (Config::Get().ui.disable_veil_chat)
     return;
 
   original(_this, message);
@@ -242,7 +242,7 @@ void InstallChatPatches()
   options_installed = InstallScreenManagerUpdateHook();
   if (options_installed)
     spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}",
-                 Config::Get().auto_open_chat, Config::Get().default_chat_width);
+                 Config::Get().ui.auto_open_chat, Config::Get().ui.default_chat_width);
   if (auto m = FullScreenChatViewController::Class::Method("AboutToShow"))
     SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_AboutToShow);
   if (auto m = FullScreenChatViewController::Class::Method("OnDidChangeSelectedTab"))

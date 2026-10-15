@@ -1,5 +1,4 @@
 // Settings parsing and shortcut matching, run against production code with Unity input replaced by a fake.
-#include "defaultconfig.h"
 #include "patches/chat_startup.h"
 #include "patches/input.h"
 #include "patches/parts/toast_text.h"
@@ -151,10 +150,10 @@ void Loading()
   Check(!Shortcut::HasBinding(GameFunction::ShowSystem), "an empty string disables the binding");
   Check(Value(parsed, "shortcuts", "show_system") == "NONE", "disabled binding recorded as NONE");
 
-  Check(Shortcut::Describe(GameFunction::ShowEvents) == DefaultConfig::Shortcuts::show_events,
+  Check(Shortcut::Describe(GameFunction::ShowEvents) == std::string("SHIFT-E"),
         "a binding with no valid key falls back to the default");
   Check(Value(parsed, "shortcuts_source", "show_events") == "default", "fallback recorded as default");
-  Check(Shortcut::Describe(GameFunction::Quit) == DefaultConfig::Shortcuts::quit, "a non-string falls back too");
+  Check(Shortcut::Describe(GameFunction::Quit) == std::string("F10"), "a non-string falls back too");
 
   Check(Shortcut::Describe(GameFunction::DisableHotKeys) == "F3", "deprecated alias still binds");
   Check(Value(parsed, "shortcuts_source", "set_hotkeys_disabled") == "alias:set_hotkeys_disble", "alias source");

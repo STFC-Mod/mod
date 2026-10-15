@@ -18,13 +18,13 @@ namespace
 constexpr std::string_view kCargoIdentifier = "shared_x_of_y_x_coloured";
 
 int SignificantDecimals()
-{ return std::clamp(Config::Get().cargo_significant_decimals, 0, 6); }
+{ return std::clamp(Config::Get().ui.cargo_significant_decimals, 0, 6); }
 
 // m_significantDecimals is read by Localize(), which runs after SetLocalTextParameters, so set it here for good.
 void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, ColourTextLocalizer* _this, bool parseID,
                                                      void* args)
 {
-  if (_this && Config::Get().format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
+  if (_this && Config::Get().ui.format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
     _this->SetSignificantDecimals(SignificantDecimals());
   original(_this, parseID, args);
 }
@@ -68,7 +68,7 @@ bool IsCargoText(LegacyComparableProgressBar* self)
 
 void SetWidgetData_Hook(auto original, LegacyComparableProgressBar* self)
 {
-  if (!Config::Get().instant_cargo_counter || !self || !IsCargoText(self)) {
+  if (!Config::Get().ui.instant_cargo_counter || !self || !IsCargoText(self)) {
     original(self);
     return;
   }

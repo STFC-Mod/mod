@@ -62,7 +62,7 @@ void ApplyTitleDisplay(void* profile_widget)
     return;
   }
 
-  const auto show  = Config::Get().show_player_title;
+  const auto show  = Config::Get().ui.show_player_title;
   auto*      title = widget->playerTitleWidget();
   if (show || title == nullptr) {
     return;
@@ -88,7 +88,7 @@ void PlayerTitleWidget_BindPath_Hook(auto original, void* _this)
 {
   original(_this);
   try {
-    if (Config::Get().show_player_title) {
+    if (Config::Get().ui.show_player_title) {
       return;
     }
     UserProfileWidget* owner     = nullptr;
@@ -205,5 +205,5 @@ void InstallChatTitleDisplayHooks()
     SPUD_STATIC_DETOUR(on_did_bind_context, PlayerTitleWidget_BindPath_Hook);
   }
 
-  spdlog::info("Chat title display: chat player title rows {}", Config::Get().show_player_title ? "shown" : "hidden");
+  spdlog::info("Chat title display: chat player title rows {}", Config::Get().ui.show_player_title ? "shown" : "hidden");
 }

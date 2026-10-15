@@ -108,7 +108,7 @@ void ApplyFactionIconVisibility(Transform* toggle_tf)
     return;
   }
 
-  const auto& configured = Config::Get().daily_bulk_claim_factions;
+  const auto& configured = Config::Get().ui.daily_bulk_claim_factions;
 
   for (const auto& entry : kFactionIconNames) {
     auto* icon_transform = FindChildByName(parent, entry.game_object_name);
@@ -137,7 +137,7 @@ constexpr int kMaxDefaultToggleAttempts = 300;
 void ApplyDefaultToggleOnOnce(MissionViewController* controller)
 {
   auto* toggle = controller != nullptr ? controller->ClaimAllToggle() : nullptr;
-  if (g_applied_default_toggle_on || !Config::Get().daily_bulk_claim_toggle_default_on || toggle == nullptr) {
+  if (g_applied_default_toggle_on || !Config::Get().ui.daily_bulk_claim_toggle_default_on || toggle == nullptr) {
     return;
   }
 
@@ -241,7 +241,7 @@ TournamentList* MissionViewController_GetClaimableDailiesList(auto original, Mis
 
   ApplyFactionIconVisibility(GetTransformOf(_this->ClaimAllToggle()));
 
-  const auto& configured = Config::Get().daily_bulk_claim_factions;
+  const auto& configured = Config::Get().ui.daily_bulk_claim_factions;
   if (configured.empty()) {
     return list;
   }
@@ -285,6 +285,6 @@ void InstallDailyFactionBulkClaimHooks()
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToShow);
   if (auto m = Controller::Method("AboutToHide", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToHide);
-  if (Config::Get().daily_bulk_claim_toggle_default_on)
+  if (Config::Get().ui.daily_bulk_claim_toggle_default_on)
     InstallScreenManagerUpdateHook();
 }

@@ -214,7 +214,7 @@ struct Assets {
   {
     if (background.Texture())
       return &background;
-    const auto&     path = Config::Get().loader_image;
+    const auto&     path = Config::Get().graphics.loader_image;
     std::error_code error;
     if (!path.empty() && std::filesystem::exists(path, error)) {
       std::ifstream        file(path, std::ios::binary);
@@ -286,7 +286,7 @@ void CreateLogo(const char* name, ImageAsset* asset, Transform* parent, Corner c
   if (height <= 0.0f)
     height = 750.0f;
 
-  const float scale       = width / 1920.0f * Config::Get().loader_logo_scale;
+  const float scale       = width / 1920.0f * Config::Get().graphics.loader_logo_scale;
   const float logo_width  = 150.0f * scale;
   const float logo_height = logo_width * asset->AspectRatio();
   const float pad_x       = 30.0f * scale;
@@ -339,7 +339,7 @@ Image* FindLoginBackground(Transform* transform, int depth, Image*& first)
 void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
 {
   original(_this);
-  if (!Config::Get().loader_enabled)
+  if (!Config::Get().graphics.loader_enabled)
     return;
 
   login = {};
@@ -424,7 +424,7 @@ struct Tips {
 void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, LoadingTipViewController* _this)
 {
   original(_this);
-  if (!Config::Get().loader_tip_enabled)
+  if (!Config::Get().graphics.loader_tip_enabled)
     return;
   auto* label = _this->textMeshPro();
   if (const char* tip = tips.Next(); tip && label)
@@ -501,7 +501,7 @@ void CustomizeTransition(TransitionViewController* controller)
     }
   }
 
-  if (!Config::Get().loader_transition_black) {
+  if (!Config::Get().graphics.loader_transition_black) {
 #ifndef _USE_ORIGINAL_BG
     if (parent && !transition.overlay)
       if (auto* background = assets.Background())
@@ -522,7 +522,7 @@ void CustomizeTransition(TransitionViewController* controller)
 
   if (parent)
     CreateLogos(parent, transition.logo, transition.community_logo);
-  if (!Config::Get().loader_transition_black)
+  if (!Config::Get().graphics.loader_transition_black)
     ArrangeTransitionLayout(controller);
   transition.customized = true;
 }
@@ -530,7 +530,7 @@ void CustomizeTransition(TransitionViewController* controller)
 void TransitionViewController_Awake_Hook(auto original, TransitionViewController* _this)
 {
   original(_this);
-  if (!Config::Get().loader_transition)
+  if (!Config::Get().graphics.loader_transition)
     return;
   // A controller can outlive the LoginSequence generation that created the cached images; recreate them before
   // touching its hierarchy.
@@ -542,13 +542,13 @@ void TransitionViewController_Awake_Hook(auto original, TransitionViewController
 void TransitionViewController_AboutToShow_Hook(auto original, TransitionViewController* _this)
 {
   original(_this);
-  if (Config::Get().loader_transition && !transition.customized)
+  if (Config::Get().graphics.loader_transition && !transition.customized)
     CustomizeTransition(_this);
 }
 
 void TransitionViewController_AboutToHide_Hook(auto original, TransitionViewController* _this)
 {
-  if (Config::Get().loader_transition && transition.animator)
+  if (Config::Get().graphics.loader_transition && transition.animator)
     transition.animator->SetEnabled(true);
   original(_this);
 }
@@ -557,7 +557,7 @@ void SlideShowViewController_ShowCurrentSlide_Hook(auto original, SlideShowViewC
 {
   original(_this);
   const auto& config = Config::Get();
-  if (config.loader_transition && !config.loader_transition_black)
+  if (config.graphics.loader_transition && !config.graphics.loader_transition_black)
     HideImage(_this->image());
 }
 

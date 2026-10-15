@@ -27,11 +27,11 @@ bool FabricEventManager_PostEvent_Hook(auto original, FabricEventManager* _this,
   const auto event = to_string(event_name);
   auto&      config = Config::Get();
 
-  if (config.trace_audio_events) {
+  if (config.audio.trace_events) {
     spdlog::info("Audio event: {}", event);
   }
 
-  if ((config.disable_all_audio_events ? event_action == 0 || event_action == 3 || event_action == 16 || event_action == 33 : std::ranges::find(config.disabled_audio_events, event) != config.disabled_audio_events.end())) {
+  if ((config.audio.disable_all_events ? event_action == 0 || event_action == 3 || event_action == 16 || event_action == 33 : std::ranges::find(config.audio.disabled_events, event) != config.audio.disabled_events.end())) {
     spdlog::debug("Suppressed audio event: {}", event);
     return false;
   }

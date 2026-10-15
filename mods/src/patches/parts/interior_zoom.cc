@@ -39,7 +39,7 @@ bool                                            g_reported = false;
 
 float InteriorScale()
 {
-  const auto scale = Config::Get().interior_zoom_scale;
+  const auto scale = Config::Get().graphics.interior_zoom_scale;
   return (std::isfinite(scale) && scale > 1.0f) ? scale : 1.0f;
 }
 

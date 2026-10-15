@@ -149,7 +149,7 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _th
   original(_this);
 
   const auto& config = Config::Get();
-  if (!config.hotkeys_enabled || config.use_scopely_hotkeys)
+  if (!config.control.hotkeys_enabled || config.control.use_scopely_hotkeys)
     return;
 
   auto* reference = _this->inputAction();

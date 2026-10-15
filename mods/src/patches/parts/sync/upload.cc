@@ -168,7 +168,7 @@ namespace
     if (auto it = workers.find(name); it != workers.end())
       return *it->second;
 
-    const auto& target = Config::Get().sync_targets.at(name);
+    const auto& target = Config::Get().sync.targets.at(name);
     auto        worker = std::make_unique<TargetWorker>();
     auto&       http   = worker->session;
     http.SetUrl(target.url);
@@ -200,7 +200,7 @@ namespace
 
   void SendToTargets(const Upload& upload)
   {
-    const auto& targets = Config::Get().sync_targets;
+    const auto& targets = Config::Get().sync.targets;
     if (targets.empty()) {
       static std::once_flag warned;
       std::call_once(warned, [] { logging::warn("UPLOAD", "GLOBAL", "No target found, will not attempt to send"); });
@@ -243,7 +243,7 @@ namespace
     static cpr::Session   http;
     static std::once_flag configured;
     std::call_once(configured, [] {
-      const auto& options = Config::Get().sync_options;
+      const auto& options = Config::Get().sync.options;
       http.SetAcceptEncoding(cpr::AcceptEncoding{});
       http.SetHttpVersion(cpr::HttpVersion{cpr::HttpVersionCode::VERSION_1_1});
       spdlog::debug("scopely session: proxy='{}', verify_ssl={}", options.proxy, options.verify_ssl);
@@ -269,31 +269,31 @@ namespace logging
 {
   void error(std::string_view type, std::string_view target, std::string_view text)
   {
-    if (Config::Get().sync_logging)
+    if (Config::Get().sync.logging)
       spdlog::error("SYNC-{} - {}: {}", type, target, text);
   }
 
   void warn(std::string_view type, std::string_view target, std::string_view text)
   {
-    if (Config::Get().sync_logging)
+    if (Config::Get().sync.logging)
       spdlog::warn("SYNC-{} - {}: {}", type, target, text);
   }
 
   void info(std::string_view type, std::string_view target, std::string_view text)
   {
-    if (Config::Get().sync_logging)
+    if (Config::Get().sync.logging)
       spdlog::info("SYNC-{} - {}: {}", type, target, text);
   }
 
   void debug(std::string_view type, std::string_view target, std::string_view text)
   {
-    if (Config::Get().sync_logging && Config::Get().sync_debug)
+    if (Config::Get().sync.logging && Config::Get().sync.debug)
       spdlog::debug("SYNC-{} - {}: {}", type, target, text);
   }
 
   void trace(std::string_view type, std::string_view target, std::string_view text)
   {
-    if (Config::Get().sync_logging && Config::Get().sync_debug)
+    if (Config::Get().sync.logging && Config::Get().sync.debug)
       spdlog::trace("SYNC-{} - {}: {}", type, target, text);
   }
 } // namespace logging
@@ -331,7 +331,7 @@ void SetInstanceId(int32_t instance_id)
 
 std::string RequestGameData(const std::string& path, const std::string& body)
 {
-  if (Config::Get().sync_targets.empty()) {
+  if (Config::Get().sync.targets.empty()) {
     static std::once_flag warned;
     std::call_once(warned,
                    [] { logging::warn("UPLOAD", "GLOBAL", "No target found, will not attempt to retrieve data"); });

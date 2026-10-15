@@ -24,7 +24,7 @@ namespace
 {
 float ShipScaleMultiplier()
 {
-  const auto multiplier = Config::Get().ui_scale_ship;
+  const auto multiplier = Config::Get().graphics.ui_scale_ship;
   return multiplier > 0.0f ? multiplier : 1.0f;
 }
 
@@ -60,11 +60,11 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 
 #if _WIN32
   static auto cursor = LoadCursor(nullptr, IDC_ARROW);
-  if (!Config::Get().allow_cursor)
+  if (!Config::Get().graphics.allow_cursor)
     SetCursor(cursor);
 #endif
 
-  const auto ui_scale = Config::Get().ui_scale;
+  const auto ui_scale = Config::Get().graphics.ui_scale;
   if (ui_scale == 0.0f)
     return;
 
@@ -77,7 +77,7 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 
 void CanvasController_Show(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
 {
-  const auto viewer_scale = Config::Get().ui_scale_viewer;
+  const auto viewer_scale = Config::Get().graphics.ui_scale_viewer;
   if (_this && viewer_scale != 0.0f && to_string(_this->name()) == "ObjectViewerTemplate_Canvas") {
     if (auto* transform = _this->transform())
       transform->SetLocalScale({viewer_scale, viewer_scale, viewer_scale});
@@ -89,39 +89,39 @@ void CanvasController_Show(auto original, CanvasController* _this, int desiredEn
 void AdjustUiScale(bool up)
 {
   auto& config = Config::Get();
-  if (config.ui_scale == 0.0f)
+  if (config.graphics.ui_scale == 0.0f)
     return;
 
-  const auto old_scale = config.ui_scale;
-  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step;
-  config.ui_scale      = std::clamp(new_scale, 0.1f, 2.0f);
+  const auto old_scale = config.graphics.ui_scale;
+  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step;
+  config.graphics.ui_scale      = std::clamp(new_scale, 0.1f, 2.0f);
   spdlog::info("UI has been scaled {}, was {}, now {} (unclamped {}) @ {} DPI Scaling", up ? "UP" : "DOWN", old_scale,
-               config.ui_scale, new_scale, WindowDpiScale(true));
+               config.graphics.ui_scale, new_scale, WindowDpiScale(true));
 }
 
 void AdjustUiViewerScale(bool up)
 {
   auto& config = Config::Get();
-  if (config.ui_scale_viewer == 0.0f)
+  if (config.graphics.ui_scale_viewer == 0.0f)
     return;
 
   // Viewers change in quarter steps; a full step is too coarse at their size.
-  const auto old_scale   = config.ui_scale_viewer;
-  const auto new_scale   = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step * 0.25f;
-  config.ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
+  const auto old_scale   = config.graphics.ui_scale_viewer;
+  const auto new_scale   = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step * 0.25f;
+  config.graphics.ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
   spdlog::info("UI Viewer has been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
-               config.ui_scale_viewer, new_scale);
+               config.graphics.ui_scale_viewer, new_scale);
 }
 
 void AdjustUiShipScale(bool up)
 {
   auto&      config    = Config::Get();
-  const auto old_scale = config.ui_scale_ship;
-  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.ui_scale_step;
-  config.ui_scale_ship = std::clamp(new_scale, 0.1f, 20.0f);
+  const auto old_scale = config.graphics.ui_scale_ship;
+  const auto new_scale = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step;
+  config.graphics.ui_scale_ship = std::clamp(new_scale, 0.1f, 20.0f);
   spdlog::info("System ship models have been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
-               config.ui_scale_ship, new_scale);
-  RescaleLoadedShips(old_scale, config.ui_scale_ship);
+               config.graphics.ui_scale_ship, new_scale);
+  RescaleLoadedShips(old_scale, config.graphics.ui_scale_ship);
 }
 
 void InstallUiScaleHooks()

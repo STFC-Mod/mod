@@ -46,7 +46,7 @@ void PressAssignButton()
 
 void DoubleClickOnShipTileClicked(FleetPlayerData* ship)
 {
-  if (!Config::Get().double_click_to_assign_ship) return;
+  if (!Config::Get().ui.double_click_to_assign_ship) return;
   if (!ship) return;
 
   const auto now             = std::chrono::steady_clock::now();
@@ -63,7 +63,7 @@ void DoubleClickOnShipTileClicked(FleetPlayerData* ship)
 
 void AssignShipEnterKeyUpdate()
 {
-  if (!Config::Get().double_click_to_assign_ship) return;
+  if (!Config::Get().ui.double_click_to_assign_ship) return;
   if (!Key::Pressed(KeyCode::Return) && !Key::Pressed(KeyCode::KeypadEnter)) return;
   if (Key::IsInputFocused()) return;
 

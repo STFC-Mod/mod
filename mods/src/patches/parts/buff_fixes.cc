@@ -24,7 +24,7 @@ void InstallBuffFixHooks()
 {
   using BuffService = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "BuffService">;
 
-  if (Config::Get().use_out_of_dock_power) {
+  if (Config::Get().buffs.use_out_of_dock_power) {
     if (auto method = BuffService::Method("IsBuffConditionMet"))
       SPUD_STATIC_DETOUR(method.Pointer(), BuffService_IsBuffConditionMet);
   }

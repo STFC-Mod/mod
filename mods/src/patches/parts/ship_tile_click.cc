@@ -18,7 +18,7 @@ void ShipTileWidget_HandleOnClick_Hook(auto original, ShipTileWidget* _this)
   original(_this);
 
   auto& cfg = Config::Get();
-  if (!cfg.double_click_to_assign_ship && !cfg.installPinnedShipClickToggle) return;
+  if (!cfg.ui.double_click_to_assign_ship && !cfg.patches.pinnedshipclicktoggle) return;
 
   auto* ship = _this ? _this->Context() : nullptr;
   if (!ship) return;

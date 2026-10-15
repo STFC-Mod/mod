@@ -58,7 +58,7 @@ void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, C
   // Native input, constraints and endpoint updates run first. Only this blend's
   // newly generated output is extended; endpoint assets and normalized LOD stay native.
   original(provider, camera);
-  const auto max_zoom = Config::Get().haven_zoom;
+  const auto max_zoom = Config::Get().graphics.haven_zoom;
   if (provider == nullptr || !std::isfinite(max_zoom) || max_zoom <= 0.0f)
     return;
 
@@ -288,7 +288,7 @@ void InstallHavenZoomHooks()
   }
   // [patches].havenzoomhooks controls installation independently of haven_zoom.
   if (SPUD_STATIC_DETOUR(update->methodPointer, HavenCamera_UpdateCameraFrame_Hook)) {
-    spdlog::info("[HavenZoom] installed planetary blend camera hook (maximum distance {})", Config::Get().haven_zoom);
+    spdlog::info("[HavenZoom] installed planetary blend camera hook (maximum distance {})", Config::Get().graphics.haven_zoom);
   } else {
     spdlog::warn("[HavenZoom] camera hook was not installed; keeping native zoom range");
   }

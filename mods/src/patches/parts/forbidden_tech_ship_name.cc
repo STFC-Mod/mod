@@ -250,7 +250,7 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
   row.Hide();
   // Native refresh may have resized the panel since the previous selection.
   row.original_top = rect->offsetMax();
-  if (!Config::Get().forbidden_tech_ship_name)
+  if (!Config::Get().ui.forbidden_tech_ship_name)
     return;
   const auto name = EquippedShipName(widget);
   if (name.empty())

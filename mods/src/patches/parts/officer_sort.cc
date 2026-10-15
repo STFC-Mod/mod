@@ -191,14 +191,14 @@ void AppendBelowDeckOption(il2cpp::List<ProcessingOption*>* list, const char* di
 void InitializeOfficerSorters_Hook(auto original, OfficerSortGenerators* _this)
 {
   original(_this);
-  if (!Config::Get().officer_sort) return;
+  if (!Config::Get().ui.officer_sort) return;
   AppendBelowDeckOption(_this->rosterOptions(), kBelowDeckKey, true, _this->rosterSorters());
 }
 
 void InitializeAssignmentSorters_Hook(auto original, OfficerSortGenerators* _this)
 {
   original(_this);
-  if (!Config::Get().officer_sort) return;
+  if (!Config::Get().ui.officer_sort) return;
   AppendBelowDeckOption(_this->assignmentOptions(), kBelowDeckAssignmentKey, false);
 }
 

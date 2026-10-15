@@ -33,7 +33,7 @@ bool                            g_opened_for_landing = false;
 
 void TryAutoOpenDrawer(ShopListScrollerViewController* controller)
 {
-  if (!Config::Get().auto_open_bulk_claim_flyout || controller == nullptr || g_opened_for_landing) {
+  if (!Config::Get().ui.auto_open_bulk_claim_flyout || controller == nullptr || g_opened_for_landing) {
     return;
   }
 

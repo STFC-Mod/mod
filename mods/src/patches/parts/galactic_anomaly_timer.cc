@@ -320,7 +320,7 @@ void Update()
     return;
   next = now + std::chrono::milliseconds(250);
 
-  if (!Config::Get().galactic_anomaly_timer) {
+  if (!Config::Get().graphics.galactic_anomaly_timer) {
     Clear();
     return;
   }

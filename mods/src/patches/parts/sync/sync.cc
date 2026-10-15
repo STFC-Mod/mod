@@ -467,7 +467,7 @@ namespace
       // Part of fleet sync: jobs-only targets see nothing new. The repair changes the fleet's state later, so the
       // fleet is re-read then.
       case pb::JOBTYPE_REPAIRFLEET:
-        if (!Config::Get().sync_options.fleets)
+        if (!Config::Get().sync.options.fleets)
           return std::nullopt;
         RereadFleet(job.repairfleetparams().fleetid());
         return json{{"fid", job.repairfleetparams().fleetid()}};
@@ -1111,7 +1111,7 @@ namespace
 
   void ProcessJson(const std::string& bytes)
   {
-    const auto& options = Config::Get().sync_options;
+    const auto& options = Config::Get().sync.options;
     try {
       const auto result = json::parse(bytes);
       for (const auto& [key, section] : result.items()) {
@@ -1193,7 +1193,7 @@ namespace
       return;
 
     const auto  type    = entity_group->Type_();
-    const auto& options = Config::Get().sync_options;
+    const auto& options = Config::Get().sync.options;
     const auto  bytes   = [group] {
       return std::string(reinterpret_cast<const char*>(group->bytes()->data()), static_cast<size_t>(group->Length()));
     };
@@ -1247,7 +1247,7 @@ namespace
   void* RtcParser_ParseFinalPayload(auto original, void* _this, CentrifugoInfo centrifugoInfo,
                                     RealtimeDataPayload* realtimeDataPayload, void* finalPayload)
   {
-    if (Config::Get().sync_options.slots && realtimeDataPayload && realtimeDataPayload->Target()
+    if (Config::Get().sync.options.slots && realtimeDataPayload && realtimeDataPayload->Target()
         && realtimeDataPayload->DataType() && realtimeDataPayload->Data()) {
       // DataType arrives as a number in a string. This runs inside the game's parser, so nothing here may throw.
       const auto type_string = to_string(realtimeDataPayload->DataType());
@@ -1267,7 +1267,7 @@ namespace
             service_response && service_response->Is<ServiceResponse>() ? service_response->EntityGroups() : nullptr)
       for (auto* group : *groups)
         HandleEntityGroup(group);
-    else if (auto* platform = service_response && Config::Get().sync_options.store_offers
+    else if (auto* platform = service_response && Config::Get().sync.options.store_offers
                                   ? service_response->As<PlatformServiceResponse>()
                                   : nullptr)
       HandlePlatformResponse(platform);
@@ -1308,7 +1308,7 @@ void InstallSyncPatches()
   // This hook only captures the game version for the X-PRIME-VERSION header, which has a fallback. It can be
   // turned off for users whose other mods detour the same method: a native and a managed detour on one prologue
   // corrupt each other and crash at login.
-  if (!Config::Get().installGameVersionHook)
+  if (!Config::Get().patches.game_version)
     spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
   else if (auto m = GameServer::Method("Initialise"))
     SPUD_STATIC_DETOUR(m.Pointer(), GameServer_Initialise);

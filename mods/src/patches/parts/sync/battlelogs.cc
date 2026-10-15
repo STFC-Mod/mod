@@ -58,7 +58,7 @@ namespace
 
     void Store(const Key& key, Value value)
     {
-      const auto       expires_at = Clock::now() + std::chrono::seconds(Config::Get().sync_resolver_cache_ttl);
+      const auto       expires_at = Clock::now() + std::chrono::seconds(Config::Get().sync.resolver_cache_ttl);
       std::scoped_lock lock(mutex_);
       if (entries_.size() >= kNameCacheSize)
         std::erase_if(entries_, [now = Clock::now()](const auto& entry) { return entry.second.expires_at <= now; });

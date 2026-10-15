@@ -49,7 +49,7 @@ bool IsAllianceContributionMaxLevelWarning(const Il2CppDelegate* callback)
 
 bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
 {
-  if (!Config::Get().auto_confirm_ft_upgrade || !IsForbiddenTechConfirmation(callback)) {
+  if (!Config::Get().ui.auto_confirm_ft_upgrade || !IsForbiddenTechConfirmation(callback)) {
     return false;
   }
 
@@ -70,7 +70,7 @@ bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
 
 bool ConfirmAllianceContribution(Il2CppDelegate* callback)
 {
-  if (!Config::Get().auto_confirm_alliance_contribution || !IsAllianceContributionMaxLevelWarning(callback)) {
+  if (!Config::Get().ui.auto_confirm_alliance_contribution || !IsAllianceContributionMaxLevelWarning(callback)) {
     return false;
   }
 

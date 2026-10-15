@@ -46,7 +46,7 @@ template <typename T> bool TargetShown(T* widget, const Pressed& pressed)
 {
   if (!widget || !Shown(widget->visibilityController()))
     return false;
-  if (!pressed.primary || !Config::Get().primary_requires_visible_target)
+  if (!pressed.primary || !Config::Get().control.primary_requires_visible_target)
     return true;
   auto* parent = widget->Parent();
   return parent && parent->IsShowing();
@@ -239,7 +239,7 @@ bool ActOnViewer(const Pressed& pressed)
   }
 
   if (auto* node = ObjectFinder<StarNodeObjectViewerWidget>::Get(); node && node->Context()
-      && (!pressed.primary || !Config::Get().primary_requires_visible_target || TargetShown(node, pressed))) {
+      && (!pressed.primary || !Config::Get().control.primary_requires_visible_target || TargetShown(node, pressed))) {
     if (pressed.secondary) {
       node->OnViewButtonActivation();
       return true;
@@ -257,7 +257,7 @@ bool ActOnViewer(const Pressed& pressed)
 
   auto* armada = ObjectFinder<ArmadaObjectViewerWidget>::Get();
   if (!ArmadaViewerShown(armada)) {
-    if (Config::Get().primary_requires_visible_target && !navigation->IsSetCourseVisible())
+    if (Config::Get().control.primary_requires_visible_target && !navigation->IsSetCourseVisible())
       return false;
     navigation->OnSetCourseButtonClick();
     return true;
@@ -288,7 +288,7 @@ void ActOnSelectedFleet(FleetBarViewController* fleet_bar)
       .queue_clear = Shortcut::IsDown(GameFunction::ActionQueueClear),
       // With disable_preview_recall, recall only works while no target card is open.
       .recall        = Shortcut::IsDown(GameFunction::ActionRecall)
-                       && (!Config::Get().disable_preview_recall || !TargetViewerShown()),
+                       && (!Config::Get().ui.disable_preview_recall || !TargetViewerShown()),
       .recall_cancel = Shortcut::IsDown(GameFunction::ActionRecallCancel),
       .repair        = Shortcut::IsDown(GameFunction::ActionRepair),
   };
@@ -348,19 +348,19 @@ void ShowPendingTargetCargo()
 bool ShowsCargoByDefault(RewardsButtonWidget* widget)
 {
   const auto& config = Config::Get();
-  auto*       target = widget && config.show_cargo_default ? widget->Context() : nullptr;
+  auto*       target = widget && config.ui.show_cargo_default ? widget->Context() : nullptr;
   if (!target)
     return false;
 
   auto* deployed = target->TargetFleetDeployedData();
   if (!deployed)
-    return config.show_station_cargo;
+    return config.ui.show_station_cargo;
   switch (deployed->FleetType()) {
     case DeployedFleetType::Player:
-      return config.show_player_cargo;
+      return config.ui.show_player_cargo;
     case DeployedFleetType::Marauder: {
       auto* hull = deployed->Hull();
-      return hull && hull->Type() == HullType::ArmadaTarget ? config.show_armada_cargo : config.show_hostile_cargo;
+      return hull && hull->Type() == HullType::ArmadaTarget ? config.ui.show_armada_cargo : config.ui.show_hostile_cargo;
     }
     default:
       return false;

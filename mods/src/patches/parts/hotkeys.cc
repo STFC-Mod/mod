@@ -81,10 +81,10 @@ template <SectionID Section> void GotoNavigation()
     NavigationSectionManager::ChangeNavigationSection(Section);
 }
 
-template <bool Config::* Setting> void Toggle()
+template <auto Section, auto Setting> void Toggle()
 {
-  auto& config    = Config::Get();
-  config.*Setting = !(config.*Setting);
+  auto& section    = Config::Get().*Section;
+  section.*Setting = !(section.*Setting);
 }
 
 template <spdlog::level::level_enum Level> void SetLogLevel()
@@ -239,7 +239,7 @@ bool PressAwaitedButton()
 
 void CycleAutoConfirmInstantWarp()
 {
-  auto& setting = Config::Get().auto_confirm_instant_warp;
+  auto& setting = Config::Get().ui.auto_confirm_instant_warp;
   switch (setting) {
     case InstantWarpConfirmation::None:
       setting = InstantWarpConfirmation::Warp;
@@ -308,13 +308,13 @@ constexpr Action kActions[] = {
     {GameFunction::UiViewerScaleUp, Scale<AdjustUiViewerScale, true>, true, false},
     {GameFunction::UiViewerScaleDown, Scale<AdjustUiViewerScale, false>, true, false},
     {GameFunction::ToggleAutoConfirmInstantWarp, CycleAutoConfirmInstantWarp, false, false},
-    {GameFunction::TogglePreviewLocate, Toggle<&Config::disable_preview_locate>, false, false},
-    {GameFunction::TogglePreviewRecall, Toggle<&Config::disable_preview_recall>, false, false},
-    {GameFunction::ToggleCargoDefault, Toggle<&Config::show_cargo_default>, false, false},
-    {GameFunction::ToggleCargoPlayer, Toggle<&Config::show_player_cargo>, false, false},
-    {GameFunction::ToggleCargoStation, Toggle<&Config::show_station_cargo>, false, false},
-    {GameFunction::ToggleCargoHostile, Toggle<&Config::show_hostile_cargo>, false, false},
-    {GameFunction::ToggleCargoArmada, Toggle<&Config::show_armada_cargo>, false, false},
+    {GameFunction::TogglePreviewLocate, Toggle<&Config::ui, &Config::Ui::disable_preview_locate>, false, false},
+    {GameFunction::TogglePreviewRecall, Toggle<&Config::ui, &Config::Ui::disable_preview_recall>, false, false},
+    {GameFunction::ToggleCargoDefault, Toggle<&Config::ui, &Config::Ui::show_cargo_default>, false, false},
+    {GameFunction::ToggleCargoPlayer, Toggle<&Config::ui, &Config::Ui::show_player_cargo>, false, false},
+    {GameFunction::ToggleCargoStation, Toggle<&Config::ui, &Config::Ui::show_station_cargo>, false, false},
+    {GameFunction::ToggleCargoHostile, Toggle<&Config::ui, &Config::Ui::show_hostile_cargo>, false, false},
+    {GameFunction::ToggleCargoArmada, Toggle<&Config::ui, &Config::Ui::show_armada_cargo>, false, false},
     {GameFunction::LogLevelOff, SetLogLevel<spdlog::level::off>, false, false},
     {GameFunction::LogLevelError, SetLogLevel<spdlog::level::err>, false, false},
     {GameFunction::LogLevelWarn, SetLogLevel<spdlog::level::warn>, false, false},
@@ -367,9 +367,9 @@ bool SelectShip()
     return false;
 
   const auto now        = Clock::now();
-  const bool can_locate = !Config::Get().disable_preview_locate || !TargetViewerShown();
+  const bool can_locate = !Config::Get().ui.disable_preview_locate || !TargetViewerShown();
   if (can_locate && index == last_index && fleet_bar->IsIndexSelected(index)
-      && now - last_press < std::chrono::milliseconds(Config::Get().select_timer)) {
+      && now - last_press < std::chrono::milliseconds(Config::Get().control.select_timer)) {
     auto* fleet = fleet_bar->SelectedFleet();
     if (!fleet)
       return true;
@@ -426,7 +426,7 @@ bool StepScreen(bool left)
 {
   const auto& config = Config::Get();
 
-  if (config.arrow_keys_to_select_ship && Hub::CurrentSection() == SectionID::ShipManagement_Details) {
+  if (config.ui.arrow_keys_to_select_ship && Hub::CurrentSection() == SectionID::ShipManagement_Details) {
     bool moved = false;
     for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
       auto* canvas =
@@ -446,7 +446,7 @@ bool StepScreen(bool left)
       return true;
   }
 
-  if (config.arrow_keys_to_select_ship) {
+  if (config.ui.arrow_keys_to_select_ship) {
     bool moved = false;
     for (auto* widget : ObjectFinder<AssignShipsWidget>::GetAll()) {
       auto* canvas = widget ? GetCanvasControllerFromComponent(widget) : nullptr;
@@ -526,7 +526,7 @@ bool RunScreenShortcuts()
     }
   }
   if (Shortcut::IsDown(GameFunction::ToggleQueue)) {
-    Toggle<&Config::queue_enabled>();
+    Toggle<&Config::control, &Config::Control::queue_enabled>();
     ResetQueueRecoveryTracking();
     return true;
   }
@@ -535,7 +535,7 @@ bool RunScreenShortcuts()
     return true;
   if (Shortcut::IsDown(GameFunction::MoveRight) && StepScreen(false))
     return true;
-  if (Config::Get().focus_search && Shortcut::IsDown(GameFunction::FocusSearch) && FocusSearchBox())
+  if (Config::Get().ui.focus_search && Shortcut::IsDown(GameFunction::FocusSearch) && FocusSearchBox())
     return true;
   return RunAction();
 }
@@ -545,16 +545,16 @@ bool RunScreenShortcuts()
 bool SwallowEscape()
 {
   const auto& config = Config::Get();
-  if (!config.disable_escape_exit || !Key::Pressed(KeyCode::Escape))
+  if (!config.ui.disable_escape_exit || !Key::Pressed(KeyCode::Escape))
     return false;
   // A held key stays swallowed; only distinct presses count towards a double tap.
-  if (config.disable_escape_exit_timer <= 0 || !Key::Down(KeyCode::Escape))
+  if (config.ui.disable_escape_exit_timer <= 0 || !Key::Down(KeyCode::Escape))
     return true;
 
   static Clock::time_point first_press{};
   const auto               now = Clock::now();
   if (first_press == Clock::time_point{}
-      || now - first_press > std::chrono::milliseconds(config.disable_escape_exit_timer)) {
+      || now - first_press > std::chrono::milliseconds(config.ui.disable_escape_exit_timer)) {
     first_press = now;
     return true;
   }
@@ -591,7 +591,7 @@ void UpdateManageShipDockSelection()
     return;
   next_update = now + std::chrono::milliseconds(100);
   auto* sections = Hub::get_SectionManager();
-  if (!Config::Get().dock_syncmanagement || !sections
+  if (!Config::Get().ui.dock_syncmanagement || !sections
       || sections->CurrentSection() != SectionID::ShipManagement_Details) {
     last_fleet_id = 0;
     return;
@@ -672,12 +672,12 @@ bool HandleShortcuts()
 
   if (Shortcut::IsDown(GameFunction::DisableHotKeys)) {
     HideShortcutBadges();
-    config.hotkeys_enabled = false;
+    config.control.hotkeys_enabled = false;
     spdlog::warn("Setting hotkeys to DISABLED");
     return true;
   }
   if (Shortcut::IsDown(GameFunction::EnableHotKeys)) {
-    config.hotkeys_enabled = true;
+    config.control.hotkeys_enabled = true;
     spdlog::warn("Setting hotkeys to ENABLED");
     return true;
   }
@@ -686,9 +686,9 @@ bool HandleShortcuts()
     return true;
 
   // Scopely's hotkeys are the game's own; mod hotkeys switched off block both.
-  if (config.use_scopely_hotkeys && config.hotkeys_enabled)
+  if (config.control.use_scopely_hotkeys && config.control.hotkeys_enabled)
     return false;
-  if (!config.hotkeys_enabled)
+  if (!config.control.hotkeys_enabled)
     return true;
 
   if (Shortcut::IsDown(GameFunction::ToggleShortcutHints) && ToggleShortcutBadges())
@@ -743,7 +743,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 // With Scopely hotkeys off, the game never registers its own input actions, so its shortcuts cannot fire.
 void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _this)
 {
-  if (Config::Get().use_scopely_hotkeys)
+  if (Config::Get().control.use_scopely_hotkeys)
     original(_this);
 }
 } // namespace
