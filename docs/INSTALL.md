@@ -1,232 +1,125 @@
-# Star Trek Fleet Command - Community Mod
+# Install the mod
 
-<p align="center">
-  <img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPLv3">
-  <img src="https://img.shields.io/github/sponsors/netniv" alt="Sponsorship">
-</p>
+Download a build from the [release list](https://github.com/STFC-Mod/mod/releases/).
+Expand **Assets** to see the files. Versioned and unversioned ZIPs contain the same files.
 
-<p align="center">
-   A community mod (patch) for PC and macOS that adds a couple of tweaks to the <b>Star Trek Fleet Command&#8482;</b> game
-</p>
+If a game update breaks the release, check **#info** in the
+[STFC Community Mod Discord](https://discord.gg/PrpHgs7Vjs) for a hotfix.
 
-## Downloads / Releases
+Choose your platform: [Windows](#install-on-windows), [macOS](#install-on-macos), or [Wine](#install-under-wine).
 
-The STFC Community Mod is available on GitHub.
+## Install on Windows
 
-You can download either the [latest official release](https://github.com/STFC-Mod/mod/releases/latest/) or any other
-release, including [alpha/beta](https://github.com/STFC-Mod/mod/releases/) builds.
+Close the game before you replace an existing mod.
 
-In the event that a game update breaks the latest release, please visit the [STFC Community Mod](https://discord.gg/PrpHgs7Vjs)
-discord server, and check the #INFO channel for the latest hotfixes.
+1. Download `stfc-community-mod.zip` and extract `version.dll`.
+2. Open the game folder that contains `prime.exe`.
+3. Put `version.dll` beside `prime.exe`.
+4. Start the game. A loaded mod creates `community_patch.log` and a settings file if one is missing.
+5. To change the defaults, follow [Change settings](#change-settings).
 
-**Notes:**
+The usual game folder is:
 
-- GitHub may require you to log in to see the downloads for
-  pre-releases, and you will need to expand the
-  assets section to see the downloads.
+```text
+C:\Games\Star Trek Fleet Command\Star Trek Fleet Command\default\game
+```
 
-- There is no difference between the versioned and unversioned zip
-  files. They are simply named this way to allow people to store
-  multiple versions rather than overwriting or having a random
-  number appended by windows.
+If your game is elsewhere, use [Find the Windows game folder](#find-the-windows-game-folder).
+Keep `version.dll` out of the official launcher's folder. A DLL there can stop the launcher and game updates from working.
 
-## Configuration
+To verify an attested download, see [Windows DLL verification](WINDOWS_DLL_PROVENANCE.md).
 
-**IMPORTANT**: Any desired configuration changes should **ONLY** be made in the
-`community_patch_settings.toml` file.
+## Install on macOS
 
-When the game is launched:
+Current source builds require **macOS 14.6 or later**.
+Check the requirements of the release you download.
 
-- If the configuration file does not exist, it will be created with default values. It
-  will not have any comments describing these settings.
+1. Download `stfc-community-mod-installer.dmg`.
+2. Open the DMG and drag **STFC Community Mod** to **Applications**.
+3. Open **STFC Community Mod**. If macOS blocks the app, use **System Settings > Privacy & Security > Open Anyway**.
+4. Start the game from this launcher. If prompted, let it re-sign the game to add the entitlements needed by the mod.
+5. To change the defaults, follow [Change settings](#change-settings).
 
-- The configuration file is read with any missing settings defaulting to predefined values.
+Use the Community Mod launcher each time. Starting the game from the official launcher does not load the mod.
+A game update can remove the required entitlements, so the Community Mod launcher may ask to re-sign it again.
 
-- The finalized configuration – including any assumed default values – is written to
-  `community_patch_runtime.vars`.
+## Install under Wine
 
-  **NOTE:** You should NOT make any changes to this file. This file is
-  constantly rewritten when the game starts, so any modifications to it are never used and will be
-  lost.
+Use the Windows mod and follow the [Windows steps](#install-on-windows).
+The game folder is inside your Wine prefix, usually at:
 
-If you have any problems with a setting, check for that setting in the _.vars_ file to verify
-that the parse value of that setting was correctly applied. You may also need to check the
-`community_patch.log` file to see if any errors were encountered while parsing the _.toml_ file.
+```text
+drive_c/Games/Star Trek Fleet Command/Star Trek Fleet Command/default/game
+```
 
-### Configuration example files
+Set the `version` DLL override to **native, then builtin** in `winecfg` or your launcher's runner settings.
+You can also set this environment variable before launch:
 
-Commented example configurations are maintained separately for each supported language, using the same flags as
-[ModConfig](https://modconfig.pages.dev):
+```sh
+export WINEDLLOVERRIDES="version.dll=n,b"
+```
 
-- <img src="docs/flags/gb.svg" alt="United Kingdom flag" width="24"> [English](example_community_patch_settings_en.toml)
-- <img src="docs/flags/de.svg" alt="German flag" width="24"> [German](example_community_patch_settings_de.toml)
-- <img src="docs/flags/fr.svg" alt="French flag" width="24"> [French](example_community_patch_settings_fr.toml)
-- <img src="docs/flags/nl.svg" alt="Netherlands flag" width="24"> [Dutch](example_community_patch_settings_nl.toml)
+## Change settings
 
-Choose the example for your preferred language and save a copy in the appropriate settings folder as
-`community_patch_settings.toml`.
+Edit **`community_patch_settings.toml`**. The other files are outputs.
 
-## Installation on Windows
+| File | Purpose |
+| --- | --- |
+| `community_patch_settings.toml` | Your settings. Missing keys use defaults. |
+| `community_patch_runtime.vars` | Parsed values, including defaults. Edits here have no effect. |
+| `community_patch.log` | Startup, settings errors, and diagnostics. |
 
-**NOTE:** The `Star Trek Fleet Command` game itself is located by default at:
+By default, these files are beside `prime.exe` on Windows and Wine.
+On macOS, they are in:
 
-- `C:\Games\Star Trek Fleet Command\Star Trek Fleet Command\default\game`
+```text
+~/Library/Preferences/com.stfcmod.startrekpatch
+```
 
-Installation of the Community Mod is a manual process for Windows (or Wine).
+For commented settings, copy an example to that folder and name it `community_patch_settings.toml`.
+Back up an existing settings file before replacing it.
 
-1. Download the `stfc-community-mod.zip` file from your chosen [GitHub release](https://github.com/STFC-Mod/mod/releases/) and extract the `version.dll` file.
+| Language | Example |
+| --- | --- |
+| English | [Current settings reference](configuration/example_community_patch_settings_en.toml) |
+| German | [German example](configuration/example_community_patch_settings_de.toml) |
+| French | [French example](configuration/example_community_patch_settings_fr.toml) |
+| Dutch | [Dutch example](configuration/example_community_patch_settings_nl.toml) |
 
-2. Open the game folder in Explorer. The default folder for the game also holds the settings file.
+The English example tracks the current code. Translations can lag behind.
 
-   **NOTE:** If this folder isn't present, or no log files are created when running the game,
-   see the [Problems Under Windows](#problems-under-windows) section below.
+Settings reload after you save the file. To reload manually, press `CTRL-SHIFT-F6`.
+Changes under `[patches]` require a game restart.
+Shortcuts that adjust settings during play do not save those changes to your TOML file.
 
-3. Move the extracted `version.dll` file into this folder.
+## Fix installation problems
 
-4. Run the game! If all is well, and one does not already exist, the mod will
-   create `community_patch_settings.toml` and populate this with the default
-   values.
+Start with the log and runtime values.
 
-5. For first-time users of the Community Mod, it is recommended to choose one of the
-   [localized configuration examples](#configuration-example-files) and save a copy to the game folder as
-   `community_patch_settings.toml`. These examples contain additional comments that explain the available settings.
+| Problem | Check |
+| --- | --- |
+| No mod log on Windows | Put `version.dll` beside the running game's `prime.exe`. Check **Properties > General > Unblock** on the DLL. |
+| Mod does not load on macOS | Start the game through **STFC Community Mod** and accept its entitlement repair prompt. |
+| Mod does not load under Wine | Set the `version` DLL override to `n,b`. |
+| A setting has no effect | Check its section, spelling, and value type. Compare `community_patch_runtime.vars` and read the log for parse errors. |
 
-## Installation on macOS - macOS 13.5 or later required
+### Find the Windows game folder
 
-**NOTE:** The `Star Trek Fleet Command` game itself is located at:
+1. Start the game and open **Task Manager**.
+2. Find the game process. Expand its group if needed.
+3. Right-click `prime.exe` and choose **Open file location**.
+4. Check that the folder contains `prime.exe`, then close the game before installing the DLL.
 
-- `~/Library/Application Support/Star Trek Fleet Command/Games/Star Trek Fleet Command/Star Trek Fleet Command/default/game`
+### Open the macOS settings folder
 
-You should only need to access this folder if you need to view the `community_patch.log` file while troubleshooting a problem.
+In Finder, press `Command-Shift-G` and enter:
 
-1. Download the `stfc-community-mod-installer.dmg` file from your chosen [GitHub release](https://github.com/STFC-Mod/mod/releases/).
+```text
+~/Library/Preferences/com.stfcmod.startrekpatch
+```
 
-2. Open the DMG, then drag and drop the `STFC Community Mod` to your `Applications` folder. The
-   STFC Community Mod launcher must be used to start the game to have the mod loaded. If
-   you start the game using the games Launcher, you will NOT have the mod loaded.
+This works even when Finder hides `Library`.
+If the launcher shows game version `-1`, reinstall the game, then open the Community Mod launcher again.
+You do not need to reinstall the mod launcher.
 
-3. Running the launcher for the first time will prompt a warning from macOS because the Community Mod is not signed with an Apple Developer ID certificate.
-
-   > "STFC Community Mod" Not Opened
-   >
-   > Apple could not verify “STFC Community Mod” is free of malware that may harm your Mac or compromise your privacy
-
-   Dismiss the warning by clicking `Done`, then go to **System Settings**, **Privacy & Security** and scroll down to the **Security** section
-   where you can override this behaviour by clicking `Open Anyway` next to `"STFC Community Mod" was blocked to protect your Mac.`
-
-4. Run the game from the launcher!
-
-   Since M82.1, the **Star Trek Fleet Command** app ships with heightened security and lacks the entitlements to correctly load
-   the Community Mod. As a workaround, the Community Mod launcher will prompt you to re-sign the game if it detects
-   missing entitlements at startup. This process needs to be repeated with every game update.
-
-   If all is well, the mod will create `community_patch_settings.toml`
-   in the settings folder `~/Library/Preferences/com.stfcmod.startrekpatch`.
-
-   Note: By default, macOS hides the `~/Library` folder in Finder, so if it isn't visible,
-   see the [Problems under macOS](#problems-under-macos) section below for tips on opening it.
-
-5. For first-time users of the Community Mod, it is recommended to choose one of the
-   [localized configuration examples](#configuration-example-files) and save a copy to the settings folder as
-   `community_patch_settings.toml`. These examples contain additional comments that explain the available settings.
-
-## Installation on Wine/Linux
-
-**NOTE:** The `Star Trek Fleet Command` game itself is located at:
-
-- `~/Games/star-trek-fleet-command/drive_c/Games/Star Trek Fleet Command/Star Trek Fleet Command/default/game`.
-
-The Windows version of the mod, and the game itself, run well under Linux using the Wine compatability layer.
-
-If the game is installed using the [Lutris STFC installer](https://lutris.net/games/star-trek-fleet-command/),
-the mod can be installed by following the [Windows](#installation-on-windows) directions
-above.
-
-If the game is installed through other launchers or directly in an unmanaged `WINEPREFIX`,
-an additional adjustment may be needed for it to load the mod library correctly; see the
-[Problems Under Wine/Linux](#problems-under-winelinux) notes below.
-
-## Common Problems
-
-The most common problems getting the DLL to work are:
-
-1. Not installed in the correct location. This must be `game` folder where `prime.exe` also exists.
-
-2. Windows is blocking the DLL. Right-click the file and select Properties. On the `General` tab
-   there will be additional text at the bottom:
-
-   ```console
-   This file can from another
-   computer and might be blocked to
-   help protect this computer
-   ```
-
-   To the right of this, there will be a tick box called `Unblock`. Tick the box and then click OK
-   to unblock the file.
-
-3. The configuration file has the wrong name (see above)
-
-4. The configuration file is not being parsed as you expect, which is normal because:
-   - Your configuration isn't being parsed
-   - The configuration option name is spelt wrong
-   - The configuration option name is in the wrong section
-   - The configuration option value is not a true or false
-
-   You can verify your configuration by looking at `community_patch_runtime.vars` and/or the
-   log file `community_patch.log`.
-
-## Problems under Windows
-
-On Windows, sometimes the game is installed in a user's profile folder instead of the
-default location. This happens when the STFC installer finds more than one user
-attempted to install it, or if the current user doesn't have admin rights.
-
-If this is the case, to find the correct game location for the `version.dll` file, do the
-following:
-
-1. Open _Task Manager_ while the game is running (press Ctrl-Alt-Delete)
-2. Right-click `prime.exe` and select 'Expand'
-3. Right-click `Star Trek Fleet Command` and select 'Open file location'
-
-An _Explorer_ window will open, and you can check for `prime.exe` to verify this is the
-correct folder.
-
-**IMPORTANT**: The `version.dll` file should NOT be placed within the official STFC launcher's
-folder as this will prevent the launcher from working and the ability to update the game.
-
-## Problems under macOS
-
-macOS hides the `Library` folder in Finder by default. There are several ways to open it:
-
-- Hold the `⌥ Option` key (or `Alt` on a PC keyboard) in **Finder** and click the **Go to** menu item
-  and then click the **Library** folder item
-
-  or
-
-- Press `⌘ Command`+`⇧ Shift`+`G` in the **Finder** for the Goto box and type in `~/Library`
-
-  or
-
-- Use **Terminal** and type: `open ~/Library`
-
-The Community Launcher shows the version of `Star Trek Fleet Command` that was detected
-under the current user. If this shows as `-1`, then the recommended course of action is
-to uninstall and reinstall `Star Trek Fleet Command` whcih can be done without needing
-to reinstall the Community Mod launcher.
-
-### Problems under Wine/Linux
-
-To use the Windows version of the mod under Wine, the wine DLL override setting for
-`version.dll` _must_ be set to `n,b` or it will not be loaded.
-
-When using the [Lutris STFC installer](https://lutris.net/games/star-trek-fleet-command/)
-(which is recommended), this override will have already been set by the installer within
-the runner configuration.
-
-Otherwise, it can be set in the `winecfg.exe` Libraries tab or by setting the `WINEDLLOVERRIDES` enviroment variable to `version.dll=n,b` before launching the game.
-
-If the game folder does not exist in the default location mentioned under [Installation on Wine/Linux](#installation-on-winelinux), it may exist under:
-
-- `drive_c/Games/Star Trek Fleet Command/Star Trek Fleet Command/default/game`
-
-**NOTE:** This is a relative path that starts at the wine environment (WINEPREFIX).
+For further help, use the [Discord server](https://discord.gg/PrpHgs7Vjs).
