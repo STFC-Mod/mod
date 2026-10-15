@@ -5,7 +5,7 @@ const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const deps = @import("deps.zig");
 
-/// The libraries the fixtures link. They are the production artifacts.
+/// The libraries the fixtures link. They are the production artifacts, built at -Doptimize.
 pub const Libs = struct {
     il2cpp: Lib,
     spdlog: Lib,
@@ -15,8 +15,10 @@ pub const Libs = struct {
     toml: Lib,
 };
 
-/// Register the fixture steps.
-pub fn add(ctx: *const Ctx, libs: Libs) void {
+/// Register the fixture steps. Fixture code compiles at -Dtest-optimize, so a Debug fixture keeps its assertions
+/// while sharing release libraries with the shipped build.
+pub fn add(build_ctx: *const Ctx, libs: Libs) void {
+    const ctx = build_ctx.withOptimize(build_ctx.options.test_optimize orelse build_ctx.optimize);
     const b = ctx.b;
     const steps: Steps = .{
         .build = b.step("build-tests", "Compile the tests without running them"),

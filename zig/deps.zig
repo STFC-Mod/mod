@@ -126,11 +126,11 @@ pub fn spud(ctx: *const Ctx, zy: Lib, cs: Lib) Lib {
     const module = ctx.createModule(true);
     module.addIncludePath(src.path(b, "include"));
     module.addIncludePath(src.path(b, "src"));
-    zy.linkInto(module);
+    zy.includeInto(module);
     // Only the ARM64 relocator uses Capstone. Like upstream, x86-64 builds leave both out.
     if (aarch64) {
         module.addCMacro("SPUD_AARCH64_SUPPORT", "1");
-        cs.linkInto(module);
+        cs.includeInto(module);
     }
     // Every SIMD kernel for the architecture is compiled. Each opts in per function with SPUD_TARGET and is picked
     // at run time, so no translation unit raises the CPU baseline.
@@ -196,7 +196,7 @@ pub fn curl(ctx: *const Ctx, z: Lib) ?Lib {
     module.addIncludePath(src.path(b, "lib"));
     module.addCMacro("BUILDING_LIBCURL", "1");
     module.addCMacro("CURL_STATICLIB", "1");
-    z.linkInto(module);
+    z.includeInto(module);
     module.addCMacro("USE_SCHANNEL", "1");
     module.addCMacro("USE_WINDOWS_SSPI", "1");
     module.addCMacro("HAVE_LIBZ", "1");
@@ -219,7 +219,7 @@ pub fn curl(ctx: *const Ctx, z: Lib) ?Lib {
     };
 }
 
-/// CPR, the C++ HTTP client over libcurl.
+/// CPR, the C++ HTTP client over libcurl. Consumers link `curl_lib` themselves.
 pub fn cpr(ctx: *const Ctx, curl_lib: Lib) Lib {
     const b = ctx.b;
     const src = b.dependency("cpr", .{}).path("");
@@ -237,7 +237,7 @@ pub fn cpr(ctx: *const Ctx, curl_lib: Lib) Lib {
     const module = ctx.createModule(true);
     module.addIncludePath(src.path(b, "include"));
     module.addIncludePath(generated);
-    curl_lib.linkInto(module);
+    curl_lib.includeInto(module);
     ctx.addCxxBatch(module, "cpr", src, globFiles(b, src, "cpr", &.{".cpp"}, &.{}), ctx.cxxFlags("c++17", &.{}));
     return .{
         .artifact = ctx.staticLib("cpr", module),

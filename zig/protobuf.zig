@@ -27,7 +27,7 @@ pub fn protobufLite(ctx: *const Ctx, absl: Lib) Lib {
     const module = ctx.createModule(true);
     module.addIncludePath(src.path(b, "src"));
     module.addIncludePath(src.path(b, "third_party/utf8_range"));
-    absl.linkInto(module);
+    absl.includeInto(module);
     addRuntimeSources(ctx, module, "protobuf", src, &protobuf_sources);
     module.addCSourceFiles(.{
         .root = src,
@@ -36,6 +36,7 @@ pub fn protobufLite(ctx: *const Ctx, absl: Lib) Lib {
     });
     return .{
         .artifact = ctx.staticLib("protobuf-lite", module),
+        .dependencies = b.allocator.dupe(Lib, &.{absl}) catch @panic("OOM"),
         .include_dirs = ctx.dirs(&.{ src.path(b, "src"), src.path(b, "third_party/utf8_range"), absl.include_dirs[0] }),
     };
 }

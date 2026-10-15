@@ -33,8 +33,8 @@ pub fn unity(ctx: *const Ctx, runtime: Lib, spud: Lib) Lib {
     const include = ctx.dirs(&.{b.path("src/libs/unity/include")});
     const module = ctx.createModule(true);
     for (include) |dir| module.addIncludePath(dir);
-    runtime.linkInto(module);
-    spud.linkInto(module);
+    runtime.includeInto(module);
+    spud.includeInto(module);
     module.addCSourceFiles(.{
         .root = b.path("src/libs/unity"),
         .files = &.{ "src/input.cc", "src/tracker.cc" },
@@ -56,11 +56,13 @@ pub fn add(ctx: *const Ctx, libs: []const Lib) void {
         "-Wno-unused-command-line-argument",
     });
 
+    // The mod compiles against dependency headers only. Libraries link at the final binary, so the mod's
+    // translation units compile alongside its dependencies instead of after them.
     const module = ctx.createModule(true);
     module.addIncludePath(b.path("src/mod"));
     if (ctx.options.moddbg) module.addCMacro("_MODDBG", "1");
     if (ctx.options.use_original_bg) module.addCMacro("_USE_ORIGINAL_BG", "1");
-    for (libs) |lib| lib.linkInto(module);
+    for (libs) |lib| lib.includeInto(module);
     embedImages(ctx, module);
     addModSources(ctx, module, flags);
     const mods = ctx.staticLib("mods", module);
@@ -162,11 +164,21 @@ fn embedImages(ctx: *const Ctx, module: *std.Build.Module) void {
         const data = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, limit) catch |err|
             std.debug.panic("unable to read embedded image {s}: {t}", .{ path, err });
         var out: std.Io.Writer.Allocating = .init(b.allocator);
-        out.writer.print("#pragma once\n#include <cstddef>\nstatic const unsigned char {s}[] = {{\n", .{symbol}) catch
+        // Adjacent string literals of \x escapes. An initializer list of one expression per byte costs Clang far
+        // more time and memory. The literal adds a null byte, so _SIZE carries the real length.
+        out.writer.print("#pragma once\n#include <cstddef>\nstatic const unsigned char {s}[] =\n", .{symbol}) catch
             @panic("OOM");
-        for (data, 0..) |byte, i|
-            out.writer.print("0x{x:0>2},{s}", .{ byte, if (i % 16 == 15) "\n" else " " }) catch @panic("OOM");
-        out.writer.print("\n}};\nstatic const size_t {s}_SIZE = {d};\n", .{ symbol, data.len }) catch @panic("OOM");
+        const hex = "0123456789abcdef";
+        var offset: usize = 0;
+        while (offset < data.len) {
+            const chunk = data[offset..@min(offset + 64, data.len)];
+            var escaped: [64 * 4]u8 = undefined;
+            for (chunk, 0..) |byte, i| escaped[i * 4 ..][0..4].* = .{ '\\', 'x', hex[byte >> 4], hex[byte & 15] };
+            out.writer.print("\"{s}\"\n", .{escaped[0 .. chunk.len * 4]}) catch @panic("OOM");
+            offset += chunk.len;
+        }
+        if (data.len == 0) out.writer.writeAll("\"\"\n") catch @panic("OOM");
+        out.writer.print(";\nstatic const size_t {s}_SIZE = {d};\n", .{ symbol, data.len }) catch @panic("OOM");
         _ = images.add(header, out.written());
     }
     module.addIncludePath(images.getDirectory());

@@ -12,6 +12,8 @@ pub const Options = struct {
     moddbg: bool,
     use_original_bg: bool,
     bg_image: []const u8,
+    /// Fixture optimization; null follows -Doptimize.
+    test_optimize: ?std.builtin.OptimizeMode,
     msvc_sysroot: ?[]const u8,
     macos_sdk: ?[]const u8,
 
@@ -27,6 +29,11 @@ pub const Options = struct {
                 "Use the original game loading background",
             ) orelse false,
             .bg_image = if (bg_image.len == 0) "assets/loadingscreen.png" else bg_image,
+            .test_optimize = b.option(
+                std.builtin.OptimizeMode,
+                "test-optimize",
+                "Optimization mode for test fixtures (dependencies use -Doptimize)",
+            ),
             .msvc_sysroot = b.option([]const u8, "msvc-sysroot", "Path to an extracted MSVC + Windows SDK toolchain"),
             .macos_sdk = b.option([]const u8, "macos-sdk", "Path to a MacOSX.sdk directory"),
         };
@@ -63,6 +70,15 @@ pub const Ctx = struct {
             .sysroot = if (os == .windows or os == .macos) toolchains.find(b, target, options) else .{},
         };
         return ctx;
+    }
+
+    /// A copy of this context compiling at `optimize`. Debug fixtures never use LTO.
+    pub fn withOptimize(ctx: *const Ctx, optimize: std.builtin.OptimizeMode) *const Ctx {
+        const copy = ctx.b.allocator.create(Ctx) catch @panic("OOM");
+        copy.* = ctx.*;
+        copy.optimize = optimize;
+        if (optimize == .Debug) copy.lto = false;
+        return copy;
     }
 
     pub fn isWindows(ctx: *const Ctx) bool {
