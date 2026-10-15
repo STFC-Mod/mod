@@ -33,8 +33,6 @@
 namespace
 {
 // Installed in this order; the log numbers them.
-const Feature kLegacyHavenZoom{"HavenZoom", &Config::Patches::havenzoomhooks, InstallHavenZoomHooks};
-const Feature kLegacyHavenHistory{"HavenHistory", &Config::Patches::havenhistoryhooks, InstallHavenHistoryHooks};
 constexpr const Feature* kFeatures[] = {
     &kInteriorZoom,
     &kChatTitles,
@@ -45,11 +43,11 @@ constexpr const Feature* kFeatures[] = {
     &kPinnedShipClick,
     &kDockSelection,
     &kAbilityButtons,
-    &kLegacyHavenZoom,
-    &kLegacyHavenHistory,
-    &kAllianceGamesStore,
     &kUiScale,
     &kZoom,
+    &kHavenZoom,
+    &kHavenHistory,
+    &kAllianceGamesStore,
     &kFleetLabels,
     &kPan,
     &kOutOfDockPower,

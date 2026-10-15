@@ -276,8 +276,6 @@ public:
     bool dock_syncmanagement         = true;
     bool auto_confirm_reveal_ability = false;
     bool show_player_title           = true;
-    bool only_show_first_popup       = false;
-    bool reverse_haven_history       = true;
     bool disable_escape_exit         = true;
     // Maximum gap in milliseconds between two Escape presses that opens the exit prompt; 0 never opens it.
     int  disable_escape_exit_timer = 0;
@@ -285,6 +283,8 @@ public:
     bool disable_preview_recall    = false;
     // TODO: both are read but have no effect; disable_first_popup was switched off in misc.cc.
     bool disable_first_popup   = false;
+    bool only_show_first_popup = false;
+    bool reverse_haven_history = true;
     bool disable_toast_banners = false;
     bool disable_move_keys     = false;
     bool disable_galaxy_chat   = false;

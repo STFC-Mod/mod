@@ -95,7 +95,7 @@ do
     add_includedirs("src", { public = true })
 
     -- Packages
-    add_packages("spud", "nlohmann_json", "protobuf", "libil2cpp", "eastl", "toml++", "spdlog", "libcurl", "capstone", "cpr")
+    add_packages("spud", "nlohmann_json", "protobuf", "libil2cpp", "toml++", "spdlog", "libcurl", "capstone", "cpr")
     if os.getenv("STFC_PROTOBUF_SCCACHE") == "1" then
         add_rules("stfc.protobuf.cpp.sccache")
     else

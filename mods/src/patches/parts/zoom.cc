@@ -193,7 +193,10 @@ void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom* _this, NodeDept
 // Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them and asks for them on
 // every zoom, so each transform remembers the size it was scaled to and is left alone while it still has it.
 // Planets differ in base size, so this is per transform: one shared value made two planets rescale each other.
-void ScaleFlatRenderable(unity::Component* renderable)
+bool     authored_backdrop = false;
+uint64_t backdrop_revision = 0;
+
+void ScaleFlatRenderable(unity::Component* renderable, bool authored)
 {
   // A system has a handful of planets; past this, entries from earlier systems are dropped.
   constexpr size_t                                    kRemembered = 256;
@@ -203,7 +206,7 @@ void ScaleFlatRenderable(unity::Component* renderable)
   if (!transform)
     return;
   const auto scale = transform->localScale();
-  if (const auto it = scaled.find(transform); it != scaled.end() && std::fabs(scale.x - it->second) < 0.1f)
+  if (const auto it = scaled.find(transform); !authored && it != scaled.end() && std::fabs(scale.x - it->second) < 0.1f)
     return;
   if (scaled.size() >= kRemembered)
     scaled.clear();
@@ -214,7 +217,7 @@ void ScaleFlatRenderable(unity::Component* renderable)
 unity::Component* PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils* _this)
 {
   auto* renderable = original(_this);
-  ScaleFlatRenderable(renderable);
+  ScaleFlatRenderable(renderable, authored_backdrop);
   return renderable;
 }
 
@@ -225,6 +228,36 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
   original(_this, distance, normalized);
   if (_this)
     _this->FlatRenderable();
+}
+
+void ScaleAuthoredBackdrop(PlanetViewUtils* view)
+{
+  const auto previous = std::exchange(authored_backdrop, true);
+  view->FlatRenderable();
+  authored_backdrop = previous;
+}
+
+void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* backdrop,
+                                         Il2CppObject* resource, bool using_default)
+{
+  original(_this, backdrop, resource, using_default);
+  if (_this && resource) {
+    ++backdrop_revision;
+    ScaleAuthoredBackdrop(_this);
+  }
+}
+
+void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* system, int64_t node_id,
+                                   NodeDepth depth)
+{
+  auto*      previous = _this ? _this->Population() : nullptr;
+  const auto revision = backdrop_revision;
+  original(_this, system, node_id, depth);
+  auto* population = _this ? _this->Population() : nullptr;
+  // Cached variation backdrops reload authored scale without calling CreateBackdrop.
+  if (depth == NodeDepth::SolarSystem && population && population != previous && population->VariationCollection()
+      && revision == backdrop_revision)
+    ScaleAuthoredBackdrop(_this);
 }
 
 // --- Panning and rotation ---
@@ -331,6 +364,13 @@ TKTouch* TKTouch_populateWithPosition_Hook(auto original, TKTouch* _this, uintpt
 
 void InstallZoom()
 {
+  IL2CPP_HOOK(PlanetViewUtils::Class::Method("Populate", 3), PlanetViewUtils_Populate_Hook);
+  IL2CPP_HOOK(PlanetViewUtils::Class::Method(
+                  "CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"}),
+              PlanetViewUtils_CreateBackdrop_Hook);
+  IL2CPP_HOOK(PlanetViewUtils::Class::Method("CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode",
+                                                                "SystemVariationConfigCollection", "System.Boolean"}),
+              PlanetViewUtils_CreateBackdrop_Hook);
   IL2CPP_HOOK(PlanetViewUtils::Class::Method("CameraZoomedEventHandler"),
               PlanetViewUtils_CameraZoomedEventHandler_Hook);
   IL2CPP_HOOK(PlanetViewUtils::Class::Method("get_FlatRenderable"), PlanetViewUtils_get_FlatRenderable_Hook);

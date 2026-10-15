@@ -104,6 +104,9 @@ struct GameObject : il2cpp::Object {
   { return Get<"transform", Transform*>(); }
   void SetActive(bool active)
   { Call<"SetActive">(active); }
+  // Whether it and every parent are active.
+  bool activeInHierarchy()
+  { return Get<"activeInHierarchy", bool>(); }
 
   // Passing System.Type selects the (Type) overloads over the string and generic ones. A null Type would throw in
   // managed code, so a missing class yields null instead.

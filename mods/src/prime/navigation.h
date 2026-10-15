@@ -208,8 +208,17 @@ struct OrbitFrameProvider : il2cpp::Object {
   { SetField<"_rotationAngleDelta">(value); }
 };
 
+struct PopulatedSystemData : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "PopulatedSystemData">;
+  Il2CppObject* VariationCollection()
+  { return Field<"<VariationCollection>k__BackingField", Il2CppObject*>(); }
+};
+
 struct PlanetViewUtils : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "PlanetViewUtils">;
+
+  PopulatedSystemData* Population()
+  { return Field<"_popData", PopulatedSystemData*>(); }
 
   // The planet's 2D sprite, a Component. Calling this also runs any detour on get_FlatRenderable.
   unity::Component* FlatRenderable()

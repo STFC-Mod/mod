@@ -546,11 +546,12 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("graphics", "ui_scale_ship", g.ui_scale_ship);
   r.Read("graphics", "ui_scale_viewer", g.ui_scale_viewer);
   r.Read("graphics", "zoom", g.zoom);
+  const auto haven_default = g.haven_zoom;
   r.Read("graphics", "haven_zoom", g.haven_zoom);
   if (!std::isfinite(g.haven_zoom) || g.haven_zoom < 0.0f) {
-    spdlog::warn("invalid g.haven_zoom {}; using 4000", g.haven_zoom);
-    g.haven_zoom = 4000.0f;
-    r.Record("graphics", "haven_zoom", g.haven_zoom);
+    spdlog::warn("invalid graphics.haven_zoom {}; using {}", g.haven_zoom, haven_default);
+    g.haven_zoom = haven_default;
+    r.Record("graphics", "haven_zoom", haven_default);
   }
   r.Read("graphics", "fr_scale", g.fr_scale);
   for (auto [profile, prefix] : {std::pair{&g.zoom_label_player, std::string("zoom_label_player")},
@@ -634,6 +635,7 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "disable_preview_recall", u.disable_preview_recall);
   r.Read("ui", "disable_first_popup", u.disable_first_popup);
   r.Read("ui", "only_show_first_popup", u.only_show_first_popup);
+  r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "disable_move_keys", u.disable_move_keys);
   r.Read("ui", "disable_toast_banners", u.disable_toast_banners);
   r.Read("ui", "default_chat_width", u.default_chat_width);
@@ -653,7 +655,6 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "focus_search", u.focus_search);
   r.ReadRenamed("ui", "format_cargo_values", "cargo_format", u.format_cargo_values);
   r.Read("ui", "officer_sort", u.officer_sort);
-  r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "arrow_keys_to_select_ship", u.arrow_keys_to_select_ship);
   r.Read("ui", "auto_confirm_ft_upgrade", u.auto_confirm_ft_upgrade);
   r.Read("ui", "forbidden_tech_ship_name", u.forbidden_tech_ship_name);
