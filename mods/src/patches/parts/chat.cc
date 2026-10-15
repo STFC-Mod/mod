@@ -10,7 +10,7 @@
 #include <spdlog/spdlog.h>
 #include <stdexcept>
 #include "patches/chat_startup.h"
-#include "patches/screen_update_hook.h"
+#include "patches/patches.h"
 #include "prime/Hub.h"
 
 namespace
@@ -19,6 +19,7 @@ il2cpp::GcHandle preview_handle;
 ChatStartup::Gate startup;
 bool width_applied = false;
 bool startup_failed = false;
+bool options_installed = false;
 
 void ObserveChatPreview(ChatPreviewController* preview)
 {
@@ -100,6 +101,12 @@ void UpdateChatOptions()
   }
 }
 } // namespace
+
+void ChatOptionsUpdate()
+{
+  if (options_installed)
+    UpdateChatOptions();
+}
 
 auto GetChatTabIndices()
 {
@@ -232,7 +239,8 @@ void ChatPreviewController_OnRegionalMessageReceived(auto original, ChatPreviewC
 
 void InstallChatPatches()
 {
-  if (install_screen_manager_update_hook() && register_screen_manager_update_callback(UpdateChatOptions))
+  options_installed = InstallScreenManagerUpdateHook();
+  if (options_installed)
     spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}",
                  Config::Get().auto_open_chat, Config::Get().default_chat_width);
   if (auto m = FullScreenChatViewController::Class::Method("AboutToShow"))

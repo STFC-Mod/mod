@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gamefunctions.h"
+#include "shortcuts.h"
 
 #include <cstddef>
 

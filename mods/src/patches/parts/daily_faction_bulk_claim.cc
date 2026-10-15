@@ -1,4 +1,5 @@
 #include "config.h"
+#include "patches/patches.h"
 #include "str_utils.h"
 
 #include <prime/unity.h>
@@ -284,4 +285,6 @@ void InstallDailyFactionBulkClaimHooks()
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToShow);
   if (auto m = Controller::Method("AboutToHide", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToHide);
+  if (Config::Get().daily_bulk_claim_toggle_default_on)
+    InstallScreenManagerUpdateHook();
 }

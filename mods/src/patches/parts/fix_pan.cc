@@ -7,8 +7,8 @@
 #include <prime/navigation.h>
 #include <prime/ui.h>
 
-#include <patches/key.h>
-#include <patches/mapkey.h>
+#include "patches/input.h"
+#include "patches/shortcuts.h"
 
 #include <spud/detour.h>
 #include <cmath>
@@ -64,8 +64,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
       native_handled = true;
     } else if (!_this->BlockPan() && !_this->trackingPOI() && !dragging && KeyboardPanAllowed()) {
       // Opposite bindings cancel; normalize diagonals like the native 2D composite.
-      float x = float(MapKey::IsPressed(GameFunction::MoveRight)) - float(MapKey::IsPressed(GameFunction::MoveLeft));
-      float y = float(MapKey::IsPressed(GameFunction::MoveUp)) - float(MapKey::IsPressed(GameFunction::MoveDown));
+      float x = float(Shortcut::IsPressed(GameFunction::MoveRight)) - float(Shortcut::IsPressed(GameFunction::MoveLeft));
+      float y = float(Shortcut::IsPressed(GameFunction::MoveUp)) - float(Shortcut::IsPressed(GameFunction::MoveDown));
       const float length = std::sqrt(x * x + y * y);
       if (length > 0.0f) {
         d.x = -x / length * _this->keyboardDeltaScaler();
@@ -107,10 +107,10 @@ void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* 
   constexpr float keyboard_rotation_speed = 45.0f;
   const auto      frame_delta             = keyboard_rotation_speed * GetDeltaTime();
 
-  if (MapKey::IsPressed(GameFunction::MoveLeft)) {
+  if (Shortcut::IsPressed(GameFunction::MoveLeft)) {
     _this->SetRotationAngleDelta(_this->RotationAngleDelta() - frame_delta);
   }
-  if (MapKey::IsPressed(GameFunction::MoveRight)) {
+  if (Shortcut::IsPressed(GameFunction::MoveRight)) {
     _this->SetRotationAngleDelta(_this->RotationAngleDelta() + frame_delta);
   }
 }

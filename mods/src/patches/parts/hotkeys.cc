@@ -19,20 +19,17 @@
 #include "prime/KeyCode.h"
 
 #include "patches/parts/action_queue.h"
-#include "patches/key.h"
-#include "patches/mapkey.h"
-#include "patches/parts/daily_faction_bulk_claim.h"
+#include "patches/fleet_watch.h"
+#include "patches/input.h"
+#include "patches/shortcuts.h"
+#include "patches/patches.h"
+
 #include "patches/parts/double_click_assign_ship.h"
-#include "patches/parts/focus_search.h"
+
 #include "str_utils.h"
 
 #include <il2cpp/il2cpp.h>
 
-#include "patches/screen_update_hook.h"
-
-#ifdef _MODDBG
-#include "patches/fleet_watch.h"
-#endif
 
 #include <EASTL/vector.h>
 
@@ -73,7 +70,7 @@ struct ShortcutKeybindHint : il2cpp::Object {
 };
 } // namespace
 
-static bool reset_focus_next_frame            = false;
+static bool hotkeys_installed                 = false;
 static int  show_info_pending                 = 0;
 static int  show_officer_presets_pending      = 0;
 static int  show_officer_swap_pending         = 0;
@@ -125,7 +122,7 @@ struct NativeShortcutMapping {
 
 constexpr auto kNativeShortcutMappings = std::to_array<NativeShortcutMapping>({
     {"interior_view", GameFunction::ShowStationInterior},
-    {"exterior_view", GameFunction::ShoWStationExterior},
+    {"exterior_view", GameFunction::ShowStationExterior},
     {"system_view", GameFunction::ShowSystem},
     {"galaxy_view", GameFunction::ShowGalaxy},
     {"events", GameFunction::ShowEvents},
@@ -237,9 +234,10 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _th
       return fleet ? fleet->Index() : -1;
     });
   }
-  auto shortcut = hint_action == GameFunction::Max ? std::string{} : MapKey::GetShortcutHint(hint_action);
+  auto shortcut = hint_action == GameFunction::Max ? std::string{} : Shortcut::Hint(hint_action);
+
   if (shortcut.empty() && mapping->fallback != GameFunction::Max) {
-    shortcut = MapKey::GetShortcutHint(mapping->fallback);
+    shortcut = Shortcut::Hint(mapping->fallback);
   }
   if (shortcut.empty()) {
     shortcut = "-";
@@ -624,10 +622,95 @@ bool PressOfficerPresetsButton()
   return false;
 }
 
+// Focuses the search box of whichever inventory, officer, or ship list is on screen.
+bool FocusSearchBox()
+{
+  if (!Config::Get().focus_search) {
+    return false;
+  }
+
+  // Guard chat input so we don't steal focus from the chat text box
+  if (auto chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->inputFieldSelected()) {
+    return false;
+  }
+
+  // InventoryListViewController covers OfficerRosterViewController and other inventory subclasses
+  auto inventoryControllers = ObjectFinder<InventoryListViewController>::GetAll();
+  for (auto controller : inventoryControllers) {
+    if (!controller || !controller->inputField()) {
+      continue;
+    }
+
+    auto canvas  = controller->canvasController();
+    bool visible = canvas && canvas->Visible();
+    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
+    spdlog::debug("[FocusSearch] inventory controller={} section={} canvas={} visible={} active={}", (void*)controller,
+                 (int32_t)controller->targetSection(), (void*)canvas, visible, active);
+
+    if (visible && active) {
+      controller->inputField()->Focus();
+      return true;
+    }
+  }
+
+  // OfficerAssignmentViewController (separate from inventory list)
+  auto officerControllers = ObjectFinder<OfficerAssignmentViewController>::GetAll();
+  for (auto controller : officerControllers) {
+    if (!controller || !controller->inputField()) {
+      continue;
+    }
+
+    auto canvas  = controller->canvasController();
+    bool visible = canvas && canvas->Visible();
+    bool active  = controller->isActiveAndEnabled() && controller->inputField()->isActiveAndEnabled();
+    spdlog::debug("[FocusSearch] officer assignment controller={} canvas={} visible={} active={}", (void*)controller,
+                 (void*)canvas, visible, active);
+
+    if (visible && active) {
+      controller->inputField()->Focus();
+      return true;
+    }
+  }
+
+  // AssignShipsWidget (ship selection / assignment)
+  auto assignShipWidgets = ObjectFinder<AssignShipsWidget>::GetAll();
+  for (auto widget : assignShipWidgets) {
+    if (!widget || !widget->inputField()) {
+      continue;
+    }
+
+    auto canvas  = GetCanvasControllerFromComponent(widget);
+    bool visible = canvas && canvas->Visible();
+    bool active  = widget->isActiveAndEnabled() && widget->inputField()->isActiveAndEnabled();
+    spdlog::debug("[FocusSearch] assign ships widget={} canvas={} visible={} active={}", (void*)widget, (void*)canvas,
+                 visible, active);
+
+    if (visible && active) {
+      widget->inputField()->Focus();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 {
-  dispatch_screen_manager_update_callbacks();
-  if (!Config::Get().installHotkeyHooks) {
+  // Each returns at once when its feature is off. They run in every hotkey mode, including Scopely's and while
+  // hotkeys are toggled off. An exception must not unwind into the game's native frame.
+  for (auto update : {AllianceGamesStoreUpdate, AssignShipEnterKeyUpdate, ChatOptionsUpdate,
+                      DailyFactionBulkClaimUpdate, fleet_watch::Tick, FleetSyncUpdate, GalacticAnomalyTimerUpdate,
+                      WarpActionLabelUpdate}) {
+    try {
+      update();
+    } catch (const std::exception& error) {
+      spdlog::warn("[FrameUpdate] update failed: {}", error.what());
+    } catch (...) {
+      spdlog::warn("[FrameUpdate] update failed with an unknown exception");
+    }
+  }
+
+  if (!hotkeys_installed) {
     return original(_this);
   }
 
@@ -639,25 +722,18 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
   static std::chrono::time_point<std::chrono::steady_clock> select_clock             = std::chrono::steady_clock::now();
   static int32_t                                            last_ship_select_request = -1;
 
-  Key::ResetCache();
-
-  if (MapKey::IsDown(GameFunction::DisableHotKeys)) {
+  if (Shortcut::IsDown(GameFunction::DisableHotKeys)) {
     if (shortcut_hints_ready) {
       SetNativeShortcutHintsVisible(false);
     }
     Config::Get().hotkeys_enabled = false;
     spdlog::warn("Setting hotkeys to DISABLED");
     return;
-  } else if (MapKey::IsDown(GameFunction::EnableHotKeys)) {
+  } else if (Shortcut::IsDown(GameFunction::EnableHotKeys)) {
     Config::Get().hotkeys_enabled = true;
     spdlog::warn("Setting hotkeys to ENABLED");
     return;
   }
-
-  // Per-frame driver - must run every frame, before the hotkey-mode
-  // early-returns below (it must also run in Scopely-hotkey mode and
-  // while hotkeys are toggled off).
-  AssignShipEnterKeyUpdate();
 
   if (show_officer_presets_pending > 0) {
     if (PressOfficerPresetsButton()) {
@@ -706,7 +782,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
     return;
   }
 
-  if (shortcut_hints_ready && MapKey::IsDown(GameFunction::ToggleShortcutHints)) {
+  if (shortcut_hints_ready && Shortcut::IsDown(GameFunction::ToggleShortcutHints)) {
     ToggleNativeShortcutHints();
     return;
   }
@@ -714,7 +790,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
   const auto is_in_chat = Hub::IsInChat();
   const auto config     = &Config::Get();
 
-  if (MapKey::IsDown(GameFunction::Restart)) {
+  if (Shortcut::IsDown(GameFunction::Restart)) {
     spdlog::info("Clearing localisation cache and restarting");
     LanguageManager::ClearCache();
     Hub::get_App()->Reload();
@@ -722,32 +798,32 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
   }
 
 #ifdef _WIN32
-  if (MapKey::IsDown(GameFunction::Quit)) {
+  if (Shortcut::IsDown(GameFunction::Quit)) {
     TerminateProcess(GetCurrentProcess(), 1);
   }
 #elif defined(__APPLE__)
-  if (MapKey::IsDown(GameFunction::Quit)) {
+  if (Shortcut::IsDown(GameFunction::Quit)) {
     Hub::get_App()->Quit();
     return;
   }
 #endif
 
   int32_t ship_select_request = -1;
-  if (MapKey::IsDown(GameFunction::SelectShip1)) {
+  if (Shortcut::IsDown(GameFunction::SelectShip1)) {
     ship_select_request = 0;
-  } else if (MapKey::IsDown(GameFunction::SelectShip2)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip2)) {
     ship_select_request = 1;
-  } else if (MapKey::IsDown(GameFunction::SelectShip3)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip3)) {
     ship_select_request = 2;
-  } else if (MapKey::IsDown(GameFunction::SelectShip4)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip4)) {
     ship_select_request = 3;
-  } else if (MapKey::IsDown(GameFunction::SelectShip5)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip5)) {
     ship_select_request = 4;
-  } else if (MapKey::IsDown(GameFunction::SelectShip6)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip6)) {
     ship_select_request = 5;
-  } else if (MapKey::IsDown(GameFunction::SelectShip7)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip7)) {
     ship_select_request = 6;
-  } else if (MapKey::IsDown(GameFunction::SelectShip8)) {
+  } else if (Shortcut::IsDown(GameFunction::SelectShip8)) {
     ship_select_request = 7;
   }
 
@@ -824,7 +900,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
   if (!is_in_chat) {
     if (!Key::IsInputFocused()) {
-      if (MapKey::IsDown(GameFunction::SelectCurrent)) {
+      if (Shortcut::IsDown(GameFunction::SelectCurrent)) {
         auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
         if (fleet_bar) {
           auto fleet_controller = fleet_bar->fleetPanelController();
@@ -839,15 +915,15 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
-      if ((MapKey::IsDown(GameFunction::ToggleQueue))) {
+      if ((Shortcut::IsDown(GameFunction::ToggleQueue))) {
         config->queue_enabled = !config->queue_enabled;
         // Forget stale recovery authorizations; existing native target queues keep processing.
         ResetQueueRecoveryTracking();
         return;
       }
 
-      if ((MapKey::IsDown(GameFunction::ShowChat) || MapKey::IsDown(GameFunction::ShowChatSide1)
-           || MapKey::IsDown(GameFunction::ShowChatSide2))) {
+      if ((Shortcut::IsDown(GameFunction::ShowChat) || Shortcut::IsDown(GameFunction::ShowChatSide1)
+           || Shortcut::IsDown(GameFunction::ShowChatSide2))) {
         if (auto chat_manager = ChatManager::Instance(); chat_manager) {
           if (chat_manager->IsSideChatOpen()) {
             if (auto view_controller = ObjectFinder<FullScreenChatViewController>::Get(); view_controller) {
@@ -857,7 +933,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
                 }
               }
             }
-          } else if (MapKey::IsDown(GameFunction::ShowChatSide1) || MapKey::IsDown(GameFunction::ShowChatSide2)) {
+          } else if (Shortcut::IsDown(GameFunction::ShowChatSide1) || Shortcut::IsDown(GameFunction::ShowChatSide2)) {
             chat_manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
           } else {
             chat_manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Fullscreen);
@@ -865,7 +941,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
-      if (MapKey::IsDown(GameFunction::MoveLeft)) {
+      if (Shortcut::IsDown(GameFunction::MoveLeft)) {
         auto const result = MoveDockInManagementView(true) || MoveShipSelectionInDock(true) || MoveArtifactCanvas(true)
                             || MoveOfficerCanvas(true);
         if (result) {
@@ -873,7 +949,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
-      if (MapKey::IsDown(GameFunction::MoveRight)) {
+      if (Shortcut::IsDown(GameFunction::MoveRight)) {
         auto const result = MoveDockInManagementView(false) || MoveShipSelectionInDock(false)
                             || MoveArtifactCanvas(false) || MoveOfficerCanvas(false);
         if (result) {
@@ -881,21 +957,21 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
       }
 
-      if (Config::Get().focus_search && MapKey::IsDown(GameFunction::FocusSearch)) {
+      if (Config::Get().focus_search && Shortcut::IsDown(GameFunction::FocusSearch)) {
         if (FocusSearchBox()) {
           return;
         }
       }
 
-      if (MapKey::IsDown(GameFunction::ShowQTrials)) {
+      if (Shortcut::IsDown(GameFunction::ShowQTrials)) {
         return GotoSection(SectionID::ChallengeSelection);
-      } else if (MapKey::IsDown(GameFunction::ShowBookmarks)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowBookmarks)) {
         auto bookmark_manager = BookmarksManager::Instance();
         if (bookmark_manager) {
           return bookmark_manager->ViewBookmarks();
         }
         return GotoSection(SectionID::Bookmarks_Main);
-      } else if (MapKey::IsDown(GameFunction::ShowLookup)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowLookup)) {
         auto bookmark_manager = BookmarksManager::Instance();
         if (bookmark_manager) {
           bookmark_manager->ViewCoordinateSearch();
@@ -904,29 +980,29 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         spdlog::warn("[ShowLookup] BookmarksManager instance not available, falling back to main bookmarks");
         GotoSection(SectionID::Bookmarks_Main);
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowRefinery)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowRefinery)) {
         return GotoSection(SectionID::Shop_Refining_List);
-      } else if (MapKey::IsDown(GameFunction::ShowFactions)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowFactions)) {
         return GotoSection(SectionID::Shop_MainFactions);
-      } else if (MapKey::IsDown(GameFunction::ShoWStationExterior)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowStationExterior)) {
         return GotoSection(SectionID::Starbase_Exterior);
-      } else if (MapKey::IsDown(GameFunction::NativeShortcutGalaxy)) {
+      } else if (Shortcut::IsDown(GameFunction::NativeShortcutGalaxy)) {
         InvokeNativeShortcut<"OnGalaxyAction">("Galaxy");
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowGalaxy)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowGalaxy)) {
         return ChangeNavigationSection(SectionID::Navigation_Galaxy);
-      } else if (MapKey::IsDown(GameFunction::ShowStationInterior)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowStationInterior)) {
         return GotoSection(SectionID::Starbase_Interior);
-      } else if (MapKey::IsDown(GameFunction::ShowHaven)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowHaven)) {
         return PlanetaryBaseManager::ViewOwnHaven();
-      } else if (MapKey::IsDown(GameFunction::ShowSystem)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowSystem)) {
         return ChangeNavigationSection(SectionID::Navigation_System);
-      } else if (MapKey::IsDown(GameFunction::ShowArtifacts)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowArtifacts)) {
         return GotoSection(SectionID::ArtifactHall_Inventory);
-      } else if (MapKey::IsDown(GameFunction::ShowShipConstruction)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowShipConstruction)) {
         InvokeNativeShortcut<"OnShipsAction">("Ship Construction");
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowOfficerSwap)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowOfficerSwap)) {
         auto* section_manager = Hub::get_SectionManager();
         spdlog::info("[OfficerSwap] shortcut pressed current_section={}",
                      section_manager ? static_cast<int32_t>(section_manager->CurrentSection()) : 0);
@@ -946,7 +1022,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
           spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Swap");
         }
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowShipSwap)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowShipSwap)) {
         auto* section_manager = Hub::get_SectionManager();
         spdlog::info("[ShipSwap] shortcut pressed current_section={}",
                      section_manager ? static_cast<int32_t>(section_manager->CurrentSection()) : 0);
@@ -965,23 +1041,23 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
           spdlog::warn("[Hotkeys] unable to open Manage Ships for Ship Swap");
         }
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowShields)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowShields)) {
         InvokeNativeShortcut<"OnPeaceShieldAction">("Peace Shields");
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowBattlelogs)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowBattlelogs)) {
         InvokeNativeShortcut<"OnInboxAction">("Battle Reports");
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowInventory)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowInventory)) {
         return GotoSection(SectionID::InventoryList);
-      } else if (MapKey::IsDown(GameFunction::ShowMissions)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowMissions)) {
         return GotoSection(SectionID::Missions_AcceptedList);
-      } else if (MapKey::IsDown(GameFunction::ShowResearch)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowResearch)) {
         return GotoSection(SectionID::Research_LandingPage);
-      } else if (MapKey::IsDown(GameFunction::ShowScrapYard)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowScrapYard)) {
         return GotoSection(SectionID::ShipScrapping_List);
-      } else if (MapKey::IsDown(GameFunction::ShowOfficers)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowOfficers)) {
         return GotoSection(SectionID::OfficerInventory);
-      } else if (MapKey::IsDown(GameFunction::ShowOfficerPresets)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowOfficerPresets)) {
         if (PressOfficerPresetsButton()) {
           return;
         }
@@ -1002,84 +1078,84 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         }
         show_officer_presets_pending = 300;
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowCommander)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowCommander)) {
         // TODO: Does not work properly, defaults to first FleetCommander (spock, rather than selected fleet
         // commander)
         return GotoSection(SectionID::FleetCommander_Management);
-      } else if (MapKey::IsDown(GameFunction::ShowAwayTeam)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowAwayTeam)) {
         return GotoSection(SectionID::Missions_AwayTeamsList);
-      } else if (MapKey::IsDown(GameFunction::NativeShortcutEvents)) {
+      } else if (Shortcut::IsDown(GameFunction::NativeShortcutEvents)) {
         InvokeNativeShortcut<"OnEventsAction">("Events");
         return;
-      } else if (MapKey::IsDown(GameFunction::ShowEvents)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowEvents)) {
         return GotoSection(SectionID::Tournament_Group_Selection);
-      } else if (MapKey::IsDown(GameFunction::ShowExoComp)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowExoComp)) {
         return GotoSection(SectionID::Consumables);
-      } else if (MapKey::IsDown(GameFunction::ShowDaily)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowDaily)) {
         return GotoSection(SectionID::Missions_DailyGoals);
-      } else if (MapKey::IsDown(GameFunction::ShowGifts)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowGifts)) {
         return GotoSection(SectionID::Shop_List);
-      } else if (MapKey::IsDown(GameFunction::ShowAlliance)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowAlliance)) {
         return GotoSection(SectionID::Alliance_Main);
-      } else if (MapKey::IsDown(GameFunction::ShowAllianceHelp)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowAllianceHelp)) {
         return GotoSection(SectionID::Alliance_Help);
-      } else if (MapKey::IsDown(GameFunction::ShowAllianceArmada)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowAllianceArmada)) {
         return GotoSection(SectionID::Alliance_Armadas);
-      } else if (MapKey::IsDown(GameFunction::ShowSettings)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowSettings)) {
         return GotoSection(SectionID::GameSettings);
-      } else if (MapKey::IsPressed(GameFunction::UiScaleUp)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiScaleUp)) {
         config->AdjustUiScale(true);
-      } else if (MapKey::IsPressed(GameFunction::UiScaleDown)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiScaleDown)) {
         config->AdjustUiScale(false);
-      } else if (MapKey::IsPressed(GameFunction::UiShipScaleUp)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiShipScaleUp)) {
         config->AdjustUiShipScale(true);
-      } else if (MapKey::IsPressed(GameFunction::UiShipScaleDown)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiShipScaleDown)) {
         config->AdjustUiShipScale(false);
-      } else if (MapKey::IsPressed(GameFunction::UiViewerScaleUp)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleUp)) {
         config->AdjustUiViewerScale(true);
-      } else if (MapKey::IsPressed(GameFunction::UiViewerScaleDown)) {
+      } else if (Shortcut::IsPressed(GameFunction::UiViewerScaleDown)) {
         config->AdjustUiViewerScale(false);
-      } else if (MapKey::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
         CycleAutoConfirmInstantWarp(*config);
-      } else if (MapKey::IsDown(GameFunction::TogglePreviewLocate)) {
+      } else if (Shortcut::IsDown(GameFunction::TogglePreviewLocate)) {
         config->disable_preview_locate = !config->disable_preview_locate;
-      } else if (MapKey::IsDown(GameFunction::TogglePreviewRecall)) {
+      } else if (Shortcut::IsDown(GameFunction::TogglePreviewRecall)) {
         config->disable_preview_recall = !config->disable_preview_recall;
-      } else if (MapKey::IsDown(GameFunction::ToggleCargoDefault)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleCargoDefault)) {
         config->show_cargo_default = !config->show_cargo_default;
-      } else if (MapKey::IsDown(GameFunction::ToggleCargoPlayer)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleCargoPlayer)) {
         config->show_player_cargo = !config->show_player_cargo;
-      } else if (MapKey::IsDown(GameFunction::ToggleCargoStation)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleCargoStation)) {
         config->show_station_cargo = !config->show_station_cargo;
-      } else if (MapKey::IsDown(GameFunction::ToggleCargoHostile)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleCargoHostile)) {
         config->show_hostile_cargo = !config->show_hostile_cargo;
-      } else if (MapKey::IsDown(GameFunction::ToggleCargoArmada)) {
+      } else if (Shortcut::IsDown(GameFunction::ToggleCargoArmada)) {
         config->show_armada_cargo = !config->show_armada_cargo;
-      } else if (MapKey::IsDown(GameFunction::LogLevelOff)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelOff)) {
         // spdlog::log("Setting log level to OFF");
         spdlog::set_level(spdlog::level::off);
         spdlog::flush_on(spdlog::level::off);
-      } else if (MapKey::IsDown(GameFunction::LogLevelError)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelError)) {
         spdlog::set_level(spdlog::level::err);
         spdlog::flush_on(spdlog::level::err);
         // spdlog::log("Setting log level to ERROR");
-      } else if (MapKey::IsDown(GameFunction::LogLevelWarn)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelWarn)) {
         spdlog::set_level(spdlog::level::warn);
         spdlog::flush_on(spdlog::level::warn);
         // spdlog::log("Setting log level to WARN");
-      } else if (MapKey::IsDown(GameFunction::LogLevelInfo)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelInfo)) {
         spdlog::set_level(spdlog::level::info);
         spdlog::flush_on(spdlog::level::info);
         // spdlog::log("Setting log level to INFO");
-      } else if (MapKey::IsDown(GameFunction::LogLevelDebug)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelDebug)) {
         spdlog::set_level(spdlog::level::debug);
         spdlog::flush_on(spdlog::level::debug);
         // spdlog::log("Setting log level to DEBUG");
-      } else if (MapKey::IsDown(GameFunction::LogLevelTrace)) {
+      } else if (Shortcut::IsDown(GameFunction::LogLevelTrace)) {
         spdlog::set_level(spdlog::level::trace);
         spdlog::flush_on(spdlog::level::trace);
         // spdlog::log("Setting log level to TRACE");
-      } else if (MapKey::IsDown(GameFunction::ShowShips)) {
+      } else if (Shortcut::IsDown(GameFunction::ShowShips)) {
         auto fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
         auto fleet_controller = fleet_bar ? fleet_bar->fleetPanelController() : nullptr;
         auto fleet            = fleet_controller ? fleet_controller->fleet() : nullptr;
@@ -1090,11 +1166,11 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
     }
   } else {
     if (auto chat_manager = ChatManager::Instance(); chat_manager) {
-      if (MapKey::IsDown(GameFunction::SelectChatGlobal)) {
+      if (Shortcut::IsDown(GameFunction::SelectChatGlobal)) {
         return chat_manager->OpenChannel(ChatChannelCategory::Global);
-      } else if (MapKey::IsDown(GameFunction::SelectChatAlliance)) {
+      } else if (Shortcut::IsDown(GameFunction::SelectChatAlliance)) {
         return chat_manager->OpenChannel(ChatChannelCategory::Alliance);
-      } else if (MapKey::IsDown(GameFunction::SelectChatPrivate)) {
+      } else if (Shortcut::IsDown(GameFunction::SelectChatPrivate)) {
         return chat_manager->OpenChannel(ChatChannelCategory::Private);
       }
     }
@@ -1112,7 +1188,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
     }
 
     // Dismiss the golden rewards screen when escape or space is pressed.
-    if (MapKey::IsDown(GameFunction::ActionPrimary) || Key::Pressed(KeyCode::Escape)) {
+    if (Shortcut::IsDown(GameFunction::ActionPrimary) || Key::Pressed(KeyCode::Escape)) {
       if (auto reward_controller = ObjectFinder<AnimatedRewardsScreenViewController>::Get(); reward_controller) {
         if (reward_controller->IsActive()) {
           return reward_controller->GoBackToLastSection();
@@ -1120,9 +1196,9 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       }
     }
 
-    if (MapKey::IsDown(GameFunction::ActionPrimary) || MapKey::IsDown(GameFunction::ActionSecondary)
-        || MapKey::IsDown(GameFunction::ActionRecall) || MapKey::IsDown(GameFunction::ActionRepair)
-        || MapKey::IsDown(GameFunction::ActionQueue) || MapKey::IsDown(GameFunction::ActionQueueClear)
+    if (Shortcut::IsDown(GameFunction::ActionPrimary) || Shortcut::IsDown(GameFunction::ActionSecondary)
+        || Shortcut::IsDown(GameFunction::ActionRecall) || Shortcut::IsDown(GameFunction::ActionRepair)
+        || Shortcut::IsDown(GameFunction::ActionQueue) || Shortcut::IsDown(GameFunction::ActionQueueClear)
         || force_space_action_next_frame) {
       if (Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat() && !Key::IsInputFocused()) {
         auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
@@ -1134,9 +1210,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       }
     }
 
-    DailyFactionBulkClaimUpdate();
-
-    if (MapKey::IsDown(GameFunction::ActionView)) {
+    if (Shortcut::IsDown(GameFunction::ActionView)) {
       auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
 
       for (auto& pre_scan_widget : all_pre_scan_widgets) {
@@ -1348,7 +1422,7 @@ bool DidExecuteRepair(FleetBarViewController* fleet_bar)
 
 void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
 {
-  if (MapKey::IsDown(GameFunction::ActionPrimary)) {
+  if (Shortcut::IsDown(GameFunction::ActionPrimary)) {
     if (auto* navigation = ObjectFinder<NavigationInteractionUIViewController>::Get();
         navigation && navigation->TryPressJoinWaveDefense()) {
       return;
@@ -1380,14 +1454,14 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
     return;
   }
 
-  auto has_primary       = MapKey::IsDown(GameFunction::ActionPrimary) || force_space_action_next_frame;
-  auto has_repair        = MapKey::IsDown(GameFunction::ActionRepair);
-  auto has_recall_cancel = MapKey::IsDown(GameFunction::ActionRecallCancel);
-  auto has_secondary     = MapKey::IsDown(GameFunction::ActionSecondary);
-  auto has_queue         = MapKey::IsDown(GameFunction::ActionQueue);
-  auto has_queue_clear   = MapKey::IsDown(GameFunction::ActionQueueClear);
+  auto has_primary       = Shortcut::IsDown(GameFunction::ActionPrimary) || force_space_action_next_frame;
+  auto has_repair        = Shortcut::IsDown(GameFunction::ActionRepair);
+  auto has_recall_cancel = Shortcut::IsDown(GameFunction::ActionRecallCancel);
+  auto has_secondary     = Shortcut::IsDown(GameFunction::ActionSecondary);
+  auto has_queue         = Shortcut::IsDown(GameFunction::ActionQueue);
+  auto has_queue_clear   = Shortcut::IsDown(GameFunction::ActionQueueClear);
   auto has_recall =
-      MapKey::IsDown(GameFunction::ActionRecall) && (!Config::Get().disable_preview_recall || !CanHideViewers());
+      Shortcut::IsDown(GameFunction::ActionRecall) && (!Config::Get().disable_preview_recall || !CanHideViewers());
   const bool require_visible_target = has_primary && Config::Get().primary_requires_visible_target;
 
   if (has_queue_clear) {
@@ -1651,17 +1725,15 @@ void ShowWithFleet_Hook(auto original, PreScanTargetWidget* _this, void* a1)
   }
 }
 
-bool install_screen_manager_update_hook()
+bool InstallScreenManagerUpdateHook()
 {
   static bool installed = false;
-  if (installed) {
-    return true;
-  }
-
-  if (auto m = ScreenManager::Class::Method("Update")) {
-    if (!SPUD_STATIC_DETOUR(m.Pointer(), ScreenManager_Update_Hook))
-      return false;
-    installed = true;
+  if (!installed) {
+    if (auto m = ScreenManager::Class::Method("Update")) {
+      if (!SPUD_STATIC_DETOUR(m.Pointer(), ScreenManager_Update_Hook))
+        return false;
+      installed = true;
+    }
   }
   return installed;
 }
@@ -1669,7 +1741,7 @@ bool install_screen_manager_update_hook()
 void InstallShortcutHintHooks()
 {
   // Configuration is fully parsed before hook installation. NONE, empty, and invalid bindings opt out.
-  if (!MapKey::HasBinding(GameFunction::ToggleShortcutHints)) {
+  if (!Shortcut::HasBinding(GameFunction::ToggleShortcutHints)) {
     return;
   }
 
@@ -1681,7 +1753,6 @@ void InstallShortcutHintHooks()
     return;
   }
 
-  MapKey::CacheShortcutHints();
   original_shortcut_hint_update_text = SPUD_STATIC_DETOUR(update_text.Pointer(), ShortcutKeybindHint_UpdateText_Hook);
   SPUD_STATIC_DETOUR(update_visibility.Pointer(), ShortcutKeybindHint_UpdateVisibility_Hook);
   shortcut_hints_ready = true;
@@ -1696,10 +1767,7 @@ void InstallHotkeyHooks()
 
   InstallShortcutHintHooks();
 
-  install_screen_manager_update_hook();
-#ifdef _MODDBG
-  fleet_watch::InstallRuntimeProbe();
-#endif
+  hotkeys_installed = InstallScreenManagerUpdateHook();
 
   if (auto m = RewardsButtonWidget::Class::Method("OnDidBindContext"))
     SPUD_STATIC_DETOUR(m.Pointer(), OnDidBindContext_Hook);

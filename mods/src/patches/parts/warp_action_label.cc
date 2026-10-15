@@ -2,7 +2,7 @@
 #include "patches/object_tracker.h"
 
 #include "patches/instant_warp_policy.h"
-#include "patches/screen_update_hook.h"
+#include "patches/patches.h"
 #include "prime/fleet.h"
 #include "prime/viewers.h"
 #include "prime/ui.h"
@@ -15,7 +15,9 @@
 
 namespace
 {
-// This is a client of the existing frame dispatcher, not another UI detour.
+bool installed = false;
+
+// Runs on the ScreenManager.Update tick, not another UI detour.
 // Never mutate the button context, timer, resource cost, or click handler.
 // Unity's `bool(UnityEngine.Object)`: false for null and for destroyed native objects.
 bool Alive(il2cpp::Object* object)
@@ -127,8 +129,15 @@ void Update()
 }
 } // namespace
 
+void WarpActionLabelUpdate()
+{
+  if (installed)
+    Update();
+}
+
 void InstallWarpActionLabel()
 {
-  if (install_screen_manager_update_hook() && register_screen_manager_update_callback(Update))
+  installed = InstallScreenManagerUpdateHook();
+  if (installed)
     spdlog::info("[WarpActionLabel] system-card action labels enabled");
 }

@@ -51,9 +51,10 @@ if is_arch("x64", "x86_64") then
         add_packages("spud")
 end
 
--- Pure startup gate regression tests; no game process required.
-target("chat-startup-tests")
+target("mod-logic-tests")
     set_kind("binary")
     set_default(false)
-    add_files("tests/chat_startup.cc")
-    add_includedirs("mods/src")
+    set_exceptions("cxx")
+    add_files("tests/mod_logic.cc", "mods/src/patches/shortcuts.cc")
+    add_includedirs("mods/src", "libs/il2cpp/include", "third_party/libil2cpp")
+    add_packages("spdlog", "toml++", "simdutf")

@@ -1,5 +1,6 @@
 #include "config.h"
-#include "patches/key.h"
+#include "patches/patches.h"
+#include "patches/input.h"
 #include "patches/object_tracker.h"
 
 #include "double_click_assign_ship.h"

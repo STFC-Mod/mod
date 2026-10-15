@@ -1,6 +1,4 @@
 #include "config.h"
-#include "patches/mapkey.h"
-#include "prime/KeyCode.h"
 #include "str_utils.h"
 #include "version.h"
 #include <prime/ui.h>

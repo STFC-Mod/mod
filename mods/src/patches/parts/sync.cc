@@ -2,7 +2,7 @@
 #include "errormsg.h"
 #include "file.h"
 #include "patches/fleet_watch.h"
-#include "patches/screen_update_hook.h"
+#include "patches/patches.h"
 #include "str_utils.h"
 
 #include <Digit.PrimePlatform.Content.pb.h>
@@ -3360,6 +3360,9 @@ static void reread_requested()
   }
 }
 
+// Set once fleet_watch accepted the subscription, which also installs the frame tick.
+static bool installed = false;
+
 static void tick()
 {
   reread_requested();
@@ -3382,10 +3385,16 @@ static void install()
     return;
   }
 
-  register_screen_manager_update_callback(tick);
+  installed = true;
   spdlog::info("Sync: fleet state sync enabled");
 }
 } // namespace fleets
+
+void FleetSyncUpdate()
+{
+  if (fleets::installed)
+    fleets::tick();
+}
 
 using GameServerModelRegistry =
     il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry">;

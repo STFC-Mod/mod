@@ -1,6 +1,7 @@
 #include "config.h"
 
-#include <patches/mapkey.h>
+#include "patches/input.h"
+#include "patches/shortcuts.h"
 
 #include <il2cpp/il2cpp.h>
 
@@ -314,45 +315,45 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
 
   if (!Key::IsInputFocused()) {
     if (camera_shortcuts_enabled) {
-      if (MapKey::IsDown(GameFunction::SetZoomPreset1)) {
+      if (Shortcut::IsDown(GameFunction::SetZoomPreset1)) {
         return StoreZoom("System Preset 1", config->system_zoom_preset_1, _this);
-      } else if (MapKey::IsDown(GameFunction::SetZoomPreset2)) {
+      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset2)) {
         return StoreZoom("System Preset 2", config->system_zoom_preset_2, _this);
-      } else if (MapKey::IsDown(GameFunction::SetZoomPreset3)) {
+      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset3)) {
         return StoreZoom("System Preset 3", config->system_zoom_preset_3, _this);
-      } else if (MapKey::IsDown(GameFunction::SetZoomPreset4)) {
+      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset4)) {
         return StoreZoom("System Preset 4", config->system_zoom_preset_4, _this);
-      } else if (MapKey::IsDown(GameFunction::SetZoomPreset5)) {
+      } else if (Shortcut::IsDown(GameFunction::SetZoomPreset5)) {
         return StoreZoom("System Preset 5", config->system_zoom_preset_5, _this);
-      } else if (MapKey::IsDown(GameFunction::SetZoomDefault)) {
+      } else if (Shortcut::IsDown(GameFunction::SetZoomDefault)) {
         return StoreZoom("System Default", config->default_system_zoom, _this);
       }
 
       do_absolute_zoom = true;
-      if (MapKey::IsDown(GameFunction::ZoomPreset1)) {
+      if (Shortcut::IsDown(GameFunction::ZoomPreset1)) {
         zoomDelta     = config->system_zoom_preset_1;
         do_store_zoom = true;
-      } else if (MapKey::IsDown(GameFunction::ZoomPreset2)) {
+      } else if (Shortcut::IsDown(GameFunction::ZoomPreset2)) {
         zoomDelta     = config->system_zoom_preset_2;
         do_store_zoom = true;
-      } else if (MapKey::IsDown(GameFunction::ZoomPreset3)) {
+      } else if (Shortcut::IsDown(GameFunction::ZoomPreset3)) {
         zoomDelta     = config->system_zoom_preset_3;
         do_store_zoom = true;
-      } else if (MapKey::IsDown(GameFunction::ZoomPreset4)) {
+      } else if (Shortcut::IsDown(GameFunction::ZoomPreset4)) {
         zoomDelta     = config->system_zoom_preset_4;
         do_store_zoom = true;
-      } else if (MapKey::IsDown(GameFunction::ZoomPreset5)) {
+      } else if (Shortcut::IsDown(GameFunction::ZoomPreset5)) {
         zoomDelta     = config->system_zoom_preset_5;
         do_store_zoom = true;
       }
 
       if (config->hotkeys_extended) {
-        if (MapKey::IsDown(GameFunction::ZoomReset)) {
+        if (Shortcut::IsDown(GameFunction::ZoomReset)) {
           do_absolute_zoom = false;
           do_default_zoom  = true;
-        } else if (MapKey::IsDown(GameFunction::ZoomMin)) {
+        } else if (Shortcut::IsDown(GameFunction::ZoomMin)) {
           zoomDelta = config->zoom;
-        } else if (MapKey::IsDown(GameFunction::ZoomMax)) {
+        } else if (Shortcut::IsDown(GameFunction::ZoomMax)) {
           zoomDelta = 100;
         }
       }
@@ -368,7 +369,7 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
       zoomDelta        = config->keyboard_zoom_speed * dt;
     }
 
-    if ((camera_shortcuts_enabled && MapKey::IsPressed(GameFunction::ZoomIn)) || do_absolute_zoom) {
+    if ((camera_shortcuts_enabled && Shortcut::IsPressed(GameFunction::ZoomIn)) || do_absolute_zoom) {
       vec3 mousePos;
       GetMousePosition(&mousePos);
       _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});
@@ -381,7 +382,7 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
       }
       _this->SetWorldPoint(GetMouseWorldPos(_this->sceneCamera(), &mousePos));
       _this->ZoomCameraAtWorldPoint();
-    } else if (camera_shortcuts_enabled && MapKey::IsPressed(GameFunction::ZoomOut)) {
+    } else if (camera_shortcuts_enabled && Shortcut::IsPressed(GameFunction::ZoomOut)) {
       vec3 mousePos;
       GetMousePosition(&mousePos);
       _this->SetZoomLocation(vec2{.x = mousePos.x, .y = mousePos.y});

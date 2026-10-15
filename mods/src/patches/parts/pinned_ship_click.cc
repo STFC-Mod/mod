@@ -1,7 +1,7 @@
 #include "patches/object_tracker.h"
 #include "config.h"
 #include "file.h"
-#include "patches/key.h"
+#include "patches/input.h"
 #include "ship_name_match.h"
 
 #include "pinned_ship_click.h"

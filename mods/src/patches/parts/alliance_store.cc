@@ -1,7 +1,7 @@
 // Alliance Games store: native material research tooltips and currency refresh
 // after bundle readiness. One feature owner, no claim-trace or file probe.
 #include "patches/native_hook_extent.h"
-#include "patches/screen_update_hook.h"
+#include "patches/patches.h"
 
 #include <il2cpp/il2cpp.h>
 #include <il2cpp/method_contract.h>
@@ -618,7 +618,30 @@ void BundleDataWidget_OnDidBindContext_Hook(auto original, BundleDataWidget* sel
 std::string StoreCount(const auto& value)
 { return value ? std::to_string(*value) : "unavailable"; }
 
-void AllianceStoreFrame()
+bool StoreHookFits(const MethodInfo* method)
+{
+  if (!method || !method->methodPointer)
+    return false;
+  auto* entry = reinterpret_cast<void*>(method->methodPointer);
+#if _WIN32 && defined(_M_X64)
+  DWORD64 base     = 0;
+  auto*   function = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(entry), &base, nullptr);
+  if (!function || base + function->BeginAddress != reinterpret_cast<DWORD64>(entry)
+      || function->EndAddress <= function->BeginAddress)
+    return false;
+  const size_t extent = function->EndAddress - function->BeginAddress;
+  const auto   plan   = spud::inspect_detour(entry, spud::Arch::kHost, extent);
+  return plan.ok() && plan.resolved_target == reinterpret_cast<uintptr_t>(entry) && plan.far_jump_size != 0
+         && plan.far_required_patch_bytes >= plan.far_jump_size && plan.far_required_patch_bytes <= extent;
+#elif __APPLE__
+  return native_hooks::MacHookFits(entry);
+#else
+  return false;
+#endif
+}
+} // namespace
+
+void AllianceGamesStoreUpdate()
 {
   if (!StoreThread())
     return;
@@ -721,29 +744,6 @@ void AllianceStoreFrame()
                StoreCount(currency_after), StoreCount(visible), StoreCount(position));
 }
 
-bool StoreHookFits(const MethodInfo* method)
-{
-  if (!method || !method->methodPointer)
-    return false;
-  auto* entry = reinterpret_cast<void*>(method->methodPointer);
-#if _WIN32 && defined(_M_X64)
-  DWORD64 base     = 0;
-  auto*   function = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(entry), &base, nullptr);
-  if (!function || base + function->BeginAddress != reinterpret_cast<DWORD64>(entry)
-      || function->EndAddress <= function->BeginAddress)
-    return false;
-  const size_t extent = function->EndAddress - function->BeginAddress;
-  const auto   plan   = spud::inspect_detour(entry, spud::Arch::kHost, extent);
-  return plan.ok() && plan.resolved_target == reinterpret_cast<uintptr_t>(entry) && plan.far_jump_size != 0
-         && plan.far_required_patch_bytes >= plan.far_jump_size && plan.far_required_patch_bytes <= extent;
-#elif __APPLE__
-  return native_hooks::MacHookFits(entry);
-#else
-  return false;
-#endif
-}
-} // namespace
-
 void InstallAllianceGamesStoreHooks()
 {
   static bool attempted = false;
@@ -774,7 +774,7 @@ void InstallAllianceGamesStoreHooks()
         return;
       }
   }
-  if (!install_screen_manager_update_hook() || !register_screen_manager_update_callback(AllianceStoreFrame)) {
+  if (!InstallScreenManagerUpdateHook()) {
     spdlog::warn("[AllianceGamesStore] unavailable: shared frame delivery");
     return;
   }
