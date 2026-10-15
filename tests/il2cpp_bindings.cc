@@ -369,6 +369,13 @@ END_API
 API(const Il2CppType*, il2cpp_class_get_type, (Il2CppClass * klass))
 { return &klass->byval_arg; }
 END_API
+API(Il2CppMethodPointer, il2cpp_resolve_icall, (const char* name))
+{
+  // The only internal call the fake runtime has.
+  static constexpr auto answer = +[]() -> int32_t { return 42; };
+  return std::string_view(name) == "Test::Answer()" ? reinterpret_cast<Il2CppMethodPointer>(answer) : nullptr;
+}
+END_API
 API(Il2CppObject*, il2cpp_type_get_object, (const Il2CppType*))
 { return &type_object; }
 END_API
@@ -596,6 +603,13 @@ int main()
   // Managed exceptions are contained, reported once per method, and return the default.
   Require(base->Call<"Explode", int32_t>() == 0 && base->Call<"Explode", int32_t>() == 0, "exception contained");
   Require(ErrorsMentioning("Game.Base.Explode threw: NullReferenceException") == 1, "exception reported once");
+
+  // Internal calls run when present; a missing one is reported once and returns the default.
+  static const auto answer  = il2cpp::ResolveICall<int32_t()>("Test::Answer()");
+  static const auto renamed = il2cpp::ResolveICall<int32_t()>("Test::Renamed()");
+  Require(answer && answer() == 42, "internal call");
+  Require(!renamed && renamed() == 0 && renamed() == 0, "missing internal call returns the default");
+  Require(ErrorsMentioning("missing internal call Test::Renamed()") == 1, "missing internal call reported once");
 
   // Nested classes resolve through their declaring type.
   Require(il2cpp::Class<"Game", "Game", "Outer/Inner">::Raw() == &inner_class.klass, "nested class");

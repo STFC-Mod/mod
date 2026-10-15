@@ -160,6 +160,9 @@ void SetErrorHandler(void (*handler)(std::string_view message))
 
 namespace detail
 {
+  void ReportMissingICall(const char* name)
+  { Report(std::string("[IL2CPP] missing internal call ") + name); }
+
   Il2CppClass* StringClass()
   {
     static auto* klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", "String");

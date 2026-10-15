@@ -64,7 +64,8 @@ void DoubleClickOnShipTileClicked(FleetPlayerData* ship)
 void AssignShipEnterKeyUpdate()
 {
   if (!Config::Get().ui.double_click_to_assign_ship) return;
-  if (!Key::Pressed(KeyCode::Return) && !Key::Pressed(KeyCode::KeypadEnter)) return;
+  // Down, not Pressed: a held Enter must press Assign once, not every frame.
+  if (!Key::Down(KeyCode::Return) && !Key::Down(KeyCode::KeypadEnter)) return;
   if (Key::IsInputFocused()) return;
 
   PressAssignButton();

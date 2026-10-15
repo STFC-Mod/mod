@@ -9,23 +9,30 @@
 
 namespace
 {
-constexpr auto kKeyCount = static_cast<size_t>(KeyCode::Max);
+// Unity's internal calls. A missing one (renamed by a Unity upgrade) reads as nothing held.
+struct Input {
+  il2cpp::ICall<int()>         frame_count{"UnityEngine.Time::get_frameCount()"};
+  il2cpp::ICall<bool()>        any_key{"UnityEngine.Input::get_anyKey()"};
+  il2cpp::ICall<bool()>        any_key_down{"UnityEngine.Input::get_anyKeyDown()"};
+  il2cpp::ICall<bool(KeyCode)> key{"UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)"};
+  il2cpp::ICall<bool(KeyCode)> key_down{"UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)"};
+};
 
-constexpr std::array kDirectionalKeys{KeyCode::LeftArrow, KeyCode::RightArrow, KeyCode::UpArrow, KeyCode::DownArrow};
-
-// 0 = not read yet this frame, 1 = true, -1 = false.
-int                           cache_frame          = -1;
-int                           cached_input_focused = 0;
-int                           cached_modified      = 0;
-std::array<int8_t, kKeyCount> cached_pressed{};
-std::array<int8_t, kKeyCount> cached_down{};
-std::array<bool, kKeyCount>   claimed_directions{};
-
-int CurrentFrame()
+const Input& Unity()
 {
-  static auto get_frameCount = il2cpp::ResolveICall<int()>("UnityEngine.Time::get_frameCount()");
-  return get_frameCount();
+  static const Input input;
+  return input;
 }
+
+// This frame's snapshot. On an idle frame anyKey is false and no key is asked about at all; otherwise each key is
+// one internal call, which Unity answers from its own per-frame state.
+struct Frame {
+  int    number   = -1;
+  bool   any_held = false;
+  bool   any_down = false;
+  int8_t focused  = 0; // 0 = not read yet, 1 = true, -1 = false
+  int8_t modified = 0;
+} frame;
 
 TMP_InputField* FocusedInputField()
 {
@@ -34,107 +41,52 @@ TMP_InputField* FocusedInputField()
   auto* field        = selected ? selected->GetComponent<TMP_InputField>() : nullptr;
   return field && field->isFocused() ? field : nullptr;
 }
-
-void EnsureCurrentFrame()
-{
-  const auto frame = CurrentFrame();
-  if (frame == cache_frame)
-    return;
-
-  cache_frame          = frame;
-  cached_input_focused = 0;
-  cached_modified      = 0;
-  cached_pressed.fill(0);
-  cached_down.fill(0);
-
-  // Prune released claims here as well as in IsDirectionalInputClaimed, so a claim cannot outlive a scene
-  // without NavigationPan.
-  for (const auto key : kDirectionalKeys) {
-    auto& claimed = claimed_directions[static_cast<size_t>(key)];
-    if (claimed && !Key::Pressed(key))
-      claimed = false;
-  }
-}
 } // namespace
 
 namespace Key
 {
-bool Pressed(KeyCode key)
+void Poll()
 {
-  EnsureCurrentFrame();
-  static auto GetKeyInt = il2cpp::ResolveICall<bool(KeyCode)>("UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)");
-
-  auto& cached = cached_pressed[static_cast<size_t>(key)];
-  if (cached == 0)
-    cached = GetKeyInt(key) ? 1 : -1;
-  return cached == 1;
+  const auto& unity = Unity();
+  if (!unity.frame_count)
+    return;
+  const int number = unity.frame_count();
+  if (number == frame.number)
+    return;
+  // Without the any-key calls every key is asked about, as if something were always held.
+  frame = {.number   = number,
+           .any_held = !unity.any_key || unity.any_key(),
+           .any_down = !unity.any_key_down || unity.any_key_down()};
 }
+
+bool Pressed(KeyCode key)
+{ return frame.any_held && Unity().key(key); }
 
 bool Down(KeyCode key)
-{
-  EnsureCurrentFrame();
-  static auto GetKeyDownInt =
-      il2cpp::ResolveICall<bool(KeyCode)>("UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)");
-
-  auto& cached = cached_down[static_cast<size_t>(key)];
-  if (cached == 0)
-    cached = GetKeyDownInt(key) ? 1 : -1;
-  return cached == 1;
-}
+{ return frame.any_down && Unity().key_down(key); }
 
 bool IsModified()
 {
-  EnsureCurrentFrame();
-  if (cached_modified == 0) {
+  if (frame.modified == 0) {
     constexpr std::array kModifiers{KeyCode::LeftAlt,      KeyCode::LeftControl,  KeyCode::LeftShift,
                                     KeyCode::RightAlt,     KeyCode::RightControl, KeyCode::RightShift,
                                     KeyCode::AltGr,        KeyCode::LeftCommand,  KeyCode::LeftWindows,
                                     KeyCode::RightCommand, KeyCode::RightWindows};
-    cached_modified = std::ranges::any_of(kModifiers, Pressed) ? 1 : -1;
+    frame.modified = frame.any_held && std::ranges::any_of(kModifiers, Pressed) ? 1 : -1;
   }
-  return cached_modified == 1;
+  return frame.modified == 1;
 }
-
-bool HasShift()
-{ return Pressed(KeyCode::LeftShift) || Pressed(KeyCode::RightShift); }
-
-bool HasAlt()
-{ return Pressed(KeyCode::LeftAlt) || Pressed(KeyCode::RightAlt); }
-
-bool HasCtrl()
-{ return Pressed(KeyCode::LeftControl) || Pressed(KeyCode::RightControl); }
 
 bool IsInputFocused()
 {
-  EnsureCurrentFrame();
-  if (cached_input_focused == 0)
-    cached_input_focused = FocusedInputField() ? 1 : -1;
-  return cached_input_focused == 1;
+  if (frame.focused == 0)
+    frame.focused = FocusedInputField() ? 1 : -1;
+  return frame.focused == 1;
 }
 
 void ClearInputFocus()
 {
   if (FocusedInputField())
     EventSystem::current()->SetSelectedGameObject(nullptr);
-}
-
-void ClaimDirectionalInput(KeyCode key)
-{
-  if (std::ranges::find(kDirectionalKeys, key) != kDirectionalKeys.end())
-    claimed_directions[static_cast<size_t>(key)] = true;
-}
-
-bool IsDirectionalInputClaimed()
-{
-  EnsureCurrentFrame();
-  bool claimed = false;
-  for (const auto key : kDirectionalKeys) {
-    auto& direction = claimed_directions[static_cast<size_t>(key)];
-    if (direction && Pressed(key))
-      claimed = true;
-    else
-      direction = false;
-  }
-  return claimed;
 }
 } // namespace Key

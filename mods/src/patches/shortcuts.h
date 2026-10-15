@@ -7,6 +7,7 @@
 
 #include <toml++/toml.h>
 
+#include <array>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -125,12 +126,13 @@ enum GameFunction {
 // One key with its required modifiers, such as CTRL-SHIFT-F1.
 struct KeyChord {
   KeyCode key = KeyCode::None;
-  // Each group is satisfied by any one of its keys: SHIFT is {LeftShift, RightShift}, LSHIFT is {LeftShift}.
-  std::vector<std::vector<KeyCode>> modifiers;
-  // The upper-cased tokens as written, for display: {"CTRL", "SHIFT", "F1"}.
+  // Each group is satisfied by either of its keys: SHIFT is {LeftShift, RightShift}, LSHIFT is LeftShift twice.
+  std::vector<std::array<KeyCode, 2>> modifiers;
+  // The upper-cased tokens for display, modifiers first and the key last: {"CTRL", "SHIFT", "F1"}.
   std::vector<std::string> tokens;
 
-  // Parses one chord. Unknown tokens are ignored; a chord without a non-modifier key has key == None.
+  // Parses one chord. Unknown tokens are ignored; a chord without a non-modifier key has key == None. With two
+  // keys, the last one counts.
   static KeyChord Parse(std::string_view text);
 
   // "CTRL-SHIFT-F1"
@@ -138,10 +140,6 @@ struct KeyChord {
   // Compact form for the game's keybind badges: "^+F1".
   std::string Hint() const;
 };
-
-// Maps a key name from the settings file ("PGUP", "F1", "MOUSE1", "=") to a Unity key code.
-KeyCode ParseKeyName(std::string_view name);
-bool    IsModifierKey(KeyCode key);
 
 namespace Shortcut
 {
@@ -160,6 +158,8 @@ bool HasBinding(GameFunction action);
 bool IsPressed(GameFunction action);
 // Any binding of `action` went down this frame with its modifiers held.
 bool IsDown(GameFunction action);
+// A binding with modifiers matched on `key`, which is still held. Plain bindings on it wait for the release.
+bool Owns(KeyCode key);
 
 // "CTRL-G | F8"
 std::string Describe(GameFunction action);

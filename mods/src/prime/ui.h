@@ -102,17 +102,9 @@ struct TextLocalizer : il2cpp::Object {
   // Declared on GraphicLocalizer<,>.
   Il2CppString* identifier()
   { return Field<"m_identifier", Il2CppString*>(); }
-  // Compares the identifier to an ASCII name without allocating; these localizers render on every UI update.
+  // These localizers render on every UI update, so the identifier is compared without converting it.
   bool IdentifierIs(std::string_view name)
-  {
-    auto* id = identifier();
-    if (!id || static_cast<size_t>(id->length) != name.size())
-      return false;
-    for (size_t i = 0; i < name.size(); ++i)
-      if (id->chars[i] != static_cast<Il2CppChar>(name[i]))
-        return false;
-    return true;
-  }
+  { return StringIs(identifier(), name); }
   // The backing field, not the SignificantDecimals property.
   int32_t significantDecimals()
   { return Field<"m_significantDecimals", int32_t>(); }

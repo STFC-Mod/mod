@@ -70,6 +70,17 @@ constexpr std::vector<std::string> StrSplit(std::string_view input, char delimit
   }
 }
 
+// Compares a managed string to an ASCII literal without converting it; for checks on hot paths.
+inline bool StringIs(const Il2CppString* str, std::string_view ascii)
+{
+  if (!str || static_cast<size_t>(str->length) != ascii.size())
+    return false;
+  for (size_t i = 0; i < ascii.size(); ++i)
+    if (str->chars[i] != static_cast<Il2CppChar>(ascii[i]))
+      return false;
+  return true;
+}
+
 inline std::string to_string(const Il2CppString* str)
 {
   if (!str)

@@ -332,6 +332,7 @@ bool KeyboardZoom(NavigationZoom* zoom)
 
 void NavigationZoom_Update_Hook(auto original, NavigationZoom* _this)
 {
+  Key::Poll();
   fleet_labels.OnDepth(_this, _this->depth());
   KeepZoomRange(_this);
 

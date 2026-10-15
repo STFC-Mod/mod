@@ -5,64 +5,59 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
 #include <optional>
-#include <unordered_map>
 
 namespace
 {
-const std::unordered_map<std::string_view, KeyCode> kKeyNames = {
-    {"LALT", KeyCode::LeftAlt},
-    {"LAPPLE", KeyCode::LeftApple},
-    {"LCOM", KeyCode::LeftCommand},
-    {"LCTRL", KeyCode::LeftControl},
-    {"ALTGR", KeyCode::AltGr},
+// A key name from the settings file, and its keybind badge text when that differs from the name. The badge font
+// has few glyphs, so long names are shortened and the symbols the modifier notation uses are spelled out.
+struct KeyName {
+  std::string_view name;
+  KeyCode          key;
+  std::string_view hint = {};
+};
+
+constexpr KeyName kKeys[] = {
     {"END", KeyCode::End},
-    {"HOME", KeyCode::Home},
-    {"PGDOWN", KeyCode::PageDown},
-    {"PGUP", KeyCode::PageUp},
-    {"DOWN", KeyCode::DownArrow},
-    {"LEFT", KeyCode::LeftArrow},
-    {"RIGHT", KeyCode::RightArrow},
+    {"HOME", KeyCode::Home, "HM"},
+    {"PGDOWN", KeyCode::PageDown, "PD"},
+    {"PGUP", KeyCode::PageUp, "PU"},
+    {"DOWN", KeyCode::DownArrow, "DN"},
+    {"LEFT", KeyCode::LeftArrow, "LT"},
+    {"RIGHT", KeyCode::RightArrow, "RT"},
     {"UP", KeyCode::UpArrow},
-    {"BACKSPACE", KeyCode::Backspace},
+    {"BACKSPACE", KeyCode::Backspace, "BS"},
     {"BREAK", KeyCode::Break},
     {"CAPS", KeyCode::CapsLock},
     {"CLEAR", KeyCode::Clear},
-    {"DELETE", KeyCode::Delete},
-    {"ESCAPE", KeyCode::Escape},
+    {"DELETE", KeyCode::Delete, "DEL"},
+    {"ESCAPE", KeyCode::Escape, "ESC"},
     {"HELP", KeyCode::Help},
     {"INSERT", KeyCode::Insert},
-    {"LSHIFT", KeyCode::LeftShift},
-    {"LWIN", KeyCode::LeftWindows},
     {"MENU", KeyCode::Menu},
     {"PAUSE", KeyCode::Pause},
     {"PRINT", KeyCode::Print},
-    {"RALT", KeyCode::RightAlt},
-    {"RAPPLE", KeyCode::RightApple},
-    {"RCOM", KeyCode::RightCommand},
-    {"RCTRL", KeyCode::RightControl},
-    {"RETURN", KeyCode::Return},
-    {"RSHIFT", KeyCode::RightShift},
-    {"RWIN", KeyCode::RightWindows},
+    {"RETURN", KeyCode::Return, "ENT"},
     {"SCROLL", KeyCode::ScrollLock},
     {"SYSREQ", KeyCode::SysReq},
     {"TAB", KeyCode::Tab},
-    {"MOUSE0", KeyCode::Mouse0},
-    {"MOUSE1", KeyCode::Mouse1},
-    {"MOUSE2", KeyCode::Mouse2},
-    {"MOUSE3", KeyCode::Mouse3},
-    {"MOUSE4", KeyCode::Mouse4},
-    {"MOUSE5", KeyCode::Mouse5},
-    {"MOUSE6", KeyCode::Mouse6},
-    {"SPACE", KeyCode::Space},
+    {"MOUSE0", KeyCode::Mouse0, "M0"},
+    {"MOUSE1", KeyCode::Mouse1, "M1"},
+    {"MOUSE2", KeyCode::Mouse2, "M2"},
+    {"MOUSE3", KeyCode::Mouse3, "M3"},
+    {"MOUSE4", KeyCode::Mouse4, "M4"},
+    {"MOUSE5", KeyCode::Mouse5, "M5"},
+    {"MOUSE6", KeyCode::Mouse6, "M6"},
+    {"SPACE", KeyCode::Space, "SPC"},
     // Chords are split on '-', so the minus key needs a name.
-    {"MINUS", KeyCode::Minus},
+    {"MINUS", KeyCode::Minus, "-"},
     {"_", KeyCode::Underscore},
     {",", KeyCode::Comma},
     {";", KeyCode::Semicolon},
     {":", KeyCode::Colon},
-    {"!", KeyCode::Exclaim},
+    {"!", KeyCode::Exclaim, "EXC"},
     {"?", KeyCode::Question},
     {".", KeyCode::Period},
     {"'", KeyCode::Quote},
@@ -78,11 +73,11 @@ const std::unordered_map<std::string_view, KeyCode> kKeyNames = {
     {"\"", KeyCode::DoubleQuote},
     {"\\", KeyCode::Backslash},
     {"&", KeyCode::Ampersand},
-    {"#", KeyCode::Hash},
+    {"#", KeyCode::Hash, "HSH"},
     {"%", KeyCode::Percent},
     {"`", KeyCode::BackQuote},
-    {"^", KeyCode::Caret},
-    {"+", KeyCode::Plus},
+    {"^", KeyCode::Caret, "CAR"},
+    {"+", KeyCode::Plus, "PLS"},
     {"<", KeyCode::Less},
     {"=", KeyCode::Equals},
     {">", KeyCode::Greater},
@@ -159,73 +154,62 @@ const std::unordered_map<std::string_view, KeyCode> kKeyNames = {
     {"KEYPLUS", KeyCode::KeypadPlus},
 };
 
-// Modifier names that match either side of the keyboard.
-std::optional<std::vector<KeyCode>> ModifierGroup(std::string_view token)
-{
-  if (token == "SHIFT")
-    return {{KeyCode::LeftShift, KeyCode::RightShift}};
-  if (token == "ALT")
-    return {{KeyCode::LeftAlt, KeyCode::RightAlt}};
-  if (token == "CTRL")
-    return {{KeyCode::LeftControl, KeyCode::RightControl}};
-  if (token == "APPLE")
-    return {{KeyCode::LeftApple, KeyCode::RightApple}};
-  if (token == "CMD")
-    return {{KeyCode::LeftCommand, KeyCode::RightCommand}};
-  if (token == "WIN")
-    return {{KeyCode::LeftWindows, KeyCode::RightWindows}};
-  if (const auto key = ParseKeyName(token); IsModifierKey(key))
-    return {{key}};
-  return std::nullopt;
-}
-
-struct HintToken {
-  std::string_view token;
-  std::string_view compact;
-  bool             primary_key_only = false;
+// Modifier names. The unsided ones match either side of the keyboard. Badges use AutoHotkey's ASCII notation.
+struct ModifierName {
+  std::string_view       name;
+  std::array<KeyCode, 2> keys;
+  std::string_view       hint;
 };
 
-// AutoHotkey's ASCII modifier notation, so the game's limited badge font can render every hint.
-constexpr auto kHintTokens = std::to_array<HintToken>({
-    {"SHIFT", "+"},      {"CTRL", "^"},      {"ALT", "!"},       {"ALTGR", "!"},    {"APPLE", "#"},
-    {"CMD", "#"},        {"WIN", "#"},       {"LSHIFT", "<+"},   {"RSHIFT", ">+"},  {"LCTRL", "<^"},
-    {"RCTRL", ">^"},     {"LALT", "<!"},     {"RALT", ">!"},     {"LAPPLE", "<#"},  {"LCOM", "<#"},
-    {"LWIN", "<#"},      {"RAPPLE", ">#"},   {"RCOM", ">#"},     {"RWIN", ">#"},    {"+", "PLS", true},
-    {"^", "CAR", true},  {"!", "EXC", true}, {"#", "HSH", true}, {"SPACE", "SPC"},  {"MOUSE0", "M0"},
-    {"MOUSE1", "M1"},    {"MOUSE2", "M2"},   {"MOUSE3", "M3"},   {"MOUSE4", "M4"},  {"MOUSE5", "M5"},
-    {"MOUSE6", "M6"},    {"ENTER", "ENT"},   {"RETURN", "ENT"},  {"ESCAPE", "ESC"}, {"TAB", "TAB"},
-    {"BACKSPACE", "BS"}, {"DELETE", "DEL"},  {"MINUS", "-"},     {"EQUAL", "="},    {"LEFT", "LT"},
-    {"RIGHT", "RT"},     {"UP", "UP"},       {"DOWN", "DN"},     {"PGUP", "PU"},    {"PGDOWN", "PD"},
-    {"HOME", "HM"},      {"END", "END"},
-});
+constexpr ModifierName kModifiers[] = {
+    {"SHIFT", {KeyCode::LeftShift, KeyCode::RightShift}, "+"},
+    {"CTRL", {KeyCode::LeftControl, KeyCode::RightControl}, "^"},
+    {"ALT", {KeyCode::LeftAlt, KeyCode::RightAlt}, "!"},
+    {"APPLE", {KeyCode::LeftApple, KeyCode::RightApple}, "#"},
+    {"CMD", {KeyCode::LeftCommand, KeyCode::RightCommand}, "#"},
+    {"WIN", {KeyCode::LeftWindows, KeyCode::RightWindows}, "#"},
+    {"LSHIFT", {KeyCode::LeftShift, KeyCode::LeftShift}, "<+"},
+    {"RSHIFT", {KeyCode::RightShift, KeyCode::RightShift}, ">+"},
+    {"LCTRL", {KeyCode::LeftControl, KeyCode::LeftControl}, "<^"},
+    {"RCTRL", {KeyCode::RightControl, KeyCode::RightControl}, ">^"},
+    {"LALT", {KeyCode::LeftAlt, KeyCode::LeftAlt}, "<!"},
+    {"RALT", {KeyCode::RightAlt, KeyCode::RightAlt}, ">!"},
+    {"ALTGR", {KeyCode::AltGr, KeyCode::AltGr}, "!"},
+    {"LAPPLE", {KeyCode::LeftApple, KeyCode::LeftApple}, "<#"},
+    {"LCOM", {KeyCode::LeftCommand, KeyCode::LeftCommand}, "<#"},
+    {"LWIN", {KeyCode::LeftWindows, KeyCode::LeftWindows}, "<#"},
+    {"RAPPLE", {KeyCode::RightApple, KeyCode::RightApple}, ">#"},
+    {"RCOM", {KeyCode::RightCommand, KeyCode::RightCommand}, ">#"},
+    {"RWIN", {KeyCode::RightWindows, KeyCode::RightWindows}, ">#"},
+};
 
-constexpr std::string_view CompactToken(std::string_view token, bool is_primary_key)
+// Settings are only parsed at load, so the tables are searched in order.
+const KeyName* FindKey(std::string_view name)
 {
-  for (const auto& mapping : kHintTokens)
-    if (mapping.token == token && (!mapping.primary_key_only || is_primary_key))
-      return mapping.compact;
-  return token;
+  const auto it = std::ranges::find(kKeys, name, &KeyName::name);
+  return it == std::end(kKeys) ? nullptr : it;
 }
 
-static_assert(CompactToken("CTRL", false) == "^");
-static_assert(CompactToken("+", true) == "PLS");
-static_assert(CompactToken("+", false) == "+");
-static_assert(CompactToken("F7", true) == "F7");
+const ModifierName* FindModifier(std::string_view name)
+{
+  const auto it = std::ranges::find(kModifiers, name, &ModifierName::name);
+  return it == std::end(kModifiers) ? nullptr : it;
+}
 
 std::array<std::vector<KeyChord>, GameFunction::Max> bindings;
 
-// Movement reads its own direction, so claiming it would suppress its own pan on the next frame. Other modified
-// actions keep ownership of an arrow until it is released.
-bool IsMovement(GameFunction action)
+// Keys that completed a binding with modifiers, until released. A plain binding on the same key waits for the
+// release, so letting go of CTRL before PGUP does not turn a held CTRL-PGUP into PGUP.
+std::vector<KeyCode> used_keys;
+
+bool IsUsed(KeyCode key)
 {
-  return action == GameFunction::MoveLeft || action == GameFunction::MoveRight || action == GameFunction::MoveUp
-         || action == GameFunction::MoveDown;
+  std::erase_if(used_keys, [](KeyCode used) { return !Key::Pressed(used); });
+  return std::ranges::find(used_keys, key) != used_keys.end();
 }
 
-bool ModifiersMatch(const KeyChord& chord)
+bool ModifiersHeld(const KeyChord& chord)
 {
-  if (chord.modifiers.empty())
-    return !Key::IsModified();
   return std::ranges::all_of(chord.modifiers,
                              [](const auto& group) { return std::ranges::any_of(group, Key::Pressed); });
 }
@@ -233,10 +217,12 @@ bool ModifiersMatch(const KeyChord& chord)
 template <bool (*KeyState)(KeyCode)> bool Matches(GameFunction action)
 {
   for (const auto& chord : bindings[action]) {
-    if (chord.key == KeyCode::None || !KeyState(chord.key) || !ModifiersMatch(chord))
+    if (chord.key == KeyCode::None || !KeyState(chord.key))
       continue;
-    if (!chord.modifiers.empty() && !IsMovement(action))
-      Key::ClaimDirectionalInput(chord.key);
+    if (chord.modifiers.empty() ? Key::IsModified() || IsUsed(chord.key) : !ModifiersHeld(chord))
+      continue;
+    if (!chord.modifiers.empty() && std::ranges::find(used_keys, chord.key) == used_keys.end())
+      used_keys.push_back(chord.key);
     return true;
   }
   return false;
@@ -263,11 +249,7 @@ constexpr Setting kSettings[] = {
      "CTRL-ALT-MINUS",
      Tier::kAlways,
      {"set_hotkeys_disble", "set_hotkeys_disable"}},
-    {"set_hotkeys_enabled",
-     GameFunction::EnableHotKeys,
-     "CTRL-ALT-=",
-     Tier::kAlways,
-     {"set_hotkeys_enable"}},
+    {"set_hotkeys_enabled", GameFunction::EnableHotKeys, "CTRL-ALT-=", Tier::kAlways, {"set_hotkeys_enable"}},
     {"select_chatalliance", GameFunction::SelectChatAlliance, "CTRL-2"},
     {"select_chatglobal", GameFunction::SelectChatGlobal, "CTRL-1"},
     {"select_chatprivate", GameFunction::SelectChatPrivate, "CTRL-3"},
@@ -294,11 +276,7 @@ constexpr Setting kSettings[] = {
     {"show_chatside1", GameFunction::ShowChatSide1, "ALT-C"},
     {"show_chatside2", GameFunction::ShowChatSide2, "`"},
     {"show_galaxy", GameFunction::ShowGalaxy, "G"},
-    {"show_galaxy_native",
-     GameFunction::NativeShortcutGalaxy,
-     "CTRL-G",
-     Tier::kAlways,
-     {"native_shortcut_galaxy"}},
+    {"show_galaxy_native", GameFunction::NativeShortcutGalaxy, "CTRL-G", Tier::kAlways, {"native_shortcut_galaxy"}},
     {"show_system", GameFunction::ShowSystem, "H"},
     {"zoom_preset1", GameFunction::ZoomPreset1, "F1"},
     {"zoom_preset2", GameFunction::ZoomPreset2, "F2"},
@@ -330,11 +308,7 @@ constexpr Setting kSettings[] = {
     {"show_commander", GameFunction::ShowCommander, "O"},
     {"show_daily", GameFunction::ShowDaily, "Z"},
     {"show_events", GameFunction::ShowEvents, "SHIFT-E"},
-    {"show_events_native",
-     GameFunction::NativeShortcutEvents,
-     "CTRL-E",
-     Tier::kAlways,
-     {"native_shortcut_events"}},
+    {"show_events_native", GameFunction::NativeShortcutEvents, "CTRL-E", Tier::kAlways, {"native_shortcut_events"}},
     {"show_exocomp", GameFunction::ShowExoComp, "X"},
     {"show_factions", GameFunction::ShowFactions, "F"},
     {"show_inventory", GameFunction::ShowInventory, "I"},
@@ -378,139 +352,89 @@ constexpr Setting kSettings[] = {
     {"toggle_cargo_armada", GameFunction::ToggleCargoArmada, "ALT-5", Tier::kExtended},
 };
 
-// The value a setting resolves to before parsing: the configured string, an alias, or the default.
-struct Source {
-  std::string value;
-  std::string key; // where the value came from
-  bool        from_config = false;
-  bool        valid_type  = true;
-
-  std::string Label(std::string_view setting) const
-  {
-    if (!valid_type)
-      return "invalid";
-    if (!from_config)
-      return "default";
-    return key == setting ? "config" : "alias:" + key;
-  }
-};
-
-Source Lookup(const toml::table* shortcuts, std::string_view key, std::string_view fallback)
+// Binds every chord in `value` ("CTRL-G|F8"). Reports whether any was valid.
+bool BindChords(const Setting& setting, std::string_view key, std::string_view value)
 {
-  const auto* node = shortcuts ? shortcuts->get(key) : nullptr;
-  if (!node)
-    return {std::string(fallback), std::string(key), false, true};
-  if (auto value = node->value<std::string>())
-    return {*value, std::string(key), true, true};
-  return {"", std::string(key), true, false};
-}
-
-Source Resolve(const toml::table* shortcuts, const Setting& setting)
-{
-  auto source = Lookup(shortcuts, setting.key, setting.fallback);
-  for (const auto alias : setting.aliases) {
-    if (alias.empty() || !shortcuts || !shortcuts->contains(alias))
-      continue;
-    if (source.from_config) {
-      spdlog::warn("Ignoring deprecated shortcut alias [shortcuts].{} because [shortcuts].{} is set.", alias,
-                   setting.key);
-      continue;
-    }
-    spdlog::warn("Deprecated shortcut alias [shortcuts].{} is supported for compatibility; use [shortcuts].{}.", alias,
-                 setting.key);
-    return Lookup(shortcuts, alias, setting.fallback);
-  }
-  return source;
-}
-
-void LoadSetting(const toml::table* shortcuts, toml::table& out, toml::table& out_source, const Setting& setting)
-{
-  auto source = Resolve(shortcuts, setting);
-  if (!source.valid_type) {
-    spdlog::error("Invalid shortcut value [shortcuts].{} must be a string; using default for [shortcuts].{}.",
-                  source.key, setting.key);
-    source = {std::string(setting.fallback), std::string(setting.key), false, true};
-  }
-
-  const auto disable = [&](std::string label) {
-    out.insert_or_assign(setting.key, "NONE");
-    out_source.insert_or_assign(setting.key, std::move(label));
-    spdlog::debug("shortcut value shortcuts.{} value: NONE", setting.key);
-  };
-
-  // An explicit empty string disables the binding, just like NONE. Missing or invalid settings fall back to
-  // their defaults.
-  const auto value = AsciiStrToUpper(StripAsciiWhitespace(source.value));
-  if (value.empty() || value == "NONE")
-    return disable(source.Label(setting.key));
-
   bool bound = false;
   for (const auto& text : StrSplit(value, '|')) {
     if (auto chord = KeyChord::Parse(text); chord.key != KeyCode::None) {
       Shortcut::Bind(setting.action, std::move(chord));
       bound = true;
     } else {
-      spdlog::warn("Invalid shortcut token [shortcuts].{} token='{}' value='{}'; ignoring token.", source.key, text,
-                   source.value);
+      spdlog::warn("Invalid shortcut token [shortcuts].{} token='{}' value='{}'; ignoring token.", key, text, value);
     }
   }
+  return bound;
+}
 
-  if (!bound) {
-    if (source.from_config) {
-      spdlog::error("No valid shortcut tokens for [shortcuts].{} value='{}'; using default for [shortcuts].{}.",
-                    source.key, source.value, setting.key);
-      return LoadSetting(nullptr, out, out_source, setting);
+// Binds one [shortcuts] setting and records the effective binding, and where it came from, in `out`.
+void LoadSetting(const toml::table* shortcuts, toml::table& out, toml::table& out_source, const Setting& setting)
+{
+  // The setting itself, else the first deprecated alias present, else the default.
+  std::string_view  key  = setting.key;
+  const toml::node* node = shortcuts ? shortcuts->get(key) : nullptr;
+  for (const auto alias : setting.aliases) {
+    if (alias.empty() || !shortcuts || !shortcuts->contains(alias))
+      continue;
+    if (node) {
+      spdlog::warn("Ignoring deprecated shortcut alias [shortcuts].{} because [shortcuts].{} is set.", alias,
+                   setting.key);
+      continue;
     }
-    spdlog::error("Default shortcut [shortcuts].{} value='{}' has no valid tokens; action disabled.", setting.key,
-                  source.value);
-    return disable("invalid");
+    spdlog::warn("Deprecated shortcut alias [shortcuts].{} is supported for compatibility; use [shortcuts].{}.", alias,
+                 setting.key);
+    key  = alias;
+    node = shortcuts->get(alias);
+    break;
   }
+  std::optional<std::string> configured = node ? node->value<std::string>() : std::nullopt;
+  if (node && !configured)
+    spdlog::error("Invalid shortcut value [shortcuts].{} must be a string; using default for [shortcuts].{}.", key,
+                  setting.key);
+  std::string label = !configured ? "default" : key == setting.key ? "config" : "alias:" + std::string(key);
 
-  const auto described = Shortcut::Describe(setting.action);
-  out.insert_or_assign(setting.key, described);
-  out_source.insert_or_assign(setting.key, source.Label(setting.key));
-  spdlog::debug("shortcut value shortcuts.{} value: {}", setting.key, described);
+  const auto record = [&](std::string value, std::string source) {
+    spdlog::debug("shortcut value shortcuts.{} value: {}", setting.key, value);
+    out.insert_or_assign(setting.key, std::move(value));
+    out_source.insert_or_assign(setting.key, std::move(source));
+  };
+
+  // An explicit empty string disables the binding, just like NONE.
+  const auto value = AsciiStrToUpper(StripAsciiWhitespace(configured.value_or(std::string(setting.fallback))));
+  if (value.empty() || value == "NONE")
+    return record("NONE", label);
+
+  if (!BindChords(setting, key, value)) {
+    if (configured)
+      spdlog::error("No valid shortcut tokens for [shortcuts].{} value='{}'; using default for [shortcuts].{}.", key,
+                    *configured, setting.key);
+    if (!configured || !BindChords(setting, setting.key, setting.fallback)) {
+      spdlog::error("Default shortcut [shortcuts].{} value='{}' has no valid tokens; action disabled.", setting.key,
+                    setting.fallback);
+      return record("NONE", "invalid");
+    }
+    label = "default";
+  }
+  record(Shortcut::Describe(setting.action), label);
 }
 } // namespace
 
-KeyCode ParseKeyName(std::string_view name)
-{
-  const auto it = kKeyNames.find(AsciiStrToUpper(name));
-  return it == kKeyNames.end() ? KeyCode::None : it->second;
-}
-
-bool IsModifierKey(KeyCode key)
-{
-  switch (key) {
-    case KeyCode::LeftAlt:
-    case KeyCode::LeftCommand:
-    case KeyCode::LeftControl:
-    case KeyCode::AltGr:
-    case KeyCode::LeftShift:
-    case KeyCode::LeftWindows:
-    case KeyCode::RightAlt:
-    case KeyCode::RightCommand:
-    case KeyCode::RightControl:
-    case KeyCode::RightShift:
-    case KeyCode::RightWindows:
-      return true;
-    default:
-      return false;
-  }
-}
-
 KeyChord KeyChord::Parse(std::string_view text)
 {
-  KeyChord chord;
+  KeyChord    chord;
+  std::string key_token;
   for (auto& token : StrSplit(AsciiStrToUpper(text), '-')) {
-    if (auto group = ModifierGroup(token)) {
-      chord.modifiers.push_back(std::move(*group));
+    if (const auto* modifier = FindModifier(token)) {
+      chord.modifiers.push_back(modifier->keys);
       chord.tokens.push_back(std::move(token));
-    } else if (const auto key = ParseKeyName(token); key != KeyCode::None) {
-      chord.key = key;
-      chord.tokens.push_back(std::move(token));
+    } else if (const auto* key = FindKey(token)) {
+      // A chord has one key; a later one replaces an earlier one, so the text shows what is bound.
+      chord.key = key->key;
+      key_token = std::move(token);
     }
   }
+  if (chord.key != KeyCode::None)
+    chord.tokens.push_back(std::move(key_token));
   return chord;
 }
 
@@ -528,8 +452,12 @@ std::string KeyChord::Text() const
 std::string KeyChord::Hint() const
 {
   std::string hint;
-  for (size_t i = 0; i < tokens.size(); ++i)
-    hint += CompactToken(tokens[i], i + 1 == tokens.size());
+  for (size_t i = 0; i < tokens.size(); ++i) {
+    // The key is always last; everything before it is a modifier.
+    const auto* key      = i + 1 == tokens.size() && this->key != KeyCode::None ? FindKey(tokens[i]) : nullptr;
+    const auto* modifier = key ? nullptr : FindModifier(tokens[i]);
+    hint += key && !key->hint.empty() ? key->hint : modifier ? modifier->hint : std::string_view(tokens[i]);
+  }
   return hint;
 }
 
@@ -558,7 +486,11 @@ void Clear()
 {
   for (auto& chords : bindings)
     chords.clear();
+  used_keys.clear();
 }
+
+bool Owns(KeyCode key)
+{ return IsUsed(key); }
 
 bool HasBinding(GameFunction action)
 {

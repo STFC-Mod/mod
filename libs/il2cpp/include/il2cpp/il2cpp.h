@@ -119,11 +119,11 @@ namespace detail
   }
 
   template <typename T> struct Unref {
-    using Type                  = T;
+    using Type                   = T;
     static constexpr bool kByRef = false;
   };
   template <typename T> struct Unref<std::reference_wrapper<T>> {
-    using Type                  = T;
+    using Type                   = T;
     static constexpr bool kByRef = true;
   };
 
@@ -150,13 +150,14 @@ namespace detail
   }
 
   template <typename... A> inline constexpr std::array<Slot, sizeof...(A)> kParams{SlotOf<A>()...};
-  template <typename R, typename... A> constexpr Signature SignatureOf()
+  template <typename R, typename... A> constexpr Signature                 SignatureOf()
   { return {SlotOf<R>(), kParams<A...>}; }
 
-  Il2CppClass*      FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name);
-  Method            FindMethod(Il2CppClass* klass, std::string_view name, int count);
-  Method            FindMethod(Il2CppClass* klass, std::string_view name, std::initializer_list<std::string_view> params);
-  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature, bool is_static);
+  Il2CppClass* FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name);
+  Method       FindMethod(Il2CppClass* klass, std::string_view name, int count);
+  Method       FindMethod(Il2CppClass* klass, std::string_view name, std::initializer_list<std::string_view> params);
+  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature,
+                                  bool is_static);
   const MethodInfo* ResolveProperty(Il2CppClass* klass, std::string_view name, const Slot& value, bool setter,
                                     bool is_static);
   FieldInfo*        ResolveField(Il2CppClass* klass, std::string_view name, const Slot& value, bool is_static);
@@ -184,9 +185,9 @@ namespace detail
     }
   }
 
-  template <typename T> using Native = std::conditional_t<
-      Unref<T>::kByRef, typename Unref<T>::Type*,
-      std::conditional_t<std::is_same_v<T, std::nullptr_t>, void*, T>>;
+  template <typename T>
+  using Native = std::conditional_t<Unref<T>::kByRef, typename Unref<T>::Type*,
+                                    std::conditional_t<std::is_same_v<T, std::nullptr_t>, void*, T>>;
   template <typename T> Native<T> ToNative(T& value)
   {
     if constexpr (Unref<T>::kByRef)
@@ -357,11 +358,13 @@ template <Name Assembly, Name Namespace, Name TypeName> struct Class {
     static Il2CppClass* const klass = detail::FindClass(Assembly.View(), Namespace.View(), TypeName.View());
     return klass;
   }
+  // The System.Type for this class. Cached: the runtime keeps type objects in a rooted, append-only cache, and
+  // looking one up takes its reflection lock.
   static Il2CppReflectionType* TypeObject()
   {
-    auto* klass = Raw();
-    return klass ? reinterpret_cast<Il2CppReflectionType*>(il2cpp_type_get_object(il2cpp_class_get_type(klass)))
-                 : nullptr;
+    static Il2CppReflectionType* const type =
+        Raw() ? reinterpret_cast<Il2CppReflectionType*>(il2cpp_type_get_object(il2cpp_class_get_type(Raw()))) : nullptr;
+    return type;
   }
 
   // Lookups for detours. A count of -1 accepts any arity; parameter names are "Namespace.Type".
@@ -417,16 +420,14 @@ struct Object : Il2CppObject {
   }
   template <Name N, typename T, typename Self> T Field(this Self& self)
   {
-    auto* field = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
-      return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false);
-    });
+    auto* field = detail::Lookup<Self>(
+        self, [](Il2CppClass* klass) { return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false); });
     return detail::ReadField<T>(field, &self);
   }
   template <Name N, typename Self, typename T> void SetField(this Self& self, T value)
   {
-    auto* field = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
-      return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false);
-    });
+    auto* field = detail::Lookup<Self>(
+        self, [](Il2CppClass* klass) { return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false); });
     detail::WriteField(field, &self, value);
   }
   // Call<"Name", R>(args) selects the overload by the C++ argument types; std::ref marks ref/out
@@ -608,7 +609,43 @@ private:
   bool                  healthy_ = true;
 };
 
-// Unity engine internal calls, e.g. "UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)".
-template <typename Signature> Signature* ResolveICall(const char* name)
-{ return reinterpret_cast<Signature*>(il2cpp_resolve_icall(name)); }
+namespace detail
+{
+  void ReportMissingICall(const char* name);
+} // namespace detail
+
+// A Unity engine internal call. One that a Unity upgrade renamed is reported once, when resolved, and then returns
+// the default value instead of calling through null; test it with operator bool to choose another default.
+template <typename Signature> class ICall;
+template <typename R, typename... A> class ICall<R(A...)>
+{
+public:
+  explicit ICall(const char* name)
+      : fn_(reinterpret_cast<R (*)(A...)>(il2cpp_resolve_icall(name)))
+  {
+    if (!fn_)
+      detail::ReportMissingICall(name);
+  }
+
+  explicit operator bool() const
+  { return fn_ != nullptr; }
+
+  R operator()(A... args) const
+  {
+    if constexpr (std::is_void_v<R>) {
+      if (fn_)
+        fn_(args...);
+    } else {
+      return fn_ ? fn_(args...) : R{};
+    }
+  }
+
+private:
+  R (*fn_)(A...);
+};
+
+// Resolves e.g. "UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)". Keep the result in a static: resolving is a
+// lookup by name.
+template <typename Signature> ICall<Signature> ResolveICall(const char* name)
+{ return ICall<Signature>(name); }
 } // namespace il2cpp

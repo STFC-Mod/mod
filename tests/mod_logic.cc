@@ -17,7 +17,6 @@
 namespace
 {
 std::array<bool, static_cast<size_t>(KeyCode::Max)> held{};
-KeyCode                                             claimed  = KeyCode::None;
 int                                                 failures = 0;
 
 void Check(bool condition, const char* what, std::source_location where = std::source_location::current())
@@ -141,6 +140,9 @@ void Chords()
   Check(KeyChord::Parse("SHIFT-+").Hint() == "+PLS", "plus key as the primary key");
   Check(KeyChord::Parse("CTRL").key == KeyCode::None, "modifier alone has no key");
   Check(KeyChord::Parse("NONSENSE").key == KeyCode::None, "unknown key");
+  Check(KeyChord::Parse("CTRL-A-B").key == KeyCode::B && KeyChord::Parse("CTRL-A-B").Text() == "CTRL-B",
+        "with two keys the last counts, and the text shows it");
+  Check(KeyChord::Parse("pgup-lshift").Hint() == "<+PU", "modifiers come first in the badge");
 }
 
 void Loading()
@@ -192,15 +194,24 @@ void Matching()
   Hold({});
   Check(!Shortcut::IsPressed(GameFunction::MoveDown), "released key");
 
-  // A modified movement binding must not claim its own direction; other actions keep the arrow until released.
+  // Releasing the modifier first must not turn a held CTRL-PGUP into PGUP.
+  Load(""); // ui_scaleup = "PGUP", ui_scaleshipup = "CTRL-PGUP"
+  Hold({KeyCode::LeftControl, KeyCode::PageUp});
+  Check(Shortcut::IsPressed(GameFunction::UiShipScaleUp), "modified chord");
+  Check(!Shortcut::IsPressed(GameFunction::UiScaleUp), "plain chord blocked while modified");
+  Check(Shortcut::Owns(KeyCode::PageUp), "the modified chord owns its key");
+  Hold({KeyCode::PageUp});
+  Check(!Shortcut::IsPressed(GameFunction::UiScaleUp), "plain chord waits for the key's release");
+  Hold({});
+  Check(!Shortcut::Owns(KeyCode::PageUp), "releasing the key frees it");
+  Hold({KeyCode::PageUp});
+  Check(Shortcut::IsPressed(GameFunction::UiScaleUp), "plain chord after a release");
+
+  // A modified movement binding keeps moving while its modifier is held.
   Shortcut::Bind(GameFunction::MoveDown, KeyChord::Parse("CTRL-DOWN"));
-  Shortcut::Bind(GameFunction::ToggleShortcutHints, KeyChord::Parse("CTRL-DOWN"));
   Hold({KeyCode::LeftControl, KeyCode::DownArrow});
-  claimed = KeyCode::None;
-  Check(Shortcut::IsDown(GameFunction::MoveDown), "explicit movement chord");
-  Check(claimed == KeyCode::None, "movement claimed its own direction");
-  Check(Shortcut::IsDown(GameFunction::ToggleShortcutHints) && claimed == KeyCode::DownArrow,
-        "other chords claim the arrow");
+  Check(Shortcut::IsDown(GameFunction::MoveDown) && Shortcut::IsDown(GameFunction::MoveDown),
+        "explicit movement chord keeps matching");
   held.fill(false);
 }
 } // namespace
@@ -220,8 +231,6 @@ bool IsModified()
       return true;
   return false;
 }
-void ClaimDirectionalInput(KeyCode key)
-{ claimed = key; }
 } // namespace Key
 
 void ChatStartupGate()

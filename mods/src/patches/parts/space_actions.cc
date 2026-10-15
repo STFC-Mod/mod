@@ -17,7 +17,9 @@
 #include <spud/detour.h>
 
 #include <algorithm>
+#include <optional>
 #include <span>
+#include <utility>
 
 namespace
 {
@@ -25,19 +27,24 @@ namespace
 // after the pre-scan itself, so a request keeps trying for a while.
 int show_cargo_frames = 0;
 
-// The target's hull type is only known once the target's data has arrived; until then it reads as Any. A press
-// that lands in that window is replayed on the next frame instead of being dropped.
-bool retry_next_frame = false;
-
 struct Pressed {
-  bool primary;
-  bool secondary;
-  bool queue;
-  bool queue_clear;
-  bool recall;
-  bool recall_cancel;
-  bool repair;
+  bool primary       = false;
+  bool secondary     = false;
+  bool queue         = false;
+  bool queue_clear   = false;
+  bool recall        = false;
+  bool recall_cancel = false;
+  bool repair        = false;
+  // A replay of last frame's press, see replay.
+  bool retry = false;
+
+  bool Any() const
+  { return primary || secondary || queue || queue_clear || recall || recall_cancel || repair; }
 };
+
+// The target's hull type is only known once the target's data has arrived; until then it reads as Any. A press
+// that lands in that window is replayed, as itself, on the next frame only.
+std::optional<Pressed> replay;
 
 bool Shown(VisibilityController* controller)
 { return controller && controller->IsShown(); }
@@ -52,32 +59,37 @@ template <typename T> bool TargetShown(T* widget, const Pressed& pressed)
   return parent && parent->IsShowing();
 }
 
-template <typename T> bool AnyViewerShown()
-{
-  return std::ranges::any_of(ObjectFinder<T>::GetAll(),
-                             [](T* widget) { return widget && Shown(widget->visibilityController()); });
-}
 
-template <typename T> bool HideViewers()
-{
-  bool hid = false;
-  for (auto* widget : ObjectFinder<T>::GetAll()) {
-    if (widget && Shown(widget->visibilityController())) {
-      widget->HideAllViewers();
-      hid = true;
-    }
+// The cards that show a target or a place in space.
+template <typename... Viewers> struct ViewerList {
+  static bool AnyShown()
+  {
+    return (std::ranges::any_of(ObjectFinder<Viewers>::GetAll(),
+                                [](Viewers* widget) { return widget && Shown(widget->visibilityController()); })
+            || ...);
   }
-  return hid;
-}
 
-// Short-circuits like the old chain: the first type with a shown viewer hides it and stops.
-bool HideAnyViewer()
-{
-  return HideViewers<AllianceStarbaseObjectViewerWidget>() || HideViewers<ArmadaObjectViewerWidget>()
-         || HideViewers<CelestialObjectViewerWidget>() || HideViewers<EmbassyObjectViewer>()
-         || HideViewers<HousingObjectViewerWidget>() || HideViewers<MiningObjectViewerWidget>()
-         || HideViewers<MissionsObjectViewerWidget>() || HideViewers<PreScanTargetWidget>();
-}
+  // Hides the shown viewers of the first type that has any.
+  static bool HideFirst()
+  { return (Hide<Viewers>() || ...); }
+
+private:
+  template <typename T> static bool Hide()
+  {
+    bool hid = false;
+    for (auto* widget : ObjectFinder<T>::GetAll()) {
+      if (widget && Shown(widget->visibilityController())) {
+        widget->HideAllViewers();
+        hid = true;
+      }
+    }
+    return hid;
+  }
+};
+
+using TargetViewers = ViewerList<AllianceStarbaseObjectViewerWidget, ArmadaObjectViewerWidget,
+                                 CelestialObjectViewerWidget, EmbassyObjectViewer, HousingObjectViewerWidget,
+                                 MiningObjectViewerWidget, MissionsObjectViewerWidget, PreScanTargetWidget>;
 
 HullType TargetHullType(BattleTargetData* context)
 {
@@ -171,18 +183,18 @@ bool ActOnPreScan(PreScanTargetWidget* pre_scan, const Pressed& pressed, FleetPl
   auto* add_to_queue = pre_scan->addToQueueButtonWidget();
   if (pressed.queue && queue->IsQueueUnlocked() && add_to_queue && buttons) {
     const auto type = TargetHullType(buttons->Context());
-    if (type != HullType::ArmadaTarget && (type != HullType::Any || retry_next_frame)) {
+    if (type != HullType::ArmadaTarget && (type != HullType::Any || pressed.retry)) {
       if (add_to_queue->isActiveAndEnabled()) {
         if (auto* listener = add_to_queue->SemaphoreListener(); listener && !queue->IsQueueFull(fleet)) {
           if (auto* button = listener->TheButton()) {
             button->Press();
-            HideAnyViewer();
+            TargetViewers::HideFirst();
           }
         }
         return true;
       }
       if (type == HullType::Any) {
-        retry_next_frame = true;
+        replay = pressed;
         return true;
       }
     }
@@ -199,7 +211,7 @@ bool ActOnPreScan(PreScanTargetWidget* pre_scan, const Pressed& pressed, FleetPl
     bool can_engage = type != HullType::Any;
     if (type == HullType::ArmadaTarget && ArmadaViewerShown(ObjectFinder<ArmadaObjectViewerWidget>::Get()))
       can_engage = false;
-    else if (retry_next_frame)
+    else if (pressed.retry)
       can_engage = true;
 
     if (can_engage) {
@@ -213,7 +225,7 @@ bool ActOnPreScan(PreScanTargetWidget* pre_scan, const Pressed& pressed, FleetPl
       return true;
     }
     if (type == HullType::Any) {
-      retry_next_frame = true;
+      replay = pressed;
       return true;
     }
   }
@@ -269,7 +281,7 @@ bool ActOnViewer(const Pressed& pressed)
   return false;
 }
 
-void ActOnSelectedFleet(FleetBarViewController* fleet_bar)
+void ActOnSelectedFleet(FleetBarViewController* fleet_bar, const Pressed& pressed)
 {
   if (Shortcut::IsDown(GameFunction::ActionPrimary) && JoinWaveDefense())
     return;
@@ -280,18 +292,6 @@ void ActOnSelectedFleet(FleetBarViewController* fleet_bar)
   auto* queue = ActionQueueManager::Instance();
   if (!fleet || !queue)
     return;
-
-  const Pressed pressed{
-      .primary     = Shortcut::IsDown(GameFunction::ActionPrimary) || retry_next_frame,
-      .secondary   = Shortcut::IsDown(GameFunction::ActionSecondary),
-      .queue       = Shortcut::IsDown(GameFunction::ActionQueue),
-      .queue_clear = Shortcut::IsDown(GameFunction::ActionQueueClear),
-      // With disable_preview_recall, recall only works while no target card is open.
-      .recall        = Shortcut::IsDown(GameFunction::ActionRecall)
-                       && (!Config::Get().ui.disable_preview_recall || !TargetViewerShown()),
-      .recall_cancel = Shortcut::IsDown(GameFunction::ActionRecallCancel),
-      .repair        = Shortcut::IsDown(GameFunction::ActionRepair),
-  };
 
   if (pressed.queue_clear) {
     queue->ClearQueue(fleet);
@@ -313,9 +313,10 @@ void ActOnSelectedFleet(FleetBarViewController* fleet_bar)
   static constexpr FleetState kRecallable[] = {FleetState::IdleInSpace, FleetState::Impulsing, FleetState::Mining,
                                                FleetState::Capturing};
   static constexpr FleetState kRepairable[] = {FleetState::Docked, FleetState::Destroyed};
-  if ((pressed.recall && RequestFleetAction(fleet_bar, ActionType::Recall, kRecallable))
-      || (pressed.repair && RequestFleetAction(fleet_bar, ActionType::Repair, kRepairable, FleetState::Repairing)))
-    retry_next_frame = false;
+  if (pressed.recall && RequestFleetAction(fleet_bar, ActionType::Recall, kRecallable))
+    return;
+  if (pressed.repair)
+    RequestFleetAction(fleet_bar, ActionType::Repair, kRepairable, FleetState::Repairing);
 }
 
 // Toggles a shown pre-scan card's cargo panel. Opening is retried for a few frames, see show_cargo_frames.
@@ -360,7 +361,8 @@ bool ShowsCargoByDefault(RewardsButtonWidget* widget)
       return config.ui.show_player_cargo;
     case DeployedFleetType::Marauder: {
       auto* hull = deployed->Hull();
-      return hull && hull->Type() == HullType::ArmadaTarget ? config.ui.show_armada_cargo : config.ui.show_hostile_cargo;
+      return hull && hull->Type() == HullType::ArmadaTarget ? config.ui.show_armada_cargo
+                                                            : config.ui.show_hostile_cargo;
     }
     default:
       return false;
@@ -391,40 +393,44 @@ void PreScanTargetWidget_ShowWithFleet_Hook(auto original, PreScanTargetWidget* 
 } // namespace
 
 bool TargetViewerShown()
-{
-  return AnyViewerShown<AllianceStarbaseObjectViewerWidget>() || AnyViewerShown<ArmadaObjectViewerWidget>()
-         || AnyViewerShown<CelestialObjectViewerWidget>() || AnyViewerShown<EmbassyObjectViewer>()
-         || AnyViewerShown<HousingObjectViewerWidget>() || AnyViewerShown<MiningObjectViewerWidget>()
-         || AnyViewerShown<MissionsObjectViewerWidget>() || AnyViewerShown<PreScanTargetWidget>();
-}
+{ return TargetViewers::AnyShown(); }
 
 bool SpaceActionsUpdate()
 {
+  // A replay lives for exactly the next frame, whatever that frame does.
+  const auto replayed = std::exchange(replay, std::nullopt);
   if (Key::IsInputFocused())
     return false;
 
-  if (Key::Pressed(KeyCode::Escape) && HideAnyViewer())
+  if (Key::Pressed(KeyCode::Escape) && TargetViewers::HideFirst())
     return true;
 
-  // Escape or the primary action dismisses the golden rewards screen.
-  if (Shortcut::IsDown(GameFunction::ActionPrimary) || Key::Pressed(KeyCode::Escape)) {
+  // Escape or the primary action dismisses the golden rewards screen. Down, not Pressed: a held Escape would go
+  // back a section every frame while the screen closes.
+  if (Shortcut::IsDown(GameFunction::ActionPrimary) || Key::Down(KeyCode::Escape)) {
     if (auto* rewards = ObjectFinder<AnimatedRewardsScreenViewController>::Get(); rewards && rewards->IsActive()) {
       rewards->GoBackToLastSection();
       return true;
     }
   }
 
-  const bool acting = Shortcut::IsDown(GameFunction::ActionPrimary) || Shortcut::IsDown(GameFunction::ActionSecondary)
-                      || Shortcut::IsDown(GameFunction::ActionRecall) || Shortcut::IsDown(GameFunction::ActionRepair)
-                      || Shortcut::IsDown(GameFunction::ActionQueue) || Shortcut::IsDown(GameFunction::ActionQueueClear)
-                      || retry_next_frame;
-  if (acting && Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat()) {
-    const bool was_retry = retry_next_frame;
-    ActOnSelectedFleet(ObjectFinder<FleetBarViewController>::Get());
-    // A replayed press gets one more frame, not more.
-    if (was_retry)
-      retry_next_frame = false;
+  Pressed pressed{
+      .primary     = Shortcut::IsDown(GameFunction::ActionPrimary),
+      .secondary   = Shortcut::IsDown(GameFunction::ActionSecondary),
+      .queue       = Shortcut::IsDown(GameFunction::ActionQueue),
+      .queue_clear = Shortcut::IsDown(GameFunction::ActionQueueClear),
+      // With disable_preview_recall, recall only works while no target card is open.
+      .recall        = Shortcut::IsDown(GameFunction::ActionRecall)
+                       && (!Config::Get().ui.disable_preview_recall || !TargetViewerShown()),
+      .recall_cancel = Shortcut::IsDown(GameFunction::ActionRecallCancel),
+      .repair        = Shortcut::IsDown(GameFunction::ActionRepair),
+  };
+  if (replayed && !pressed.Any()) {
+    pressed       = *replayed;
+    pressed.retry = true;
   }
+  if (pressed.Any() && Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat())
+    ActOnSelectedFleet(ObjectFinder<FleetBarViewController>::Get(), pressed);
 
   if (Shortcut::IsDown(GameFunction::ActionView))
     ToggleTargetCargo();

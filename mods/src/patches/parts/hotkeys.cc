@@ -363,7 +363,7 @@ bool SelectShip()
     ++index;
   // TODO: Shift+ship used to request a tow by the Discovery. Its bindings had drifted, so it never ran on
   // recent clients, and it was disabled until someone verifies it in game. Shift+ship does nothing meanwhile.
-  if (index == 8 || Key::IsInputFocused() || Key::HasShift())
+  if (index == 8 || Key::IsInputFocused())
     return false;
 
   auto* fleet_bar = ObjectFinder<FleetBarViewController>::Get();
@@ -495,10 +495,6 @@ bool StepScreen(bool left)
 // Focuses the search box of whichever inventory, officer or ship list is on screen.
 bool FocusSearchBox()
 {
-  // Never steal focus from the chat box.
-  if (auto* chat = ObjectFinder<ChatMessageListLocalViewController>::Get(); chat && chat->inputFieldSelected())
-    return false;
-
   const auto focus = [](auto* owner, CanvasController* canvas) {
     auto* field = owner ? owner->inputField() : nullptr;
     if (!field || !canvas || !canvas->Visible() || !owner->isActiveAndEnabled() || !field->isActiveAndEnabled())
@@ -689,22 +685,24 @@ bool HandleShortcuts()
   if (PressAwaitedButton())
     return true;
 
-  // Scopely's hotkeys are the game's own; mod hotkeys switched off block both.
-  if (config.control.use_scopely_hotkeys && config.control.hotkeys_enabled)
+  // Switched off, or with Scopely's (the game's own) hotkeys, the mod leaves the keys to the game. Returning true
+  // here would skip the game's ScreenManager.Update, which also runs the back button, orientation and the rest of
+  // the UI's per-frame work.
+  if (!config.control.hotkeys_enabled || config.control.use_scopely_hotkeys)
     return false;
-  if (!config.control.hotkeys_enabled)
+
+  // Keys typed into a text field (chat, search) are text, not shortcuts.
+  const bool typing = Key::IsInputFocused();
+  if (!typing && Shortcut::IsDown(GameFunction::ToggleShortcutHints) && ToggleShortcutBadges())
     return true;
 
-  if (Shortcut::IsDown(GameFunction::ToggleShortcutHints) && ToggleShortcutBadges())
-    return true;
-
-  if (Shortcut::IsDown(GameFunction::Restart)) {
+  if (!typing && Shortcut::IsDown(GameFunction::Restart)) {
     spdlog::info("Clearing localisation cache and restarting");
     LanguageManager::ClearCache();
     Hub::get_App()->Reload();
     return true;
   }
-  if (Shortcut::IsDown(GameFunction::Quit)) {
+  if (!typing && Shortcut::IsDown(GameFunction::Quit)) {
 #ifdef _WIN32
     TerminateProcess(GetCurrentProcess(), 1);
 #else
@@ -717,15 +715,16 @@ bool HandleShortcuts()
     return true;
 
   // The game only clears a focused text field from its back button; Escape should too.
-  if (Key::Pressed(KeyCode::Escape) && (Key::IsInputFocused() || Hub::IsInChat())) {
+  const bool in_chat = Hub::IsInChat();
+  if (Key::Pressed(KeyCode::Escape) && (typing || in_chat)) {
     Key::ClearInputFocus();
     return true;
   }
 
-  if (Hub::IsInChat()) {
+  if (in_chat) {
     if (SelectChatChannel())
       return true;
-  } else if (!Key::IsInputFocused() && RunScreenShortcuts()) {
+  } else if (!typing && RunScreenShortcuts()) {
     return true;
   }
 
@@ -734,6 +733,7 @@ bool HandleShortcuts()
 
 void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 {
+  Key::Poll();
   RunFrameUpdates();
   if (hotkeys_installed) {
     UpdateManageShipDockSelection();

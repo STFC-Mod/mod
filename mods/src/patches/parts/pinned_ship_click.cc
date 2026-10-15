@@ -27,9 +27,7 @@
 namespace {
 
 bool IsShiftHeld()
-{
-  return Key::HasShift();
-}
+{ return Key::Pressed(KeyCode::LeftShift) || Key::Pressed(KeyCode::RightShift); }
 
 // Presence of a visible ShipManagementViewController instead of a SectionID
 // check: the dock is hosted under more than one game section, and this keeps
