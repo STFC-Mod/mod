@@ -28,57 +28,29 @@ namespace
 // The most the game's chest purchase popup handles; extend_chest_purchase_max is clamped to it.
 constexpr int64_t kMaximumChestPurchaseMax = 160;
 
-#if _WIN32
-void InventoryForPopup_set_MaxItemsToUse(auto original, InventoryForPopup* a1, int64_t a2)
-{
-  if (!a1) {
-    return;
-  }
-
-  if (a1->IsDonationUse() && a2 == 50 && Config::Get().ui.extend_donation_slider) {
-    const auto max = Config::Get().ui.extend_donation_max;
-    if (max > 0) {
-      a2 = max;
-    } else {
-      // Leave the initial unlimited value in place instead of applying the game's donation cap.
-      return;
-    }
-  }
-
-  original(a1, a2);
-}
-#endif
-
-// IsChestPurchase is populated too late for the existing MaxItemsToUse setter hook, so adjust the tagged context at
-// the row-render seam instead.
+// The popup's limits are adjusted where its row is rendered. IsChestPurchase is set too late for the
+// MaxItemsToUse setter, and adjusting the context rather than the slider leaves every other slider alone.
 void InventoryUseRowWidget_SetWidgetData(auto original, InventoryUseRowWidget* widget)
 {
-  if (widget) {
-    if (auto* context = widget->Context(); context && context->IsChestPurchase()) {
-      const auto native_max    = context->MaxItemsToUse();
-      const auto requested_max = static_cast<int64_t>(Config::Get().ui.extend_chest_purchase_max);
-      const auto bounded_max   = std::min(requested_max, kMaximumChestPurchaseMax);
-      if (native_max > 0 && bounded_max > native_max) {
-        context->SetMaxItemsToUse(bounded_max);
-      }
-    }
+  auto*       context = widget ? widget->Context() : nullptr;
+  const auto& ui      = Config::Get().ui;
+  if (context && context->IsChestPurchase()) {
+    const auto native_max  = context->MaxItemsToUse();
+    const auto bounded_max = std::min(static_cast<int64_t>(ui.extend_chest_purchase_max), kMaximumChestPurchaseMax);
+    if (native_max > 0 && bounded_max > native_max)
+      context->SetMaxItemsToUse(bounded_max);
+  } else if (context && ui.extend_donation_slider && context->IsDonationUse()) {
+    // extend_donation_max replaces the game's donation cap; 0 or less means no cap. Either way the slider stops at
+    // what the player owns.
+    const auto owned  = context->AmountOwned();
+    auto       target = ui.extend_donation_max > 0 ? static_cast<int64_t>(ui.extend_donation_max) : owned;
+    if (owned > 0)
+      target = std::min(target, owned);
+    if (target > 0 && target != context->MaxItemsToUse())
+      context->SetMaxItemsToUse(target);
   }
-
   original(widget);
 }
-
-#if __APPLE__
-// On macOS the donation cap is raised on the slider instead of InventoryForPopup. Any slider whose maximum is the
-// game's donation cap (50 or 100) is raised with it.
-void UnitySlider_set_maxValue(auto original, void* a1, float a2)
-{
-  if ((a2 == 50.0f || a2 == 100.0f) && Config::Get().ui.extend_donation_slider
-      && Config::Get().ui.extend_donation_max > 0) {
-    a2 = (float)Config::Get().ui.extend_donation_max;
-  }
-  original(a1, a2);
-}
-#endif
 
 void BundleDataWidget_OnActionButtonPressedCallback(auto original, BundleDataWidget* _this)
 {
@@ -92,19 +64,8 @@ void BundleDataWidget_OnActionButtonPressedCallback(auto original, BundleDataWid
 
 void InstallMiscPatches()
 {
-#if _WIN32
-  if (auto m = InventoryForPopup::Class::Method("set_MaxItemsToUse"))
-    SPUD_STATIC_DETOUR(m.Pointer(), InventoryForPopup_set_MaxItemsToUse);
-#endif
-
   if (auto m = InventoryUseRowWidget::Class::Method("SetWidgetData", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), InventoryUseRowWidget_SetWidgetData);
-
-#if __APPLE__
-  using Slider = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Slider">;
-  if (auto m = Slider::Method("set_maxValue"))
-    SPUD_STATIC_DETOUR(m.Pointer(), UnitySlider_set_maxValue);
-#endif
 
   if (auto m = BundleDataWidget::Class::Method("OnActionButtonPressedCallback"))
     SPUD_STATIC_DETOUR(m.Pointer(), BundleDataWidget_OnActionButtonPressedCallback);
@@ -185,16 +146,8 @@ namespace
 struct AppConfig : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "AppConfig">;
 
-  Il2CppString* PlatformSettingsUrl()
-  { return Get<"PlatformSettingsUrl", Il2CppString*>(); }
   void SetPlatformSettingsUrl(Il2CppString* value)
   { Set<"PlatformSettingsUrl">(value); }
-  Il2CppString* PlatformApiKey()
-  { return Get<"PlatformApiKey", Il2CppString*>(); }
-  void SetPlatformApiKey(Il2CppString* value)
-  { Set<"PlatformApiKey">(value); }
-  Il2CppString* AssetUrlOverride()
-  { return Get<"AssetUrlOverride", Il2CppString*>(); }
   void SetAssetUrlOverride(Il2CppString* value)
   { Set<"AssetUrlOverride">(value); }
 };
@@ -220,18 +173,14 @@ void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* ho
 void Model_LoadConfigs(auto original, Model* _this)
 {
   original(_this);
-  auto config = _this->appConfig();
-  if (!config) {
+  auto* config = _this->appConfig();
+  if (!config)
     return;
-  }
-
-  if (!Config::Get().game.settings_url.empty()) {
-    config->SetPlatformSettingsUrl(il2cpp_string_new(Config::Get().game.settings_url.c_str()));
-  }
-
-  if (!Config::Get().game.assets_url_override.empty()) {
-    config->SetAssetUrlOverride(il2cpp_string_new(Config::Get().game.assets_url_override.c_str()));
-  }
+  const auto& game = Config::Get().game;
+  if (!game.settings_url.empty())
+    config->SetPlatformSettingsUrl(il2cpp_string_new(game.settings_url.c_str()));
+  if (!game.assets_url_override.empty())
+    config->SetAssetUrlOverride(il2cpp_string_new(game.assets_url_override.c_str()));
 }
 
 bool IsQueueEnabled(auto original, void* _this)

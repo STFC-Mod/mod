@@ -18,6 +18,8 @@ struct InventoryForPopup : il2cpp::Object {
   { Set<"MaxItemsToUse">(value); }
   bool IsDonationUse()
   { return Get<"IsDonationUse", bool>(); }
+  int64_t AmountOwned()
+  { return Get<"AmountOwned", int64_t>(); }
   bool IsChestPurchase()
   { return Get<"IsChestPurchase", bool>(); }
 };
