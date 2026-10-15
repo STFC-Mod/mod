@@ -1,17 +1,21 @@
-#include "prime/chat.h"
-#include "prime/ui.h"
+// disable_galaxy_chat and disable_veil_chat: greys out those tabs in full-screen chat, keeps the chat preview off
+// them, and drops their messages from the preview. default_chat_width and auto_open_chat: the side chat's width and
+// opening alliance side chat once per login.
 
 #include "config.h"
-
-#include <spud/detour.h>
-#include <tuple>
-#include <chrono>
-#include <cmath>
-#include <spdlog/spdlog.h>
-#include <stdexcept>
 #include "patches/chat_startup.h"
 #include "patches/patches.h"
-#include "prime/Hub.h"
+
+#include <prime/Hub.h>
+#include <prime/chat.h>
+#include <prime/ui.h>
+
+#include <spdlog/spdlog.h>
+#include <spud/detour.h>
+
+#include <chrono>
+#include <cmath>
+#include <stdexcept>
 
 namespace
 {
@@ -100,141 +104,115 @@ void UpdateChatOptions()
     spdlog::warn("[ChatOptions] disabled after metadata/invocation failure: {}", error.what());
   }
 }
+
+// Tab positions in both the full-screen chat and the preview. Cadet and veil chat only exist for some players,
+// and shift the tabs after them; a missing tab is -1.
+struct ChatTabs {
+  int32_t cadet    = -1;
+  int32_t galaxy   = 0;
+  int32_t veil     = -1;
+  int32_t alliance = 1;
+
+  static ChatTabs Current()
+  {
+    ChatTabs tabs;
+    auto*    chat = ChatManager::Instance();
+    if (!chat)
+      return tabs;
+    const bool cadet = chat->CanSeeNewbieChat();
+    const bool veil  = chat->CanSeeRegionalChat();
+    tabs.cadet       = cadet ? 0 : -1;
+    tabs.galaxy      = cadet ? 1 : 0;
+    tabs.veil        = veil ? tabs.galaxy + 1 : -1;
+    tabs.alliance    = tabs.galaxy + 1 + (veil ? 1 : 0);
+    return tabs;
+  }
+
+  // Whether `index` is a tab the settings disable.
+  bool Disabled(int32_t index) const
+  {
+    const auto& ui = Config::Get().ui;
+    return (ui.disable_galaxy_chat && index == galaxy) || (ui.disable_veil_chat && veil != -1 && index == veil);
+  }
+};
+
+bool AnyDisabled()
+{ return Config::Get().ui.disable_galaxy_chat || Config::Get().ui.disable_veil_chat; }
+
+void FullScreenChatViewController_AboutToShow_Hook(auto original, FullScreenChatViewController* _this)
+{
+  original(_this);
+  if (!AnyDisabled())
+    return;
+
+  auto* tab_bar_view = _this->categoriesTabBarViewController();
+  auto* tab_bar      = tab_bar_view ? tab_bar_view->tabBar() : nullptr;
+  auto* buttons      = tab_bar ? tab_bar->data() : nullptr;
+  if (!buttons)
+    return;
+  const auto tabs = ChatTabs::Current();
+  for (int32_t index : {tabs.galaxy, tabs.veil})
+    if (index >= 0 && index < buttons->Count() && tabs.Disabled(index))
+      if (auto* button = (*buttons)[index])
+        static_cast<GenericButtonContext*>(button)->SetInteractable(false);
+}
+
+// Selecting a disabled tab (with the keyboard, say) does nothing.
+void FullScreenChatViewController_OnDidChangeSelectedTab_Hook(auto original, FullScreenChatViewController* _this,
+                                                              int32_t index, void* tab)
+{
+  if (!ChatTabs::Current().Disabled(index))
+    original(_this, index, tab);
+}
+
+void FocusAlliance(ChatPreviewController* preview, int32_t alliance)
+{
+  if (auto* scroller = preview->swipeScroller(); scroller && scroller->currentContentIndex() != alliance)
+    scroller->FocusOnInstantly(alliance);
+}
+
+void ChatPreviewController_AboutToShow_Hook(auto original, ChatPreviewController* _this)
+{
+  original(_this);
+  ObserveChatPreview(_this);
+  // The preview reopens on the last panel; move off it only if that channel is disabled.
+  auto*      scroller = _this ? _this->swipeScroller() : nullptr;
+  const auto tabs     = ChatTabs::Current();
+  if (scroller && tabs.Disabled(scroller->currentContentIndex())) {
+    _this->SetFocusedPanel(ChatChannelCategory::Alliance);
+    FocusAlliance(_this, tabs.alliance);
+  }
+}
+
+void ChatPreviewController_OnPanelFocused_Hook(auto original, ChatPreviewController* _this, int32_t index)
+{
+  ObserveChatPreview(_this);
+  const auto tabs = ChatTabs::Current();
+  if (!tabs.Disabled(index))
+    return original(_this, index);
+  // Swiped onto a disabled channel: focus alliance before the game handles the change, then line the scroller up.
+  _this->SetFocusedPanel(ChatChannelCategory::Alliance);
+  original(_this, tabs.alliance);
+  FocusAlliance(_this, tabs.alliance);
+}
+
+void ChatPreviewController_OnGlobalMessageReceived_Hook(auto original, ChatPreviewController* _this, void* message)
+{
+  if (!Config::Get().ui.disable_galaxy_chat)
+    original(_this, message);
+}
+
+void ChatPreviewController_OnRegionalMessageReceived_Hook(auto original, ChatPreviewController* _this, void* message)
+{
+  if (!Config::Get().ui.disable_veil_chat)
+    original(_this, message);
+}
 } // namespace
 
 void ChatOptionsUpdate()
 {
   if (options_installed)
     UpdateChatOptions();
-}
-
-auto GetChatTabIndices()
-{
-  if (const auto chat_manager = ChatManager::Instance(); chat_manager) {
-    const auto hasCadetChat    = chat_manager->CanSeeNewbieChat();
-    const auto hasVeilChat     = chat_manager->CanSeeRegionalChat();
-
-    const auto galaxyChatIndex = 0 + (hasCadetChat ? 1 : 0);
-    const auto veilChatIndex   = galaxyChatIndex + 1;
-    const auto allianceChatIndex = (hasCadetChat ? 1 : 0) + 1 + (hasVeilChat ? 1 : 0);
-
-    return std::make_tuple(hasCadetChat ? 0 : -1, galaxyChatIndex, hasVeilChat ? veilChatIndex : -1, allianceChatIndex);
-  }
-
-  return std::make_tuple(-1, 0, -1, 1);
-}
-
-void DisableButtons(FullScreenChatViewController* _this)
-{
-  const auto disableGalaxyChat = Config::Get().ui.disable_galaxy_chat;
-  const auto disableVeilChat = Config::Get().ui.disable_veil_chat;
-
-  if (!(disableGalaxyChat || disableVeilChat))
-    return;
-
-  const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
-
-  const auto viewController = _this->categoriesTabBarViewController();
-  if (!viewController) {
-    return;
-  }
-
-  const auto tabBar = viewController->tabBar();
-  if (!tabBar) {
-    return;
-  }
-
-  const auto listData = tabBar->data();
-  if (!listData) {
-    return;
-  }
-
-  if (disableGalaxyChat) {
-    if (const auto elm = (*listData)[galaxyChatIdx]) {
-      static_cast<GenericButtonContext*>(elm)->SetInteractable(false);
-    }
-  }
-
-  if (disableVeilChat && veilChatIdx != -1) {
-    if (const auto elm = (*listData)[veilChatIdx]) {
-      static_cast<GenericButtonContext*>(elm)->SetInteractable(false);
-    }
-  }
-}
-
-void FullScreenChatViewController_AboutToShow(auto original, FullScreenChatViewController* _this)
-{
-  original(_this);
-  DisableButtons(_this);
-}
-
-void FullScreenChatViewController_OnDidChangeSelectedTab(auto original, FullScreenChatViewController* _this, int32_t tabIdx, void* tab)
-{
-  const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
-  if ((tabIdx == galaxyChatIdx && Config::Get().ui.disable_galaxy_chat) || (tabIdx == veilChatIdx && Config::Get().ui.disable_veil_chat)) {
-    // don't show disabled chats if the associated tab was selected
-    return;
-  }
-
-  original(_this, tabIdx, tab);
-}
-
-void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _this)
-{
-  original(_this);
-
-  ObserveChatPreview(_this);
-
-  if (Config::Get().ui.disable_galaxy_chat || Config::Get().ui.disable_veil_chat) {
-    const auto allianceChatIdx = std::get<3>(GetChatTabIndices());
-    _this->SetFocusedPanel(ChatChannelCategory::Alliance);
-
-    if (_this->swipeScroller()->currentContentIndex() != allianceChatIdx) {
-      _this->swipeScroller()->FocusOnInstantly(allianceChatIdx);
-    }
-  }
-}
-
-void ChatPreviewController_OnPanelFocused(auto original, ChatPreviewController* _this, int32_t index)
-{
-  ObserveChatPreview(_this);
-  static const auto disableGalaxyChat = Config::Get().ui.disable_galaxy_chat;
-  static const auto disableVeilChat   = Config::Get().ui.disable_veil_chat;
-
-  if (!(disableGalaxyChat || disableVeilChat)) {
-    original(_this, index);
-    return;
-  }
-
-  const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
-  if (disableGalaxyChat || (veilChatIdx != -1 && disableVeilChat)) {
-    _this->SetFocusedPanel(ChatChannelCategory::Alliance);
-    original(_this, allianceChatIdx);
-
-    if (_this->swipeScroller()->currentContentIndex() != allianceChatIdx) {
-      _this->swipeScroller()->FocusOnInstantly(allianceChatIdx);
-    }
-
-    return;
-  }
-
-  original(_this, index);
-}
-
-void ChatPreviewController_OnGlobalMessageReceived(auto original, ChatPreviewController* _this, void* message)
-{
-  if (Config::Get().ui.disable_galaxy_chat)
-    return;
-
-  original(_this, message);
-}
-
-void ChatPreviewController_OnRegionalMessageReceived(auto original, ChatPreviewController* _this, void* message)
-{
-  if (Config::Get().ui.disable_veil_chat)
-    return;
-
-  original(_this, message);
 }
 
 void InstallChatPatches()
@@ -244,16 +222,15 @@ void InstallChatPatches()
     spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}",
                  Config::Get().ui.auto_open_chat, Config::Get().ui.default_chat_width);
   if (auto m = FullScreenChatViewController::Class::Method("AboutToShow"))
-    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_AboutToShow);
+    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_AboutToShow_Hook);
   if (auto m = FullScreenChatViewController::Class::Method("OnDidChangeSelectedTab"))
-    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_OnDidChangeSelectedTab);
-
+    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_OnDidChangeSelectedTab_Hook);
   if (auto m = ChatPreviewController::Class::Method("AboutToShow"))
-    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_AboutToShow);
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_AboutToShow_Hook);
   if (auto m = ChatPreviewController::Class::Method("OnPanelFocused"))
-    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnPanelFocused);
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnPanelFocused_Hook);
   if (auto m = ChatPreviewController::Class::Method("OnGlobalMessageReceived"))
-    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnGlobalMessageReceived);
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnGlobalMessageReceived_Hook);
   if (auto m = ChatPreviewController::Class::Method("OnRegionalMessageReceived"))
-    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnRegionalMessageReceived);
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnRegionalMessageReceived_Hook);
 }
