@@ -2,7 +2,7 @@
 #include "config.h"
 #include "file.h"
 #include "patches/input.h"
-#include "ship_name_match.h"
+#include "ship_name.h"
 
 #include "pinned_ship_click.h"
 #include "prime/fleet.h"
@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <spdlog/fmt/ranges.h>
 #include <string>
 #include <vector>
 
@@ -44,19 +45,19 @@ bool IsShipManagementScreenVisible()
   return false;
 }
 
-std::string JoinNames(const std::vector<std::string>& names)
+std::string JoinNames(const std::vector<std::vector<std::string>>& names)
 {
   std::string joined;
   for (size_t i = 0; i < names.size(); ++i) {
     if (i != 0) joined += ", ";
-    joined += names[i];
+    joined += fmt::format("{}", fmt::join(names[i], " "));
   }
   return joined;
 }
 
 // Update ui.pinned_ships in the user's config file so pins survive a restart.
 // If/when we merge the runtime config writer we can route this through that instead of writing the file directly.
-void PersistPinnedShips(const std::vector<std::string>& names)
+void PersistPinnedShips(const std::vector<std::vector<std::string>>& names)
 {
   const auto joined = JoinNames(names);
 
@@ -144,7 +145,7 @@ void PinShipClickOnTileClicked(FleetPlayerData* ship)
   if (!IsShipManagementScreenVisible()) return;
   if (!ship) return;
 
-  const auto key = ShipNameMatch::NormalizeKey(ShipNameMatch::GameDisplayName(ship));
+  const auto key = ShipNameWords(ship->DisplayName());
   if (key.empty()) return; // placeholder tiles (e.g. "build ship") have no name
 
   auto& names = cfg.ui.pinned_ships;
@@ -152,10 +153,10 @@ void PinShipClickOnTileClicked(FleetPlayerData* ship)
   const bool was_pinned = std::find(names.begin(), names.end(), key) != names.end();
   if (was_pinned) {
     names.erase(std::find(names.begin(), names.end(), key));
-    spdlog::info("[PinnedShipClick] unpinned ship '{}'", key);
+    spdlog::info("[PinnedShipClick] unpinned ship '{}'", fmt::join(key, " "));
   } else {
     names.push_back(key);
-    spdlog::info("[PinnedShipClick] pinned ship '{}'", key);
+    spdlog::info("[PinnedShipClick] pinned ship '{}'", fmt::join(key, " "));
   }
 
   PersistPinnedShips(names);

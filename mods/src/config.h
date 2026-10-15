@@ -134,10 +134,10 @@ struct FleetLabelProfile {
   float            zoom_threshold = 0.5f;
 };
 
-// Ship names from a comma list, normalized for ShipNameMatch, or every ship for "*".
+// Ship names from a comma list, each split by ShipNameWords, or every ship for "*".
 struct ShipFilter {
-  std::vector<std::string> names;
-  bool                     all = false;
+  std::vector<std::vector<std::string>> names;
+  bool                                  all = false;
 };
 
 struct SettingsFile;
@@ -303,11 +303,11 @@ public:
     std::vector<std::string> daily_bulk_claim_factions{"federation", "klingon", "romulan"};
     bool                     daily_bulk_claim_toggle_default_on = false;
 
-    InstantWarpConfirmation  auto_confirm_instant_warp = InstantWarpConfirmation::None;
-    ShipFilter               instant_warp_auto_jump;
-    ShipFilter               instant_warp_auto_warp;
-    ShipFilter               instant_warp_always_ask;
-    std::vector<std::string> pinned_ships;
+    InstantWarpConfirmation               auto_confirm_instant_warp = InstantWarpConfirmation::None;
+    ShipFilter                            instant_warp_auto_jump;
+    ShipFilter                            instant_warp_auto_warp;
+    ShipFilter                            instant_warp_always_ask;
+    std::vector<std::vector<std::string>> pinned_ships;
 
     bool double_click_to_assign_ship = false;
     bool focus_search                = true;

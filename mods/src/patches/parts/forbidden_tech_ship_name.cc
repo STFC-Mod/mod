@@ -1,5 +1,4 @@
 #include "config.h"
-#include "ship_name_match.h"
 
 #include <prime/fleet.h>
 #include <prime/ui.h>
@@ -144,7 +143,7 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
   // Hull IDs and localisation IDs differ on many ships. Mirror FleetPlayerData.GetLocaId.
   auto*      refs    = hull->idRefs();
   const auto loca_id = refs ? refs->locaId() : hull->Id();
-  return ShipNameMatch::LocalizedShipName(loca_id);
+  return LocalizedShipName(loca_id);
 }
 
 struct Row {

@@ -1,150 +1,102 @@
+// pinned_ships: moves the named ships to the front of the dock's idle ship list, after the game sorts it. Within
+// the pinned group and the rest, the game's active sort order is kept.
+//
+// Only ShipManagementViewContext.Sort is hooked, not ISortedFleetsContext, so the hailing frequencies inventory is
+// left alone.
+
 #include "config.h"
-#include "ship_name_match.h"
+#include "patches/patches.h"
+#include "ship_name.h"
 
 #include <prime/fleet.h>
 
-#include <il2cpp/il2cpp.h>
-
+#include <spdlog/fmt/ranges.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
 #include <algorithm>
-#include <cstdint>
+#include <set>
 #include <vector>
 
-// Fleet management dock ship sort: hooks ShipManagementViewContext.Sort()
-// and stable-partitions cfg.ui.pinned_ships to the front of SortedIdleShips,
-// keeping the active sort field's order within both the pinned group and
-// everyone else. Only the concrete class is hooked, not ISortedFleetsContext,
-// so HailingFrequenciesInventoryContext is unaffected. Matching is shared
-// with the instant-warp filters (ship_name_match.h). If multiple ships share
-// a pinned name, only the highest-level unclaimed one is pinned.
-
-namespace {
-
-struct ShipEntry {
-  FleetPlayerData* item;
-  std::vector<std::string> match_words; // words from the game's own display name
-  int64_t       level;
-  int64_t                  hull_id      = 0;
-  int8_t                   tech_applied = -1;
-
-  bool TechApplied()
-  {
-    if (tech_applied < 0)
-      tech_applied = item && item->HasAppliedTech() ? 1 : 0;
-    return tech_applied == 1;
-  }
-};
-
-ShipEntry BuildShipEntry(FleetPlayerData* ship)
+namespace
 {
-  ShipEntry entry{ship, {}, 0};
-  if (!ship) return entry;
+// Unmatched entries are warned about once, not on every sort.
+std::set<std::string> warned;
 
-  entry.level       = ship->Level();
-  entry.hull_id     = ship->HullId();
-  entry.match_words = ShipNameMatch::DisplayWords(ship);
-  return entry;
-}
-
-// Stable-partitions `list` (a List<FleetPlayerData>) so that ships matching
-// cfg.ui.pinned_ships come first, while both the pinned group and everyone else
-// keep their existing relative order (i.e. whatever sort field is active).
-void ReorderPinnedShips(il2cpp::List<FleetPlayerData*>* list)
+void PinShips(il2cpp::List<FleetPlayerData*>* list)
 {
-  if (!list) return;
-
-  const auto& cfg = Config::Get();
-  if (cfg.ui.pinned_ships.empty()) return;
-
-  const auto count = list->Count();
-  if (count <= 1) return;
+  const auto& pinned = Config::Get().ui.pinned_ships;
+  const auto  count  = list ? list->Count() : 0;
+  if (pinned.empty() || count <= 1)
+    return;
   if (count > 2000) {
     spdlog::warn("[PinnedShipSort] SortedIdleShips reported an implausible count ({}); skipping", count);
     return;
   }
 
-  // cfg.ui.pinned_ships entries are already normalized (see ReadShipFilter /
-  // ShipNameMatch::NormalizeKey in config.cc); just split them into words.
-  std::vector<std::vector<std::string>> pinned_words;
-  pinned_words.reserve(cfg.ui.pinned_ships.size());
-  for (const auto& name : cfg.ui.pinned_ships) pinned_words.push_back(ShipNameMatch::SplitWords(name));
+  struct Ship {
+    FleetPlayerData*         data;
+    std::vector<std::string> words;
+    int64_t                  level;
+    bool                     pinned = false;
+    int8_t                   tech_applied = -1;
 
-  std::vector<ShipEntry> ships;
+    bool TechApplied()
+    {
+      if (tech_applied < 0)
+        tech_applied = data && data->HasAppliedTech() ? 1 : 0;
+      return tech_applied == 1;
+    }
+  };
+  std::vector<Ship> ships;
   ships.reserve(count);
-  for (int32_t i = 0; i < count; ++i)
-    ships.push_back(BuildShipEntry((*list)[i]));
+  for (auto* ship : *list)
+    ships.push_back(
+        {ship, ship ? ShipNameWords(ship->DisplayName()) : std::vector<std::string>(), ship ? ship->Level() : 0});
 
-  constexpr int    kPinnedRank   = 0;
-  constexpr int    kUnpinnedRank = 1;
-  std::vector<int> ranks(count, kUnpinnedRank);
-
-  bool any_pinned = false;
-  for (size_t p = 0; p < pinned_words.size(); ++p) {
-    if (pinned_words[p].empty()) continue;
-
-    int     best_index = -1;
-    int64_t best_level = -1;
-    for (int32_t i = 0; i < count; ++i) {
-      if (ranks[i] != kUnpinnedRank) continue; // already claimed by an earlier pinned_ships entry
-      if (!ShipNameMatch::MatchesDisplay(ships[i].match_words, pinned_words[p])) continue;
-      if (ships[i].level > best_level) {
-        best_level = ships[i].level;
-        best_index = i;
-      } else if (best_index >= 0 && ships[i].level == best_level && ships[i].hull_id == ships[best_index].hull_id
-                 && ships[i].TechApplied() && !ships[best_index].TechApplied()) {
-        best_index = i;
-      }
-    }
-
-    if (best_index >= 0) {
-      ranks[best_index] = kPinnedRank;
-      any_pinned        = true;
-    } else {
-      spdlog::warn("[PinnedShipSort] pinned_ships entry '{}' matched no idle ship (entries match the "
-                   "game's own display name for a ship that is idle in its dock)",
-                   cfg.ui.pinned_ships[p]);
+  // Each entry pins one ship: the highest-level idle ship it matches that an earlier entry has not taken.
+  bool any = false;
+  for (const auto& pattern : pinned) {
+    Ship* best = nullptr;
+    for (auto& ship : ships)
+      if (!ship.pinned && ShipNameMatches(ship.words, pattern)
+          && (!best || ship.level > best->level
+              || (ship.level == best->level && ship.data && best->data && ship.data->HullId() == best->data->HullId()
+                  && ship.TechApplied() && !best->TechApplied())))
+        best = &ship;
+    if (best) {
+      best->pinned = any = true;
+    } else if (const auto name = fmt::format("{}", fmt::join(pattern, " ")); warned.insert(name).second) {
+      spdlog::warn("[PinnedShipSort] pinned_ships entry '{}' matched no idle ship (entries match the end of the "
+                   "game's own ship name)",
+                   name);
     }
   }
+  if (!any)
+    return;
 
-  if (!any_pinned) return;
-
-  std::vector<FleetPlayerData*> items;
-  items.reserve(count);
-  for (const auto& entry : ships) items.push_back(entry.item);
-
-  std::vector<int> order(count);
-  for (int32_t i = 0; i < count; ++i) order[i] = i;
-  std::ranges::stable_sort(order, [&](int a, int b) { return ranks[a] < ranks[b]; });
-
-  bool changed = false;
-  for (int32_t i = 0; i < count; ++i) {
-    if (order[i] != i) {
-      changed = true;
-      break;
-    }
-  }
-  if (!changed) return;
+  std::ranges::stable_partition(ships, &Ship::pinned);
+  bool unchanged = true;
+  for (int32_t i = 0; i < count && unchanged; ++i)
+    unchanged = ships[i].data == (*list)[i];
+  if (unchanged)
+    return;
 
   // SortedIdleShips is a List<T>, which always has Clear and Add; the rewrite cannot stop halfway.
   list->Call<"Clear">();
-  for (int32_t i = 0; i < count; ++i)
-    list->Add(items[order[i]]);
+  for (const auto& ship : ships)
+    list->Add(ship.data);
 }
 
 void ShipManagementViewContext_Sort_Hook(auto original, ShipManagementViewContext* _this)
 {
   original(_this);
-  ReorderPinnedShips(_this->SortedIdleShips());
+  PinShips(_this->SortedIdleShips());
 }
-
 } // namespace
 
 void InstallPinnedShipSortHooks()
 {
-  if (auto m = ShipManagementViewContext::Class::Method("Sort", 0)) {
+  if (auto m = ShipManagementViewContext::Class::Method("Sort", 0))
     SPUD_STATIC_DETOUR(m.Pointer(), ShipManagementViewContext_Sort_Hook);
-    spdlog::info("Pinned ship sort: hooks installed");
-  }
 }

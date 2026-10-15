@@ -4,7 +4,7 @@
 #include "config.h"
 #include "patches/object_tracker.h"
 #include "patches/patches.h"
-#include "ship_name_match.h"
+#include "ship_name.h"
 #include "str_utils.h"
 
 #include <prime/fleet.h>
@@ -18,7 +18,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <stdexcept>
 
 namespace
 {
@@ -26,11 +25,10 @@ namespace
 InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
 {
   const auto& ui      = Config::Get().ui;
-  const auto  words   = ShipNameMatch::DisplayWords(fleet);
+  const auto  words   = fleet ? ShipNameWords(fleet->DisplayName()) : std::vector<std::string>();
   const auto  matches = [&words](const ShipFilter& filter) {
-    return filter.all || (!words.empty() && std::ranges::any_of(filter.names, [&](const auto& name) {
-             return ShipNameMatch::MatchesDisplay(words, ShipNameMatch::SplitWords(name));
-           }));
+    return filter.all
+           || std::ranges::any_of(filter.names, [&](const auto& name) { return ShipNameMatches(words, name); });
   };
   if (matches(ui.instant_warp_always_ask))
     return InstantWarpConfirmation::None;
@@ -76,21 +74,13 @@ namespace
 // resource cost, or click handler.
 bool label_installed = false;
 
-// Unity's `bool(UnityEngine.Object)`: false for null and for destroyed native objects.
-bool Alive(il2cpp::Object* object)
-{
-  using UnityObject = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
-  return object && UnityObject::Call<"op_Implicit", bool>(object);
-}
-
 std::string CurrentText(TextLocalizer* label)
 {
   auto* text = label->CurrentText();
-  if (!text)
-    throw std::runtime_error("expected label text");
-  return to_string(text);
+  return text ? to_string(text) : std::string();
 }
 
+// The label text this file set, so it is only cleared while it still reads that.
 struct OwnedLabel {
   il2cpp::GcHandle handle;
   std::string      text;
@@ -104,8 +94,7 @@ struct OwnedLabel {
     auto  previous = std::move(text);
     handle.Reset();
     text.clear();
-    // Forget ownership even if native cleanup fails.
-    if (Alive(label) && label->textOverride() && CurrentText(label) == previous)
+    if (UnityObject::Alive(label) && label->textOverride() && CurrentText(label) == previous)
       label->ClearTextOverride();
   }
 
@@ -144,45 +133,34 @@ void UpdateLabel()
   if (now < next)
     return;
   next = now + std::chrono::milliseconds(100);
-  try {
-    auto*       widget  = ObjectFinder<StarNodeObjectViewerWidget>::Get();
-    const bool  active  = Alive(widget) && widget->isActiveAndEnabled();
-    auto*       button  = active ? widget->visitButton() : nullptr;
-    const bool  enabled = Alive(button) && button->isActiveAndEnabled() && button->Interactable();
-    const char* desired = nullptr;
-    // The ordinary visit path uses the currently selected fleet. The card's
-    // cached popup CourseData is populated on click, so it is not a preview source.
-    // Toll/wormhole buttons have separate confirmation paths and retain native text.
-    if (enabled) {
-      auto* fleets     = FleetsManager::Instance();
-      auto* deployment = DeploymentManger::Instance();
-      auto* fleet      = Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
-      if (fleet && Alive(deployment) && deployment->HasInstantWarpAbility(fleet)) {
-        switch (ResolveConfirmation(fleet)) {
-          case InstantWarpConfirmation::Warp:
-            desired = "WARP";
-            break;
-          case InstantWarpConfirmation::Jump:
-            desired = "JUMP";
-            break;
-          case InstantWarpConfirmation::None:
-            break;
-        }
+
+  auto*       widget  = ObjectFinder<StarNodeObjectViewerWidget>::Get();
+  const bool  active  = UnityObject::Alive(widget) && widget->isActiveAndEnabled();
+  auto*       button  = active ? widget->visitButton() : nullptr;
+  const bool  enabled = UnityObject::Alive(button) && button->isActiveAndEnabled() && button->Interactable();
+  const char* desired = nullptr;
+  // The ordinary visit path uses the currently selected fleet. The card's
+  // cached popup CourseData is populated on click, so it is not a preview source.
+  // Toll/wormhole buttons have separate confirmation paths and retain native text.
+  if (enabled) {
+    auto* fleets     = FleetsManager::Instance();
+    auto* deployment = DeploymentManger::Instance();
+    auto* fleet      = UnityObject::Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
+    if (fleet && UnityObject::Alive(deployment) && deployment->HasInstantWarpAbility(fleet)) {
+      switch (ResolveConfirmation(fleet)) {
+        case InstantWarpConfirmation::Warp:
+          desired = "WARP";
+          break;
+        case InstantWarpConfirmation::Jump:
+          desired = "JUMP";
+          break;
+        case InstantWarpConfirmation::None:
+          break;
       }
     }
-    auto* label = desired ? button->mainText() : nullptr;
-    action_label.Apply(Alive(label) ? label : nullptr, desired);
-  } catch (const std::exception& error) {
-    static bool warned = false;
-    if (!warned) {
-      warned = true;
-      spdlog::warn("[WarpActionLabel] native label unavailable: {}", error.what());
-    }
-    try {
-      action_label.Clear();
-    } catch (...) {
-    }
   }
+  auto* label = desired ? button->mainText() : nullptr;
+  action_label.Apply(UnityObject::Alive(label) ? label : nullptr, desired);
 }
 } // namespace
 

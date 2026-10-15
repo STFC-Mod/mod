@@ -2,7 +2,7 @@
 
 #include "file.h"
 #include "patches/shortcuts.h"
-#include "ship_name_match.h"
+#include "ship_name.h"
 #include "str_utils.h"
 #include "version.h"
 
@@ -198,7 +198,7 @@ std::string_view OldName(const SyncConfig::Option& option)
   return it == std::end(kRenamedSyncOptions) ? std::string_view{} : it->second;
 }
 
-// "*" matches every ship; otherwise a comma list of ship names, normalized for ShipNameMatch.
+// "*" matches every ship; otherwise a comma list of ship names, each split into words by ShipNameWords.
 ShipFilter ReadShipFilter(Reader& reader, std::string_view key)
 {
   const auto value = reader.Get<std::string>("ui", key, "");
@@ -206,8 +206,8 @@ ShipFilter ReadShipFilter(Reader& reader, std::string_view key)
   filter.all = StripAsciiWhitespace(value) == "*";
   if (!filter.all)
     for (const auto& token : StrSplit(value, ','))
-      if (auto normalized = ShipNameMatch::NormalizeKey(token); !normalized.empty())
-        filter.names.push_back(std::move(normalized));
+      if (auto words = ShipNameWords(token); !words.empty())
+        filter.names.push_back(std::move(words));
   return filter;
 }
 

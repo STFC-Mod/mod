@@ -4,6 +4,7 @@
 #include "patches/parts/toast_text.h"
 #include "patches/ship_shortcut_hint.h"
 #include "patches/shortcuts.h"
+#include "ship_name.h"
 #include "str_utils.h"
 
 #include <toml++/toml.h>
@@ -16,7 +17,7 @@
 namespace
 {
 std::array<bool, static_cast<size_t>(KeyCode::Max)> held{};
-KeyCode                                             claimed = KeyCode::None;
+KeyCode                                             claimed  = KeyCode::None;
 int                                                 failures = 0;
 
 void Check(bool condition, const char* what, std::source_location where = std::source_location::current())
@@ -43,9 +44,7 @@ toml::table Load(std::string_view settings, bool extended = true, bool experimen
 }
 
 std::string Value(const toml::table& parsed, std::string_view section, std::string_view key)
-{
-  return parsed[section][key].value_or(std::string("<missing>"));
-}
+{ return parsed[section][key].value_or(std::string("<missing>")); }
 
 void ShipHints()
 {
@@ -118,6 +117,18 @@ void ToastText()
   Check(TitleCase("USS ENTERPRISE-D") == "Uss Enterprise-D", "title case");
   Check(HullKeyName("Hull_L30_Destroyer_Klingon_LIVE") == "Lv.30 Destroyer Klingon", "hull key with level");
   Check(HullKeyName("Hull_BORG_CUBE") == "Borg Cube", "hull key without level");
+}
+
+void ShipNames()
+{
+  Check(NormalizeShipName("  U.S.S. Enterprise-D ") == "ENTERPRISE D", "ship names drop USS and punctuation");
+  Check(NormalizeShipName("d'deridex__b") == "DDERIDEX B", "ship names collapse separators");
+  const auto academy = ShipNameWords("Academy Athena");
+  Check(ShipNameMatches(academy, ShipNameWords("athena")), "a ship name matches its last word");
+  Check(ShipNameMatches(academy, ShipNameWords("ACADEMY ATHENA")), "a ship name matches all its words");
+  Check(!ShipNameMatches(academy, ShipNameWords("academy")), "a ship name does not match its first word");
+  Check(!ShipNameMatches(academy, ShipNameWords("")), "an empty pattern matches nothing");
+  Check(!ShipNameMatches(ShipNameWords("Thena"), ShipNameWords("Athena")), "words match whole");
 }
 
 void Chords()
@@ -198,13 +209,9 @@ void Matching()
 namespace Key
 {
 bool Pressed(KeyCode key)
-{
-  return held[static_cast<size_t>(key)];
-}
+{ return held[static_cast<size_t>(key)]; }
 bool Down(KeyCode key)
-{
-  return Pressed(key);
-}
+{ return Pressed(key); }
 bool IsModified()
 {
   for (auto key : {KeyCode::LeftControl, KeyCode::RightControl, KeyCode::LeftShift, KeyCode::RightShift,
@@ -214,9 +221,7 @@ bool IsModified()
   return false;
 }
 void ClaimDirectionalInput(KeyCode key)
-{
-  claimed = key;
-}
+{ claimed = key; }
 } // namespace Key
 
 void ChatStartupGate()
@@ -243,6 +248,7 @@ int main()
   StringHelpers();
   Timestamps();
   ToastText();
+  ShipNames();
   Chords();
   Loading();
   Matching();

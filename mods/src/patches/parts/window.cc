@@ -65,19 +65,26 @@ bool ApplyProfileTitle()
 // TODO: the old hook also stretched a 1024x768 fullscreen fallback to the monitor, but only once a window
 // handle captured by a SetWindowLongW detour was set, and that detour was never installed. Bring it back
 // with a tested trigger if the fallback is still seen.
-// Never calls the original: skipping the game's aspect-ratio enforcement is what lets the window resize freely.
-void AspectRatioConstraintHandler_Update(auto, void*)
+// With free_resize the original is skipped: the game's per-frame aspect-ratio enforcement is what would snap the
+// window back.
+void AspectRatioConstraintHandler_Update(auto original, void* _this)
 {
   static bool title_pending = !File::Profile().empty();
   if (title_pending && ApplyProfileTitle())
     title_pending = false;
+  if (!Config::Get().graphics.free_resize)
+    original(_this);
 }
 
 intptr_t AspectRatioConstraintHandler_WndProc(auto original, HWND hWnd, uint32_t msg, intptr_t wParam, intptr_t lParam)
 {
-  // Skip the game's aspect-ratio clamp and hand the message straight to Unity.
-  if (Config::Get().graphics.free_resize)
-    return CallWindowProcA(AspectRatioConstraintHandler::_unityWndProc(), hWnd, msg, wParam, lParam);
+  // Skip the game's aspect-ratio clamp and hand the message straight to Unity. The message arrives in the form of
+  // the window's current procedure (the game's, installed through its own P/Invoke), and the A and W calls each
+  // convert from their own form; the wrong one garbles non-ASCII text such as chat input.
+  if (Config::Get().graphics.free_resize) {
+    const auto forward = IsWindowUnicode(hWnd) ? CallWindowProcW : CallWindowProcA;
+    return forward(AspectRatioConstraintHandler::_unityWndProc(), hWnd, msg, wParam, lParam);
+  }
   return original(hWnd, msg, wParam, lParam);
 }
 } // namespace
@@ -87,7 +94,9 @@ float WindowDpiScale(bool refresh)
   static HMONITOR last_monitor = nullptr;
   static float    scale        = 1.0f;
 
-  const auto monitor = MonitorFromWindow(GetActiveWindow(), MONITOR_DEFAULTTONEAREST);
+  // The game's own window, not GetActiveWindow(): that is null while the game is in the background, which would
+  // pick the primary monitor.
+  const auto monitor = MonitorFromWindow(GameWindow(), MONITOR_DEFAULTTONEAREST);
   if (!refresh && monitor == last_monitor)
     return scale;
 
