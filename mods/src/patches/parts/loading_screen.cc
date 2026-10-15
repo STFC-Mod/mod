@@ -34,20 +34,11 @@ struct Rect {
 
 struct Texture2D : il2cpp::Object {
   using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Texture2D">;
-};
 
-struct Behaviour : il2cpp::Object {
-  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Behaviour">;
-
-  void SetEnabled(bool value)
-  { Set<"enabled">(value); }
-};
-
-struct TMP_Text : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_Text">;
-
-  void SetText(Il2CppString* value)
-  { Set<"text">(value); }
+  int32_t width()
+  { return Get<"width", int32_t>(); }
+  int32_t height()
+  { return Get<"height", int32_t>(); }
 };
 
 struct LoginSequence : il2cpp::Object {
@@ -87,17 +78,6 @@ using Byte            = il2cpp::Class<"mscorlib", "System", "Byte">;
 // The non-generic MonoSingleton base; its static PrepareAllForReload runs before a reload.
 using MonoSingletonBase = il2cpp::Class<"Assembly-CSharp", "", "MonoSingleton">;
 
-void SetRect(RectTransform* rect, Vector2 anchor_min, Vector2 anchor_max, Vector2 pivot, Vector2 size, Vector2 position)
-{
-  if (!rect)
-    return;
-  rect->SetAnchorMin(anchor_min);
-  rect->SetAnchorMax(anchor_max);
-  rect->SetPivot(pivot);
-  rect->SetSizeDelta(size);
-  rect->SetAnchoredPosition(position);
-}
-
 void ShowSprite(Image* image, Sprite* sprite, bool preserve_aspect)
 {
   image->SetSprite(sprite);
@@ -113,24 +93,6 @@ void HideImage(Image* image)
     image->SetColor({0.0f, 0.0f, 0.0f, 0.0f});
 }
 
-// The width and height from a PNG's IHDR chunk, if `data` is a PNG.
-bool PngSize(const uint8_t* data, size_t size, int32_t& width, int32_t& height)
-{
-  static constexpr uint8_t kSignature[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-  if (!data || size < 24 || std::memcmp(data, kSignature, sizeof(kSignature)) != 0
-      || std::memcmp(data + 12, "IHDR", 4) != 0)
-    return false;
-  const auto big_endian = [](const uint8_t* p) {
-    return (uint32_t{p[0]} << 24) | (uint32_t{p[1]} << 16) | (uint32_t{p[2]} << 8) | uint32_t{p[3]};
-  };
-  const auto w = big_endian(data + 16), h = big_endian(data + 20);
-  if (w == 0 || h == 0 || w > INT32_MAX || h > INT32_MAX)
-    return false;
-  width  = static_cast<int32_t>(w);
-  height = static_cast<int32_t>(h);
-  return true;
-}
-
 Texture2D* LoadTexture(const uint8_t* data, size_t size)
 {
   auto* bytes = data && size ? il2cpp::Array<uint8_t>::New(Byte::Raw(), size) : nullptr;
@@ -142,37 +104,37 @@ Texture2D* LoadTexture(const uint8_t* data, size_t size)
   return texture && ImageConversion::Call<"LoadImage", bool>(texture, bytes, false) ? texture : nullptr;
 }
 
-// One image the mod shows. Each LoginSequence starts a new generation of Unity objects, so the texture and sprite
-// are rooted until the next one and then released.
+// One image the mod shows, decoded once and kept while Unity keeps it: a reload unloads it, and the next use
+// decodes it again.
 class ImageAsset
 {
 public:
-  bool Load(const uint8_t* data, size_t size, int32_t width, int32_t height, const char* name)
+  bool Load(const uint8_t* data, size_t size, const char* name)
   {
     if (Texture())
       return true;
-    name_   = name;
-    width_  = width;
-    height_ = height;
-    if (!PngSize(data, size, width_, height_))
-      spdlog::warn("[LS] {} is not a supported PNG; using fallback dimensions {}x{}", name, width_, height_);
+    name_ = name;
+    sprite_.Reset();
     texture_ = il2cpp::GcHandle::Strong(LoadTexture(data, size));
-    if (!texture_)
-      spdlog::warn("[LS] failed to load and root {} texture", name);
-    return static_cast<bool>(texture_);
+    if (!Texture())
+      spdlog::warn("[LS] failed to load {} texture", name);
+    return Texture() != nullptr;
   }
 
   Texture2D* Texture() const
-  { return texture_.Get<Texture2D>(); }
+  {
+    auto* texture = texture_.Get<Texture2D>();
+    return UnityObject::Alive(texture) ? texture : nullptr;
+  }
 
   ::Sprite* Sprite()
   {
-    if (sprite_)
-      return sprite_.Get<::Sprite>();
+    if (auto* sprite = sprite_.Get<::Sprite>(); UnityObject::Alive(sprite))
+      return sprite;
     auto* texture = Texture();
-    if (!texture || width_ <= 0 || height_ <= 0)
+    if (!texture)
       return nullptr;
-    const Rect rect{0.0f, 0.0f, static_cast<float>(width_), static_cast<float>(height_)};
+    const Rect rect{0.0f, 0.0f, static_cast<float>(texture->width()), static_cast<float>(texture->height())};
     auto*      sprite = ::Sprite::Class::Call<"Create", ::Sprite*>(texture, rect, Vector2{0.5f, 0.5f});
     if (!sprite) {
       spdlog::warn("[LS] failed to create {} sprite", name_);
@@ -183,31 +145,19 @@ public:
   }
 
   float AspectRatio() const
-  { return width_ > 0 ? static_cast<float>(height_) / static_cast<float>(width_) : 1.0f; }
-
-  void Reset()
   {
-    sprite_.Reset();
-    texture_.Reset();
+    auto* texture = Texture();
+    return texture && texture->width() > 0 ? static_cast<float>(texture->height()) / texture->width() : 1.0f;
   }
 
 private:
   il2cpp::GcHandle texture_;
   il2cpp::GcHandle sprite_;
-  int32_t          width_  = 0;
-  int32_t          height_ = 0;
-  const char*      name_   = "loading asset";
+  const char*      name_ = "loading asset";
 };
 
 struct Assets {
   ImageAsset background, logo, community_logo;
-
-  void Reset()
-  {
-    background.Reset();
-    logo.Reset();
-    community_logo.Reset();
-  }
 
   // The configured loader_image, or the embedded one when it is unset or unreadable. Called from hooks, so it
   // never throws.
@@ -220,25 +170,25 @@ struct Assets {
     if (!path.empty() && std::filesystem::exists(path, error)) {
       std::ifstream        file(path, std::ios::binary);
       std::vector<uint8_t> data(std::istreambuf_iterator<char>(file), {});
-      if (!data.empty() && background.Load(data.data(), data.size(), 1334, 750, "custom loading background"))
+      if (!data.empty() && background.Load(data.data(), data.size(), "custom loading background"))
         return &background;
     }
-    return background.Load(g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE, 1334, 750,
-                           "embedded loading background")
+    return background.Load(g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE, "embedded loading background")
                ? &background
                : nullptr;
   }
 
   ImageAsset* Logo()
-  { return logo.Load(g_embeddedLogoImage, g_embeddedLogoImage_SIZE, 600, 828, "mod logo") ? &logo : nullptr; }
+  { return logo.Load(g_embeddedLogoImage, g_embeddedLogoImage_SIZE, "mod logo") ? &logo : nullptr; }
 
   ImageAsset* CommunityLogo()
   {
-    return community_logo.Load(g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, 600, 815, "community logo")
-               ? &community_logo
-               : nullptr;
+    return community_logo.Load(g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo") ? &community_logo
+                                                                                                    : nullptr;
   }
-} assets;
+};
+// Never destroyed: its GC handles must not be freed by static destructors after the runtime is gone.
+Assets& assets = *new Assets;
 
 // Overlays attach to the nearest ancestor with a Canvas so they cover the whole screen.
 Transform* RootCanvas(Transform* transform)
@@ -266,19 +216,18 @@ GameObject* CreateOverlay(const char* name, ImageAsset& asset, Transform* parent
   auto* rect  = image ? object->GetComponent<RectTransform>() : nullptr;
   if (!rect)
     return nullptr;
-  SetRect(rect, anchor_min, anchor_max, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
+  rect->Place(anchor_min, anchor_max, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
   ShowSprite(image, sprite, preserve_aspect);
   return object;
 }
 
 enum class Corner { kBottomLeft, kBottomRight };
 
-// A logo in a bottom corner, sized relative to a 1920-wide screen and scaled by loader_logo_scale. Does nothing
-// if `existing` is already set.
-void CreateLogo(const char* name, ImageAsset* asset, Transform* parent, Corner corner, GameObject*& existing)
+// A logo in a bottom corner, sized relative to a 1920-wide screen and scaled by loader_logo_scale.
+bool CreateLogo(const char* name, ImageAsset* asset, Transform* parent, Corner corner)
 {
-  if (existing || !asset || !parent)
-    return;
+  if (!asset || !parent)
+    return false;
 
   float width  = static_cast<float>(Screen::Get<"width", int32_t>());
   float height = static_cast<float>(Screen::Get<"height", int32_t>());
@@ -294,23 +243,24 @@ void CreateLogo(const char* name, ImageAsset* asset, Transform* parent, Corner c
   const float pad_y       = 185.0f * scale;
   const float left        = corner == Corner::kBottomLeft ? pad_x : width - pad_x - logo_width;
 
-  existing = CreateOverlay(name, *asset, parent, {left / width, pad_y / height},
-                           {(left + logo_width) / width, (pad_y + logo_height) / height}, true, false);
+  return CreateOverlay(name, *asset, parent, {left / width, pad_y / height},
+                       {(left + logo_width) / width, (pad_y + logo_height) / height}, true, false);
 }
 
 // The mod logo on the right, the community logo on the left.
-void CreateLogos(Transform* parent, GameObject*& logo, GameObject*& community_logo)
-{
-  CreateLogo("STFCModLogo", assets.Logo(), parent, Corner::kBottomRight, logo);
-  CreateLogo("STFCCCLogo", assets.CommunityLogo(), parent, Corner::kBottomLeft, community_logo);
-}
+struct Logos {
+  bool logo           = false;
+  bool community_logo = false;
+
+  // Creates whichever is still missing.
+  void Create(Transform* parent)
+  {
+    logo           = logo || CreateLogo("STFCModLogo", assets.Logo(), parent, Corner::kBottomRight);
+    community_logo = community_logo || CreateLogo("STFCCCLogo", assets.CommunityLogo(), parent, Corner::kBottomLeft);
+  }
+};
 
 // --- Login sequence ---
-
-struct Login {
-  GameObject* logo           = nullptr;
-  GameObject* community_logo = nullptr;
-} login;
 
 // The login screen's background image: the first child Image with a known background name, or else the first
 // Image found at all, searching four levels deep.
@@ -343,8 +293,6 @@ void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
   if (!Config::Get().graphics.loader_enabled)
     return;
 
-  login = {};
-  assets.Reset();
   auto* background = assets.Background();
   auto* canvas     = background ? _this->mainCanvas() : nullptr;
   auto* root       = canvas ? canvas->transform() : nullptr;
@@ -365,7 +313,7 @@ void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
     image->SetVerticesDirty();
   }
 #endif
-  CreateLogos(image->transform(), login.logo, login.community_logo);
+  Logos{}.Create(image->transform());
 }
 
 // --- Loading tips ---
@@ -434,16 +382,12 @@ void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, Load
 
 // --- Transition screen ---
 
-// State for the current TransitionViewController. Its Unity objects die with it, so a new controller or a reload
-// starts over.
+// What has been done to the current TransitionViewController. Its Unity objects are looked up again on each
+// attempt rather than kept, since nothing roots them between hooks. A new controller or a reload starts over.
 struct Transition {
-  bool        customized     = false;
-  Image*      background     = nullptr;
-  Transform*  background_box = nullptr;
-  GameObject* overlay        = nullptr;
-  GameObject* logo           = nullptr;
-  GameObject* community_logo = nullptr;
-  Behaviour*  animator       = nullptr;
+  bool  customized = false;
+  bool  overlay    = false;
+  Logos logos;
 } transition;
 
 // The transition background: _staticOverride, or the Image on BGContainer's first child (whose transform is
@@ -475,46 +419,41 @@ void ArrangeTransitionLayout(TransitionViewController* controller)
     if (!object)
       continue;
     const auto name = object->Name();
-    if (name == "LogoContainer")
-      SetRect(object->GetComponent<RectTransform>(), {1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {586.0f, 248.0f},
-              {-20.0f, -20.0f});
-    else if (name == "LoadingTipsContainer")
-      SetRect(object->GetComponent<RectTransform>(), {0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {1024.0f, 100.0f},
-              {0.0f, -320.0f});
+    auto*      rect = object->GetComponent<RectTransform>();
+    if (rect && name == "LogoContainer")
+      rect->Place({1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {586.0f, 248.0f}, {-20.0f, -20.0f});
+    else if (rect && name == "LoadingTipsContainer")
+      rect->Place({0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {1024.0f, 100.0f}, {0.0f, -320.0f});
   }
 }
 
 // Runs from Awake and again from AboutToShow until it succeeds.
 void CustomizeTransition(TransitionViewController* controller)
 {
-  if (!transition.background) {
-    transition.background = FindTransitionBackground(controller, transition.background_box);
-    if (!transition.background)
-      return;
-  }
-  auto* parent = transition.background_box ? transition.background_box : transition.background->transform();
+  Transform* box        = nullptr;
+  auto*      background = FindTransitionBackground(controller, box);
+  if (!background)
+    return;
+  auto* parent = box ? box : background->transform();
 
-  // The canvas animation would fade our overlay; it is switched back on for the hide animation.
-  if (!transition.animator) {
-    if (auto* animator = controller->animator()) {
-      animator->SetEnabled(false);
-      transition.animator = animator;
-    }
-  }
+  // The canvas animation would fade our overlay; AboutToHide switches it back on for the hide animation.
+  if (auto* animator = controller->animator())
+    animator->SetEnabled(false);
 
   if (!Config::Get().graphics.loader_transition_black) {
 #ifndef _USE_ORIGINAL_BG
     if (parent && !transition.overlay)
-      if (auto* background = assets.Background())
-        transition.overlay = CreateOverlay("STFCModBG", *background, parent, {0.0f, 0.0f}, {1.0f, 1.0f}, false, true);
+      if (auto* image = assets.Background())
+        transition.overlay =
+            CreateOverlay("STFCModBG", *image, parent, {0.0f, 0.0f}, {1.0f, 1.0f}, false, true) != nullptr;
     // Keep the game's background unless the replacement is fully attached, so a failure is visible but harmless.
     if (!transition.overlay) {
       spdlog::warn("[LS] custom transition background unavailable; preserving game background");
       return;
     }
-    HideImage(transition.background);
-    if (auto* box = transition.background_box) {
-      SetRect(box->As<RectTransform>(), {0.0f, 0.0f}, {1.0f, 1.0f}, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
+    HideImage(background);
+    if (box) {
+      box->As<RectTransform>()->Place({0.0f, 0.0f}, {1.0f, 1.0f}, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
       box->SetLocalEulerAngles({0, 0, 0});
       box->SetLocalScale({1, 1, 1});
     }
@@ -522,7 +461,7 @@ void CustomizeTransition(TransitionViewController* controller)
   }
 
   if (parent)
-    CreateLogos(parent, transition.logo, transition.community_logo);
+    transition.logos.Create(parent);
   if (!Config::Get().graphics.loader_transition_black)
     ArrangeTransitionLayout(controller);
   transition.customized = true;
@@ -533,9 +472,6 @@ void TransitionViewController_Awake_Hook(auto original, TransitionViewController
   original(_this);
   if (!Config::Get().graphics.loader_transition)
     return;
-  // A controller can outlive the LoginSequence generation that created the cached images; recreate them before
-  // touching its hierarchy.
-  assets.Reset();
   transition = {};
   CustomizeTransition(_this);
 }
@@ -549,8 +485,8 @@ void TransitionViewController_AboutToShow_Hook(auto original, TransitionViewCont
 
 void TransitionViewController_AboutToHide_Hook(auto original, TransitionViewController* _this)
 {
-  if (Config::Get().graphics.loader_transition && transition.animator)
-    transition.animator->SetEnabled(true);
+  if (auto* animator = _this->animator(); animator && Config::Get().graphics.loader_transition)
+    animator->SetEnabled(true);
   original(_this);
 }
 
@@ -566,7 +502,6 @@ void SlideShowViewController_ShowCurrentSlide_Hook(auto original, SlideShowViewC
 void MonoSingleton_PrepareAllForReload_Hook(auto original)
 {
   transition = {};
-  login      = {};
   tips.Reset();
   original();
 }

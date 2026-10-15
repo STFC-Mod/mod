@@ -250,11 +250,7 @@ public:
     bool loader_enabled    = true;
     bool loader_transition = true;
     // Transitions keep the game's black background and only get the logos.
-#ifdef _USE_ORIGINAL_BG
-    bool loader_transition_black = true;
-#else
     bool loader_transition_black = false;
-#endif
     // A PNG to use instead of the embedded loading image.
     std::string loader_image;
     float       loader_logo_scale      = 1.0f;

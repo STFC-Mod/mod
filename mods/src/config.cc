@@ -585,12 +585,17 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("graphics", "loader_enabled", g.loader_enabled);
   r.Read("graphics", "loader_transition", g.loader_transition);
   r.Read("graphics", "loader_transition_black", g.loader_transition_black);
+  // Without transition customization (or in a build that keeps the original background) the game's own black
+  // background stays. The vars file records what is actually used.
 #ifdef _USE_ORIGINAL_BG
-  g.loader_transition_black = true;
+  constexpr bool kOriginalBackground = true;
+#else
+  constexpr bool kOriginalBackground = false;
 #endif
-  // Without transition customization the game's own black background stays.
-  if (!g.loader_transition)
+  if (kOriginalBackground || !g.loader_transition) {
     g.loader_transition_black = true;
+    r.Record("graphics", "loader_transition_black", true);
+  }
   r.Read("graphics", "loader_image", g.loader_image);
   r.Read("graphics", "loader_logo_scale", g.loader_logo_scale);
   r.Read("graphics", "loader_tip_enabled", g.loader_tip_enabled);
