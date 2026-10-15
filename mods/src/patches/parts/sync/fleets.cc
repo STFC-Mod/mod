@@ -9,8 +9,6 @@
 
 #include <prime/fleet.h>
 
-#include <spdlog/fmt/fmt.h>
-
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -193,7 +191,7 @@ namespace
         records.push_back(Record(slot, fleet, fleet->CurrentState(), fleet->PreviousState()));
 
     if (!records.empty()) {
-      logging::debug("PROCESS", "fleets", fmt::format("Fleet snapshot ({}): {} fleets", reason, records.size()));
+      logging::debug("PROCESS", "fleets", "Fleet snapshot ({}): {} fleets", reason, records.size());
       Queue(SyncConfig::Type::Fleets, records, true);
     }
   }

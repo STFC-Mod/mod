@@ -3,10 +3,13 @@
 // Internal to data sync. Game data is diffed against what was last sent on one processing thread, queued, and
 // uploaded per target on worker threads. Battle logs are fetched from the game server on their own thread,
 // because each needs extra requests to resolve player and alliance names.
+//
+// The threads are detached and run until the process ends, so everything they share is allocated once and never
+// destroyed: static destructors at exit must not free state another thread is still using.
 
 #include "config.h"
+#include "prime/server.h"
 
-#include <google/protobuf/repeated_field.h>
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
@@ -15,18 +18,12 @@
 #include <deque>
 #include <mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
-NLOHMANN_JSON_NAMESPACE_BEGIN
-template <typename T> struct adl_serializer<google::protobuf::RepeatedField<T>> {
-  static void to_json(json& j, const google::protobuf::RepeatedField<T>& proto)
-  {
-    j = json::array();
-    for (const auto& v : proto)
-      j.push_back(v);
-  }
-};
+struct UserProfile;
 
+NLOHMANN_JSON_NAMESPACE_BEGIN
 template <> struct adl_serializer<SyncConfig::Type> {
   static void to_json(json& j, const SyncConfig::Type t)
   {
@@ -40,14 +37,30 @@ NLOHMANN_JSON_NAMESPACE_END
 
 namespace data_sync
 {
-// Sync messages only show up with [sync] logging enabled; debug and trace also need [sync] debug.
+// Sync messages only show up with [sync] logging enabled; debug and trace also need [sync] debug. The message is
+// only formatted when it will be logged.
 namespace logging
 {
-  void error(std::string_view type, std::string_view target, std::string_view text);
-  void warn(std::string_view type, std::string_view target, std::string_view text);
-  void info(std::string_view type, std::string_view target, std::string_view text);
-  void debug(std::string_view type, std::string_view target, std::string_view text);
-  void trace(std::string_view type, std::string_view target, std::string_view text);
+  template <typename... Args>
+  void error(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
+  {
+    if (Config::Get().sync.logging)
+      spdlog::error("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
+  }
+
+  template <typename... Args>
+  void debug(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
+  {
+    if (Config::Get().sync.logging && Config::Get().sync.debug)
+      spdlog::debug("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
+  }
+
+  template <typename... Args>
+  void trace(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
+  {
+    if (Config::Get().sync.logging && Config::Get().sync.debug)
+      spdlog::trace("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
+  }
 } // namespace logging
 
 // A FIFO shared between threads that drops its oldest entry when full. A slow or unreachable target must not
@@ -86,12 +99,6 @@ public:
     return item;
   }
 
-  size_t Size()
-  {
-    std::scoped_lock lock(mutex_);
-    return items_.size();
-  }
-
 private:
   const char*             name_;
   size_t                  capacity_;
@@ -106,14 +113,24 @@ private:
 // Queues changed records of one category for every target that wants it. `first_sync` marks the first full
 // upload of a category in this session (sent as X-PRIME-SYNC: 2).
 void Queue(SyncConfig::Type type, const nlohmann::json& records, bool first_sync = false);
-void StartUploads();
 
-// The game session, captured from the game's own server setup.
-void SetGameServer(std::string url, std::string session_id);
-void SetGameVersion(std::string version);
-void SetInstanceId(int32_t instance_id);
-// POSTs to the game server as the game client would, for data the client did not request itself. Empty on error.
-std::string RequestGameData(const std::string& path, const std::string& body);
+// records.cc. Processing thread only.
+
+// Turns one server response into records. Its bytes are an entity group's payload.
+using Processor = void (*)(const std::string& bytes);
+// The processor for an entity group kind, or null when the mod does not sync it or no target wants it.
+Processor ProcessorFor(EntityGroup::Type kind);
+void      ProcessRealtimeSlot(const std::string& bytes);
+// Platform responses only, so not routed by EntityGroup::Type.
+void ProcessStoreOffers(const std::string& bytes);
+// The local player's own record from a UserProfiles response. `self` and `level` are read on the game thread when
+// the response arrives, since only the game thread may call into the game.
+void ProcessOwnProfile(const std::string& bytes, const std::string& self, int32_t level);
+// A new login (or a switch of account or server): forgets what was sent, so the new account gets its first full
+// upload and nothing of the old one is reported gone.
+void StartNewSession(const std::string& bytes);
+// The game's record of the local player, or nullptr. Calls into the game.
+UserProfile* LocalUserProfile();
 
 // fleets.cc. Client fleet records are read on the game thread, from fleet_watch and the frame tick.
 
@@ -127,9 +144,13 @@ void RereadFleet(uint64_t fleet_id);
 // battlelogs.cc
 
 void StartBattleLogs();
-// Queues the battles that were not sent before.
+// Queues the battles that were not sent before. Processing thread only.
 void QueueNewBattles(const std::vector<uint64_t>& battle_ids);
 // Fills the name caches from profile responses the game requested itself.
 void CachePlayerNames(const std::string& bytes);
 void CacheAllianceNames(const std::string& bytes);
+// The game session, captured from the game's own server setup, for the battle-log requests.
+void SetGameServer(std::string url, std::string session_id);
+void SetGameVersion(std::string version);
+void SetInstanceId(int32_t instance_id);
 } // namespace data_sync
