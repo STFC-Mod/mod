@@ -5,7 +5,6 @@
 #include "patches/parts/sync/sync.h"
 
 #include "patches/fleet_watch.h"
-#include "patches/patches.h"
 
 #include <prime/fleet.h>
 
@@ -35,7 +34,7 @@ namespace
   std::mutex                                                          reread_mutex;
   std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> reread_at;
 
-  // Set once fleet_watch accepted the subscription, which also installs the frame tick.
+  // Set once fleet_watch accepted the subscription. Sync's frame work then drives fleet_watch.
   bool fleet_sync_installed = false;
 
   const char* StateName(FleetState state)
@@ -162,7 +161,7 @@ namespace
     // those never come out negative in the record.
     const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id())) : 0;
 
-    json out = {{"type", SyncConfig::Type::Fleets},
+    json out = {{"type", SyncConfig::Type::kFleets},
                 {"fid", fleet->Id()},
                 {"slot", slot},
                 {"hull_id", hull_id},
@@ -192,7 +191,7 @@ namespace
 
     if (!records.empty()) {
       logging::debug("PROCESS", "fleets", "Fleet snapshot ({}): {} fleets", reason, records.size());
-      Queue(SyncConfig::Type::Fleets, records, true);
+      Queue(SyncConfig::Type::kFleets, records, true);
     }
   }
 
@@ -203,7 +202,7 @@ namespace
       return;
     auto records = json::array();
     records.push_back(Record(transition.after.slot, transition.fleet, transition.after.state, transition.before.state));
-    Queue(SyncConfig::Type::Fleets, records);
+    Queue(SyncConfig::Type::kFleets, records);
   }
 
   void OnBaseline()
@@ -245,7 +244,7 @@ namespace
         records.push_back(std::move(record));
     }
     if (!records.empty())
-      Queue(SyncConfig::Type::Fleets, records);
+      Queue(SyncConfig::Type::kFleets, records);
   }
 } // namespace
 
@@ -269,14 +268,14 @@ void RereadFleet(uint64_t fleet_id)
   std::scoped_lock lock(reread_mutex);
   reread_at.try_emplace(fleet_id, std::chrono::steady_clock::now() + std::chrono::seconds(1));
 }
-} // namespace data_sync
 
-void FleetSyncUpdate()
+void UpdateFleetSync()
 {
-  using namespace data_sync;
   if (!fleet_sync_installed)
     return;
+  fleet_watch::Tick();
   RereadDue();
   if (snapshot_requested.load(std::memory_order_relaxed) && snapshot_requested.exchange(false))
     QueueSnapshot("first sync");
 }
+} // namespace data_sync

@@ -1,15 +1,15 @@
 #pragma once
 
-// ASCII string helpers for config parsing and UTF-16 conversion of managed strings.
+// Text helpers that never touch the game, so the tests can use them: ASCII case and trimming for settings, server
+// timestamps, and ship name matching.
 
-#include <il2cpp/il2cpp.h>
-#include <simdutf.h>
-
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -70,27 +70,6 @@ constexpr std::vector<std::string> StrSplit(std::string_view input, char delimit
   }
 }
 
-// Compares a managed string to an ASCII literal without converting it; for checks on hot paths.
-inline bool StringIs(const Il2CppString* str, std::string_view ascii)
-{
-  if (!str || static_cast<size_t>(str->length) != ascii.size())
-    return false;
-  for (size_t i = 0; i < ascii.size(); ++i)
-    if (str->chars[i] != static_cast<Il2CppChar>(ascii[i]))
-      return false;
-  return true;
-}
-
-inline std::string to_string(const Il2CppString* str)
-{
-  if (!str)
-    return {};
-  const auto* chars = reinterpret_cast<const char16_t*>(str->chars);
-  std::string result(simdutf::utf8_length_from_utf16(chars, str->length), '\0');
-  result.resize(simdutf::convert_utf16_to_utf8(chars, str->length, result.data()));
-  return result;
-}
-
 // Seconds since the Unix epoch for a "YYYY-MM-DDTHH:MM:SS" server timestamp, which is UTC. A fraction or
 // zone suffix after the seconds is ignored.
 inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
@@ -120,4 +99,46 @@ inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
     return std::nullopt;
   const auto time = sys_days{date} + hours{hour} + minutes{minute} + seconds{second};
   return time.time_since_epoch() / seconds{1};
+}
+
+// Ship names for pinned_ships and the instant_warp_* filters are compared as words, so a setting can name a ship
+// by its last words: "Athena" matches "Academy Athena".
+
+// Upper case, '_' and '-' as spaces, '.' and '\'' dropped, single spaces, no leading "USS":
+// "U.S.S. Enterprise-D" -> "ENTERPRISE D".
+inline std::string NormalizeShipName(std::string_view name)
+{
+  std::string normalized;
+  normalized.reserve(name.size());
+  for (char c : AsciiStrToUpper(name)) {
+    if (c == '.' || c == '\'')
+      continue;
+    if (c == '_' || c == '-')
+      c = ' ';
+    if (c == ' ' && (normalized.empty() || normalized.back() == ' '))
+      continue;
+    normalized.push_back(c);
+  }
+  if (!normalized.empty() && normalized.back() == ' ')
+    normalized.pop_back();
+  return std::string(StripPrefix(normalized, "USS "));
+}
+
+inline std::vector<std::string> ShipNameWords(std::string_view name)
+{
+  std::vector<std::string> words;
+  const auto               normalized = NormalizeShipName(name);
+  for (size_t start = 0; start < normalized.size();) {
+    const auto end = std::min(normalized.find(' ', start), normalized.size());
+    words.emplace_back(normalized.substr(start, end - start));
+    start = end + 1;
+  }
+  return words;
+}
+
+// Whether `pattern` is the last words of `name`; both from ShipNameWords.
+inline bool ShipNameMatches(std::span<const std::string> name, std::span<const std::string> pattern)
+{
+  return !pattern.empty() && name.size() >= pattern.size()
+         && std::ranges::equal(name.subspan(name.size() - pattern.size()), pattern);
 }

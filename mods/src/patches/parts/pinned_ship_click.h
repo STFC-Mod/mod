@@ -3,4 +3,3 @@
 #include "prime/fleet.h"
 
 void PinShipClickOnTileClicked(FleetPlayerData* ship);
-void InstallPinnedShipClickHooks();

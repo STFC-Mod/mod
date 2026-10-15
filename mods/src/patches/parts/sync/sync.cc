@@ -8,11 +8,10 @@
 #include "str_utils.h"
 
 #include "prime/Hub.h"
-#include "prime/UserProfile.h"
 #include "prime/server.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-#include <spud/detour.h>
 
 #include <functional>
 #include <thread>
@@ -55,7 +54,7 @@ namespace
     auto* group = entity_group ? entity_group->Group() : nullptr;
     if (!group || !group->bytes() || group->Length() <= 0)
       return;
-    const auto type  = entity_group->Type_();
+    const auto type  = entity_group->Type();
     const auto bytes = [group] {
       return std::string(reinterpret_cast<const char*>(group->bytes()->data()), static_cast<size_t>(group->Length()));
     };
@@ -64,10 +63,10 @@ namespace
 
     // The own profile needs the local player's id and level, which only the game thread can read. Skipped if the
     // local profile is not ready; a later response retries.
-    if (type == EntityGroup::Type::UserProfiles && Config::Get().sync.options.profile) {
+    if (type == EntityGroup::Kind::UserProfiles && Config::Get().sync.options.profile) {
       auto* local   = LocalUserProfile();
       auto* user_id = local ? local->UserId() : nullptr;
-      if (auto self = user_id ? to_string(user_id) : std::string{}; !self.empty())
+      if (auto self = user_id ? il2cpp::ToUtf8(user_id) : std::string{}; !self.empty())
         pending.Push({[self = std::move(self), level = local->Level()](const std::string& bytes) {
                         ProcessOwnProfile(bytes, self, level);
                       },
@@ -81,7 +80,7 @@ namespace
   {
     if (auto* groups = response->EntityGroups())
       for (auto* entity_group : *groups) {
-        auto* group = entity_group && entity_group->Type_() == PlatformEntityGroup::StoreOffers
+        auto* group = entity_group && entity_group->Type() == PlatformEntityGroup::Kind::StoreOffers
                           ? entity_group->Group()
                           : nullptr;
         if (group && group->bytes() && group->Length() > 0)
@@ -90,38 +89,22 @@ namespace
       }
   }
 
-  using GameServerModelRegistry =
-      il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry">;
-  using GameServer = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServer">;
-  using SlotAssignRtcParser =
-      il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotAssignRtcParser">;
-  using SlotClearRtcParser =
-      il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotClearRtcParser">;
-
-  // IL2CPP value type: keep this parameter by value so following arguments retain their platform ABI positions.
-  struct CentrifugoInfo {
-    Il2CppString* Channel;
-    int32_t       Offset;
-  };
-  static_assert(sizeof(CentrifugoInfo) == 16);
-
-  void* RtcParser_ParseFinalPayload(auto original, void* _this, CentrifugoInfo centrifugoInfo,
-                                    RealtimeDataPayload* realtimeDataPayload, void* finalPayload)
+  void* RtcParser_ParseFinalPayload_Hook(auto original, void* _this, CentrifugoInfo centrifugoInfo,
+                                         RealtimeDataPayload* realtimeDataPayload, void* finalPayload)
   {
     if (Config::Get().sync.options.slots && realtimeDataPayload && realtimeDataPayload->Target()
         && realtimeDataPayload->DataType() && realtimeDataPayload->Data()) {
       // DataType arrives as a number in a string; JSON is "0". This runs inside the game's parser, so nothing here
       // may throw.
-      static_assert(DataType::JSON == 0);
       const auto* type = realtimeDataPayload->DataType();
       if (type->length == 1 && type->chars[0] == u'0')
-        pending.Push({ProcessRealtimeSlot, to_string(realtimeDataPayload->Data())});
+        pending.Push({ProcessRealtimeSlot, il2cpp::ToUtf8(realtimeDataPayload->Data())});
     }
     return original(_this, centrifugoInfo, realtimeDataPayload, finalPayload);
   }
 
-  void GameServerModelRegistry_ProcessResultInternal(auto original, void* _this, void* parsing_context,
-                                                     ServiceResponse* service_response, MethodInfo* method)
+  void GameServerModelRegistry_ProcessResultInternal_Hook(auto original, void* _this, void* parsing_context,
+                                                          ServiceResponse* service_response, MethodInfo* method)
   {
     // The hooked method is shared generic code; PlatformModelRegistry passes its own response type.
     if (auto* groups =
@@ -135,59 +118,56 @@ namespace
     return original(_this, parsing_context, service_response, method);
   }
 
-  void PrimeApp_InitPrimeServer(auto original, void* _this, Il2CppString* gameServerUrl, Il2CppString* gatewayServerUrl,
-                                Il2CppString* sessionId, Il2CppString* serverRegion)
+  void PrimeApp_InitPrimeServer_Hook(auto original, void* _this, Il2CppString* gameServerUrl,
+                                     Il2CppString* gatewayServerUrl, Il2CppString* sessionId,
+                                     Il2CppString* serverRegion)
   {
     original(_this, gameServerUrl, gatewayServerUrl, sessionId, serverRegion);
-    SetGameServer(to_string(gameServerUrl), to_string(sessionId));
+    SetGameServer(il2cpp::ToUtf8(gameServerUrl), il2cpp::ToUtf8(sessionId));
     // A new login (or a switch of account or server) must not be diffed against the last one's data: the new
     // account gets its first full upload and haven data again, and nothing of the old one is reported gone.
     pending.Push({StartNewSession, {}});
   }
 
-  void GameServer_Initialise(auto original, void* _this, Il2CppString* sessionId, Il2CppString* gameVersion,
-                             bool encryptRequests, Il2CppString* serverRegion)
+  void GameServer_Initialise_Hook(auto original, void* _this, Il2CppString* sessionId, Il2CppString* gameVersion,
+                                  bool encryptRequests, Il2CppString* serverRegion)
   {
     original(_this, sessionId, gameVersion, encryptRequests, serverRegion);
-    SetGameVersion(to_string(gameVersion));
+    SetGameVersion(il2cpp::ToUtf8(gameVersion));
   }
 
-  void GameServer_SetInstanceIdHeader(auto original, void* _this, int32_t instanceId)
+  void GameServer_SetInstanceIdHeader_Hook(auto original, void* _this, int32_t instanceId)
   {
     original(_this, instanceId);
     SetInstanceId(instanceId);
   }
+
+  void Install()
+  {
+    IL2CPP_HOOK(GameServerModelRegistry::Method("ProcessResultInternal"),
+                GameServerModelRegistry_ProcessResultInternal_Hook);
+    IL2CPP_HOOK(PrimeApp::Class::Method("InitPrimeServer"), PrimeApp_InitPrimeServer_Hook);
+
+    // This hook only captures the game version for the X-PRIME-VERSION header, which has a fallback. It can be
+    // turned off for users whose other mods detour the same method: a native and a managed detour on one prologue
+    // corrupt each other and crash at login.
+    if (!Config::Get().patches.game_version)
+      spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
+    else
+      IL2CPP_HOOK(GameServer::Method("Initialise"), GameServer_Initialise_Hook);
+
+    IL2CPP_HOOK(GameServer::Method("SetInstanceIdHeader"), GameServer_SetInstanceIdHeader_Hook);
+
+    // Each parser overrides ParseFinalPayload, so these are two distinct native methods.
+    IL2CPP_HOOK(SlotAssignRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
+    IL2CPP_HOOK(SlotClearRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
+
+    InstallFleetSync();
+
+    StartBattleLogs();
+    std::thread(RunJobs).detach();
+  }
 } // namespace
 } // namespace data_sync
 
-void InstallSyncPatches()
-{
-  using namespace data_sync;
-
-  if (auto m = GameServerModelRegistry::Method("ProcessResultInternal"))
-    SPUD_STATIC_DETOUR(m.Pointer(), GameServerModelRegistry_ProcessResultInternal);
-  if (auto m = PrimeApp::Class::Method("InitPrimeServer"))
-    SPUD_STATIC_DETOUR(m.Pointer(), PrimeApp_InitPrimeServer);
-
-  // This hook only captures the game version for the X-PRIME-VERSION header, which has a fallback. It can be
-  // turned off for users whose other mods detour the same method: a native and a managed detour on one prologue
-  // corrupt each other and crash at login.
-  if (!Config::Get().patches.game_version)
-    spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
-  else if (auto m = GameServer::Method("Initialise"))
-    SPUD_STATIC_DETOUR(m.Pointer(), GameServer_Initialise);
-
-  if (auto m = GameServer::Method("SetInstanceIdHeader"))
-    SPUD_STATIC_DETOUR(m.Pointer(), GameServer_SetInstanceIdHeader);
-
-  // Each parser overrides ParseFinalPayload, so these are two distinct native methods.
-  if (auto m = SlotAssignRtcParser::Method("ParseFinalPayload"))
-    SPUD_STATIC_DETOUR(m.Pointer(), RtcParser_ParseFinalPayload);
-  if (auto m = SlotClearRtcParser::Method("ParseFinalPayload"))
-    SPUD_STATIC_DETOUR(m.Pointer(), RtcParser_ParseFinalPayload);
-
-  InstallFleetSync();
-
-  StartBattleLogs();
-  std::thread(RunJobs).detach();
-}
+const Feature kSync{"Sync", &Config::Patches::syncpatches, data_sync::Install, data_sync::UpdateFleetSync};

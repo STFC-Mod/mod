@@ -1,7 +1,5 @@
 #include "patches/fleet_watch.h"
 
-#include "patches/patches.h"
-
 #include <prime/fleet.h>
 
 #include <spdlog/spdlog.h>
@@ -222,9 +220,6 @@ bool Subscribe(Subscription subscription)
   }
 
   if (!s_observer_installed) {
-    if (!InstallScreenManagerUpdateHook()) {
-      return false;
-    }
     s_observer_installed = true;
     reset_observation();
   }

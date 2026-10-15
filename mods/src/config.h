@@ -16,25 +16,25 @@
 // Which categories of game data are uploaded, globally ([sync]) or for one target ([sync.targets.<name>]).
 struct SyncConfig {
   enum class Type {
-    AwayAssignments,
-    Battles,
-    Buffs,
-    Buildings,
-    EmeraldChain,
-    Fleets,
-    Haven,
-    Inventory,
-    Jobs,
-    Missions,
-    Officer,
-    Profile,
-    Research,
-    Resources,
-    Ships,
-    Slots,
-    StoreOffers,
-    Tech,
-    Traits
+    kAwayAssignments,
+    kBattles,
+    kBuffs,
+    kBuildings,
+    kEmeraldChain,
+    kFleets,
+    kHaven,
+    kInventory,
+    kJobs,
+    kMissions,
+    kOfficer,
+    kProfile,
+    kResearch,
+    kResources,
+    kShips,
+    kSlots,
+    kStoreOffers,
+    kTech,
+    kTraits
   };
 
   struct Option {
@@ -69,26 +69,26 @@ struct SyncConfig {
 };
 
 constexpr std::array SyncOptions{
-    SyncConfig::Option{SyncConfig::Type::AwayAssignments, "away_assignment", "away_assignments",
+    SyncConfig::Option{SyncConfig::Type::kAwayAssignments, "away_assignment", "away_assignments",
                        &SyncConfig::away_assignments},
-    SyncConfig::Option{SyncConfig::Type::Battles, "battlelog", "battlelogs", &SyncConfig::battlelogs},
-    SyncConfig::Option{SyncConfig::Type::Buffs, "buff", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::Buildings, "module", "buildings", &SyncConfig::buildings},
-    SyncConfig::Option{SyncConfig::Type::EmeraldChain, "emerald_chain", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::Fleets, "fleet", "fleets", &SyncConfig::fleets},
-    SyncConfig::Option{SyncConfig::Type::Haven, "haven", "haven", &SyncConfig::haven},
-    SyncConfig::Option{SyncConfig::Type::Inventory, "inventory", "inventory", &SyncConfig::inventory},
-    SyncConfig::Option{SyncConfig::Type::Jobs, "job", "jobs", &SyncConfig::jobs},
-    SyncConfig::Option{SyncConfig::Type::Missions, "mission", "missions", &SyncConfig::missions},
-    SyncConfig::Option{SyncConfig::Type::Officer, "officer", "officers", &SyncConfig::officers},
-    SyncConfig::Option{SyncConfig::Type::Profile, "profile", "profile", &SyncConfig::profile},
-    SyncConfig::Option{SyncConfig::Type::Research, "research", "research", &SyncConfig::research},
-    SyncConfig::Option{SyncConfig::Type::Resources, "resource", "resources", &SyncConfig::resources},
-    SyncConfig::Option{SyncConfig::Type::Ships, "ship", "ships", &SyncConfig::ships},
-    SyncConfig::Option{SyncConfig::Type::Slots, "slot", "slots", &SyncConfig::slots},
-    SyncConfig::Option{SyncConfig::Type::StoreOffers, "store_offer", "store_offers", &SyncConfig::store_offers},
-    SyncConfig::Option{SyncConfig::Type::Tech, "ft", "tech", &SyncConfig::tech},
-    SyncConfig::Option{SyncConfig::Type::Traits, "trait", "traits", &SyncConfig::traits},
+    SyncConfig::Option{SyncConfig::Type::kBattles, "battlelog", "battlelogs", &SyncConfig::battlelogs},
+    SyncConfig::Option{SyncConfig::Type::kBuffs, "buff", "buffs", &SyncConfig::buffs},
+    SyncConfig::Option{SyncConfig::Type::kBuildings, "module", "buildings", &SyncConfig::buildings},
+    SyncConfig::Option{SyncConfig::Type::kEmeraldChain, "emerald_chain", "buffs", &SyncConfig::buffs},
+    SyncConfig::Option{SyncConfig::Type::kFleets, "fleet", "fleets", &SyncConfig::fleets},
+    SyncConfig::Option{SyncConfig::Type::kHaven, "haven", "haven", &SyncConfig::haven},
+    SyncConfig::Option{SyncConfig::Type::kInventory, "inventory", "inventory", &SyncConfig::inventory},
+    SyncConfig::Option{SyncConfig::Type::kJobs, "job", "jobs", &SyncConfig::jobs},
+    SyncConfig::Option{SyncConfig::Type::kMissions, "mission", "missions", &SyncConfig::missions},
+    SyncConfig::Option{SyncConfig::Type::kOfficer, "officer", "officers", &SyncConfig::officers},
+    SyncConfig::Option{SyncConfig::Type::kProfile, "profile", "profile", &SyncConfig::profile},
+    SyncConfig::Option{SyncConfig::Type::kResearch, "research", "research", &SyncConfig::research},
+    SyncConfig::Option{SyncConfig::Type::kResources, "resource", "resources", &SyncConfig::resources},
+    SyncConfig::Option{SyncConfig::Type::kShips, "ship", "ships", &SyncConfig::ships},
+    SyncConfig::Option{SyncConfig::Type::kSlots, "slot", "slots", &SyncConfig::slots},
+    SyncConfig::Option{SyncConfig::Type::kStoreOffers, "store_offer", "store_offers", &SyncConfig::store_offers},
+    SyncConfig::Option{SyncConfig::Type::kTech, "ft", "tech", &SyncConfig::tech},
+    SyncConfig::Option{SyncConfig::Type::kTraits, "trait", "traits", &SyncConfig::traits},
 };
 
 constexpr std::string to_string(const SyncConfig::Type type)
@@ -111,26 +111,26 @@ struct SyncTargetConfig : SyncConfig {
 };
 
 enum class MissionHudVisibility {
-  Auto,
-  Always,
-  Never,
+  kAuto,
+  kAlways,
+  kNever,
 };
 
 enum class InstantWarpConfirmation {
-  None,
-  Warp,
-  Jump,
+  kNone,
+  kWarp,
+  kJump,
 };
 
 enum class FleetLabelDetail {
-  Native,
-  Expanded,
-  Compact,
-  Threshold,
+  kNative,
+  kExpanded,
+  kCompact,
+  kThreshold,
 };
 
 struct FleetLabelProfile {
-  FleetLabelDetail detail         = FleetLabelDetail::Native;
+  FleetLabelDetail detail         = FleetLabelDetail::kNative;
   float            zoom_threshold = 0.5f;
 };
 
@@ -159,18 +159,18 @@ public:
 
   // Hook groups. Users switch these off when another mod (such as a BepInEx plugin) hooks the same methods.
   struct Patches {
-    bool pinnedshipclicktoggle = true;
-    bool thinqueueprotectionhooks = true;
-    bool queueaddressguardhooks = true;
-    bool actionqueuerecoveryhooks = true;
-    bool revealconfirmhooks = true;
-    bool chattitledisplayhooks = true;
-    bool interiorzoomhooks = true;
+    bool pinnedshipclicktoggle      = true;
+    bool thinqueueprotectionhooks   = true;
+    bool queueaddressguardhooks     = true;
+    bool actionqueuerecoveryhooks   = true;
+    bool revealconfirmhooks         = true;
+    bool chattitledisplayhooks      = true;
+    bool interiorzoomhooks          = true;
     bool uiscalehooks               = true;
     bool zoomhooks                  = true;
-    bool havenzoomhooks = true;
-    bool havenhistoryhooks = true;
-    bool alliancegamesstorehooks = true;
+    bool havenzoomhooks             = true;
+    bool havenhistoryhooks          = true;
+    bool alliancegamesstorehooks    = true;
     bool bufffixhooks               = true;
     bool toastbannerhooks           = true;
     bool panhooks                   = true;
@@ -205,11 +205,11 @@ public:
 
   struct Control {
     bool primary_requires_visible_target = false;
-    bool kirshara_fixes = true;
-    bool queue_enabled       = true;
-    bool hotkeys_enabled     = true;
-    bool hotkeys_extended    = true;
-    bool use_scopely_hotkeys = false;
+    bool kirshara_fixes                  = true;
+    bool queue_enabled                   = true;
+    bool hotkeys_enabled                 = true;
+    bool hotkeys_extended                = true;
+    bool use_scopely_hotkeys             = false;
     // Milliseconds within which pressing a ship's number again flies the camera to it.
     int  select_timer        = 500;
     bool enable_experimental = false;
@@ -217,14 +217,14 @@ public:
 
   struct Graphics {
     float interior_zoom_scale = 2.0f;
-    float ui_scale        = 0.6f;
-    float ui_scale_step   = 0.05f;
-    float ui_scale_ship   = 1.0f;
-    float ui_scale_viewer = 1.2f;
+    float ui_scale            = 0.6f;
+    float ui_scale_step       = 0.05f;
+    float ui_scale_ship       = 1.0f;
+    float ui_scale_viewer     = 1.2f;
     // The farthest system zoom; presets and zoom shortcuts are in the same unit.
-    float             zoom     = 5000.0f;
-    float haven_zoom = 4000.0f;
-    float             fr_scale = 2.0f;
+    float             zoom       = 5000.0f;
+    float             haven_zoom = 4000.0f;
+    float             fr_scale   = 2.0f;
     FleetLabelProfile zoom_label_player;
     FleetLabelProfile zoom_label_non_player;
     bool              free_resize         = true;
@@ -263,24 +263,24 @@ public:
   } buffs;
 
   struct Audio {
-    bool                     disable_all_events = false;
-    NotificationSound        alert_victory = NotificationSound::None;
-    NotificationSound        alert_defeat = NotificationSound::None;
-    NotificationSound        alert_armada_created = NotificationSound::None;
-    NotificationSound        alert_armada_battle_won = NotificationSound::None;
-    NotificationSound        alert_armada_battle_lost = NotificationSound::None;
+    bool              disable_all_events       = false;
+    NotificationSound alert_victory            = NotificationSound::None;
+    NotificationSound alert_defeat             = NotificationSound::None;
+    NotificationSound alert_armada_created     = NotificationSound::None;
+    NotificationSound alert_armada_battle_won  = NotificationSound::None;
+    NotificationSound alert_armada_battle_lost = NotificationSound::None;
 
     bool                     trace_events = false;
     std::vector<std::string> disabled_events;
   } audio;
 
   struct Ui {
-    bool dock_syncmanagement = true;
+    bool dock_syncmanagement         = true;
     bool auto_confirm_reveal_ability = false;
-    bool show_player_title = true;
-    bool only_show_first_popup = false;
-    bool reverse_haven_history = true;
-    bool disable_escape_exit = true;
+    bool show_player_title           = true;
+    bool only_show_first_popup       = false;
+    bool reverse_haven_history       = true;
+    bool disable_escape_exit         = true;
     // Maximum gap in milliseconds between two Escape presses that opens the exit prompt; 0 never opens it.
     int  disable_escape_exit_timer = 0;
     bool disable_preview_locate    = false;
@@ -300,7 +300,7 @@ public:
     std::vector<std::string> daily_bulk_claim_factions{"federation", "klingon", "romulan"};
     bool                     daily_bulk_claim_toggle_default_on = false;
 
-    InstantWarpConfirmation               auto_confirm_instant_warp = InstantWarpConfirmation::None;
+    InstantWarpConfirmation               auto_confirm_instant_warp = InstantWarpConfirmation::kNone;
     ShipFilter                            instant_warp_auto_jump;
     ShipFilter                            instant_warp_auto_warp;
     ShipFilter                            instant_warp_always_ask;

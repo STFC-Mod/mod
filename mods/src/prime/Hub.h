@@ -1,8 +1,12 @@
 #pragma once
 
+// The game as an application: its section (screen) state, the Hub of services, the app itself and its config, and
+// the services the mod touches that belong to no screen (tutorial gates, audio, the Windows window procedure).
+
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
+#include <optional>
 
 enum class SectionID : int32_t {
   ArtifactHall_Inventory                   = -2058246328,
@@ -187,32 +191,91 @@ struct PrimeApp : il2cpp::Object {
   { Call<"Reload">(false, NullableCustomReloadArgs{}, false); }
 };
 
+struct AppConfig : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "AppConfig">;
+
+  void SetPlatformSettingsUrl(Il2CppString* value)
+  { Set<"PlatformSettingsUrl">(value); }
+  void SetAssetUrlOverride(Il2CppString* value)
+  { Set<"AssetUrlOverride">(value); }
+};
+
+// Loads the app config at startup.
+struct Model : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Model">;
+
+  AppConfig* appConfig()
+  { return Field<"_appConfig", AppConfig*>(); }
+};
+
+// Research progress. Its members resolve on the runtime class.
+struct ResearchManager : il2cpp::Object {
+  // Whether a visible research needs the resource. Empty when that could not be determined.
+  std::optional<bool> IsResourceRequiredByVisibleResearches(int64_t resource_id)
+  {
+    // Digit.PrimeServer.Models.ResearchTreeType; 0 is the main tree.
+    enum class ResearchTreeType : int32_t {};
+    return TryCall<"IsResourceRequiredByVisibleResearches", bool(int64_t, ResearchTreeType)>(resource_id,
+                                                                                             ResearchTreeType{});
+  }
+};
+
+struct TutorialManager : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager">;
+
+  bool IsSceneInputAllowed()
+  { return Call<"IsSceneInputAllowed", bool>(); }
+};
+
 // Digit.Client.Core.Hub is a static class.
 struct Hub {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Hub">;
 
-  static SectionManager* get_SectionManager()
+  static SectionManager* Sections()
   { return Class::Get<"SectionManager", SectionManager*>(); }
-  static PrimeApp* get_App()
+  static PrimeApp* App()
   { return Class::Get<"App", PrimeApp*>(); }
+  static TutorialManager* Tutorial()
+  { return Class::Get<"TutorialManager", TutorialManager*>(); }
+  static ResearchManager* Research()
+  { return Class::Get<"ResearchManager", ResearchManager*>(); }
 
   static SectionID CurrentSection()
   {
-    auto* manager = get_SectionManager();
+    auto* manager = Sections();
     return manager ? manager->CurrentSection() : SectionID::AppInit;
+  }
+
+  static void GotoSection(SectionID section, void* data = nullptr)
+  {
+    if (auto* manager = Sections())
+      manager->TriggerSectionChange(section, data, false, false, true);
   }
 
   static bool IsInChat()
   {
-    auto current_section = CurrentSection();
-    return current_section == SectionID::Chat_Private_Message || current_section == SectionID::Chat_Alliance
-           || current_section == SectionID::Chat_Main || current_section == SectionID::Chat_Private_List;
+    const auto section = CurrentSection();
+    return section == SectionID::Chat_Private_Message || section == SectionID::Chat_Alliance
+           || section == SectionID::Chat_Main || section == SectionID::Chat_Private_List;
   }
 
   static bool IsInSystemOrGalaxyOrStarbase()
   {
-    auto current_section = CurrentSection();
-    return current_section == SectionID::Navigation_Galaxy || current_section == SectionID::Navigation_System
-           || current_section == SectionID::Starbase_Interior || current_section == SectionID::Starbase_Exterior;
+    const auto section = CurrentSection();
+    return section == SectionID::Navigation_Galaxy || section == SectionID::Navigation_System
+           || section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
   }
+};
+
+// Fabric.EventManager, the game's sound middleware. Its shorter PostEvent overloads funnel into the seven-argument
+// one.
+using AudioEventManager = il2cpp::Class<"Fabric.Core", "Fabric", "EventManager">;
+
+// Windows only: keeps the game window at its aspect ratio from Update and its own window procedure.
+struct AspectRatioConstraintHandler {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Utils", "AspectRatioConstraintHandler">;
+
+  // The window procedure Unity installed, which the handler's own procedure forwards to.
+  static void* unityWndProc()
+  { return reinterpret_cast<void*>(Class::Field<"_unityWndProc", intptr_t>()); }
 };

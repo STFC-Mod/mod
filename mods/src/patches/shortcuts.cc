@@ -1,9 +1,9 @@
 #include "patches/shortcuts.h"
 
-#include "patches/input.h"
 #include "str_utils.h"
 
 #include <spdlog/spdlog.h>
+#include <unity/input.h>
 
 #include <algorithm>
 #include <array>
@@ -15,172 +15,172 @@ namespace
 // has few glyphs, so long names are shortened and the symbols the modifier notation uses are spelled out.
 struct KeyName {
   std::string_view name;
-  KeyCode          key;
+  unity::KeyCode   key;
   std::string_view hint = {};
 };
 
 constexpr KeyName kKeys[] = {
-    {"END", KeyCode::End},
-    {"HOME", KeyCode::Home, "HM"},
-    {"PGDOWN", KeyCode::PageDown, "PD"},
-    {"PGUP", KeyCode::PageUp, "PU"},
-    {"DOWN", KeyCode::DownArrow, "DN"},
-    {"LEFT", KeyCode::LeftArrow, "LT"},
-    {"RIGHT", KeyCode::RightArrow, "RT"},
-    {"UP", KeyCode::UpArrow},
-    {"BACKSPACE", KeyCode::Backspace, "BS"},
-    {"BREAK", KeyCode::Break},
-    {"CAPS", KeyCode::CapsLock},
-    {"CLEAR", KeyCode::Clear},
-    {"DELETE", KeyCode::Delete, "DEL"},
-    {"ESCAPE", KeyCode::Escape, "ESC"},
-    {"HELP", KeyCode::Help},
-    {"INSERT", KeyCode::Insert},
-    {"MENU", KeyCode::Menu},
-    {"PAUSE", KeyCode::Pause},
-    {"PRINT", KeyCode::Print},
-    {"RETURN", KeyCode::Return, "ENT"},
-    {"SCROLL", KeyCode::ScrollLock},
-    {"SYSREQ", KeyCode::SysReq},
-    {"TAB", KeyCode::Tab},
-    {"MOUSE0", KeyCode::Mouse0, "M0"},
-    {"MOUSE1", KeyCode::Mouse1, "M1"},
-    {"MOUSE2", KeyCode::Mouse2, "M2"},
-    {"MOUSE3", KeyCode::Mouse3, "M3"},
-    {"MOUSE4", KeyCode::Mouse4, "M4"},
-    {"MOUSE5", KeyCode::Mouse5, "M5"},
-    {"MOUSE6", KeyCode::Mouse6, "M6"},
-    {"SPACE", KeyCode::Space, "SPC"},
+    {"END", unity::KeyCode::End},
+    {"HOME", unity::KeyCode::Home, "HM"},
+    {"PGDOWN", unity::KeyCode::PageDown, "PD"},
+    {"PGUP", unity::KeyCode::PageUp, "PU"},
+    {"DOWN", unity::KeyCode::DownArrow, "DN"},
+    {"LEFT", unity::KeyCode::LeftArrow, "LT"},
+    {"RIGHT", unity::KeyCode::RightArrow, "RT"},
+    {"UP", unity::KeyCode::UpArrow},
+    {"BACKSPACE", unity::KeyCode::Backspace, "BS"},
+    {"BREAK", unity::KeyCode::Break},
+    {"CAPS", unity::KeyCode::CapsLock},
+    {"CLEAR", unity::KeyCode::Clear},
+    {"DELETE", unity::KeyCode::Delete, "DEL"},
+    {"ESCAPE", unity::KeyCode::Escape, "ESC"},
+    {"HELP", unity::KeyCode::Help},
+    {"INSERT", unity::KeyCode::Insert},
+    {"MENU", unity::KeyCode::Menu},
+    {"PAUSE", unity::KeyCode::Pause},
+    {"PRINT", unity::KeyCode::Print},
+    {"RETURN", unity::KeyCode::Return, "ENT"},
+    {"SCROLL", unity::KeyCode::ScrollLock},
+    {"SYSREQ", unity::KeyCode::SysReq},
+    {"TAB", unity::KeyCode::Tab},
+    {"MOUSE0", unity::KeyCode::Mouse0, "M0"},
+    {"MOUSE1", unity::KeyCode::Mouse1, "M1"},
+    {"MOUSE2", unity::KeyCode::Mouse2, "M2"},
+    {"MOUSE3", unity::KeyCode::Mouse3, "M3"},
+    {"MOUSE4", unity::KeyCode::Mouse4, "M4"},
+    {"MOUSE5", unity::KeyCode::Mouse5, "M5"},
+    {"MOUSE6", unity::KeyCode::Mouse6, "M6"},
+    {"SPACE", unity::KeyCode::Space, "SPC"},
     // Chords are split on '-', so the minus key needs a name.
-    {"MINUS", KeyCode::Minus, "-"},
-    {"_", KeyCode::Underscore},
-    {",", KeyCode::Comma},
-    {";", KeyCode::Semicolon},
-    {":", KeyCode::Colon},
-    {"!", KeyCode::Exclaim, "EXC"},
-    {"?", KeyCode::Question},
-    {".", KeyCode::Period},
-    {"'", KeyCode::Quote},
-    {"(", KeyCode::LeftParen},
-    {")", KeyCode::RightParen},
-    {"[", KeyCode::LeftBracket},
-    {"]", KeyCode::RightBracket},
-    {"{", KeyCode::LeftCurlyBracket},
-    {"}", KeyCode::RightCurlyBracket},
-    {"@", KeyCode::At},
-    {"*", KeyCode::Asterisk},
-    {"/", KeyCode::Slash},
-    {"\"", KeyCode::DoubleQuote},
-    {"\\", KeyCode::Backslash},
-    {"&", KeyCode::Ampersand},
-    {"#", KeyCode::Hash, "HSH"},
-    {"%", KeyCode::Percent},
-    {"`", KeyCode::BackQuote},
-    {"^", KeyCode::Caret, "CAR"},
-    {"+", KeyCode::Plus, "PLS"},
-    {"<", KeyCode::Less},
-    {"=", KeyCode::Equals},
-    {">", KeyCode::Greater},
-    {"~", KeyCode::Tilde},
-    {"$", KeyCode::Dollar},
-    {"0", KeyCode::Alpha0},
-    {"1", KeyCode::Alpha1},
-    {"2", KeyCode::Alpha2},
-    {"3", KeyCode::Alpha3},
-    {"4", KeyCode::Alpha4},
-    {"5", KeyCode::Alpha5},
-    {"6", KeyCode::Alpha6},
-    {"7", KeyCode::Alpha7},
-    {"8", KeyCode::Alpha8},
-    {"9", KeyCode::Alpha9},
-    {"A", KeyCode::A},
-    {"B", KeyCode::B},
-    {"C", KeyCode::C},
-    {"D", KeyCode::D},
-    {"E", KeyCode::E},
-    {"F", KeyCode::F},
-    {"G", KeyCode::G},
-    {"H", KeyCode::H},
-    {"I", KeyCode::I},
-    {"J", KeyCode::J},
-    {"K", KeyCode::K},
-    {"L", KeyCode::L},
-    {"M", KeyCode::M},
-    {"N", KeyCode::N},
-    {"O", KeyCode::O},
-    {"P", KeyCode::P},
-    {"Q", KeyCode::Q},
-    {"R", KeyCode::R},
-    {"S", KeyCode::S},
-    {"T", KeyCode::T},
-    {"U", KeyCode::U},
-    {"V", KeyCode::V},
-    {"W", KeyCode::W},
-    {"X", KeyCode::X},
-    {"Y", KeyCode::Y},
-    {"Z", KeyCode::Z},
-    {"F1", KeyCode::F1},
-    {"F2", KeyCode::F2},
-    {"F3", KeyCode::F3},
-    {"F4", KeyCode::F4},
-    {"F5", KeyCode::F5},
-    {"F6", KeyCode::F6},
-    {"F7", KeyCode::F7},
-    {"F8", KeyCode::F8},
-    {"F9", KeyCode::F9},
-    {"F10", KeyCode::F10},
-    {"F11", KeyCode::F11},
-    {"F12", KeyCode::F12},
-    {"F13", KeyCode::F13},
-    {"F14", KeyCode::F14},
-    {"F15", KeyCode::F15},
-    {"NUMLOCK", KeyCode::Numlock},
-    {"KEY0", KeyCode::Keypad0},
-    {"KEY1", KeyCode::Keypad1},
-    {"KEY2", KeyCode::Keypad2},
-    {"KEY3", KeyCode::Keypad3},
-    {"KEY4", KeyCode::Keypad4},
-    {"KEY5", KeyCode::Keypad5},
-    {"KEY6", KeyCode::Keypad6},
-    {"KEY7", KeyCode::Keypad7},
-    {"KEY8", KeyCode::Keypad8},
-    {"KEY9", KeyCode::Keypad9},
-    {"KEYDIVIDE", KeyCode::KeypadDivide},
-    {"KEYENTER", KeyCode::KeypadEnter},
-    {"KEYEQUAL", KeyCode::KeypadEquals},
-    {"KEYMINUS", KeyCode::KeypadMinus},
-    {"KEYMULTI", KeyCode::KeypadMultiply},
-    {"KEYPERIOD", KeyCode::KeypadPeriod},
-    {"KEYPLUS", KeyCode::KeypadPlus},
+    {"MINUS", unity::KeyCode::Minus, "-"},
+    {"_", unity::KeyCode::Underscore},
+    {",", unity::KeyCode::Comma},
+    {";", unity::KeyCode::Semicolon},
+    {":", unity::KeyCode::Colon},
+    {"!", unity::KeyCode::Exclaim, "EXC"},
+    {"?", unity::KeyCode::Question},
+    {".", unity::KeyCode::Period},
+    {"'", unity::KeyCode::Quote},
+    {"(", unity::KeyCode::LeftParen},
+    {")", unity::KeyCode::RightParen},
+    {"[", unity::KeyCode::LeftBracket},
+    {"]", unity::KeyCode::RightBracket},
+    {"{", unity::KeyCode::LeftCurlyBracket},
+    {"}", unity::KeyCode::RightCurlyBracket},
+    {"@", unity::KeyCode::At},
+    {"*", unity::KeyCode::Asterisk},
+    {"/", unity::KeyCode::Slash},
+    {"\"", unity::KeyCode::DoubleQuote},
+    {"\\", unity::KeyCode::Backslash},
+    {"&", unity::KeyCode::Ampersand},
+    {"#", unity::KeyCode::Hash, "HSH"},
+    {"%", unity::KeyCode::Percent},
+    {"`", unity::KeyCode::BackQuote},
+    {"^", unity::KeyCode::Caret, "CAR"},
+    {"+", unity::KeyCode::Plus, "PLS"},
+    {"<", unity::KeyCode::Less},
+    {"=", unity::KeyCode::Equals},
+    {">", unity::KeyCode::Greater},
+    {"~", unity::KeyCode::Tilde},
+    {"$", unity::KeyCode::Dollar},
+    {"0", unity::KeyCode::Alpha0},
+    {"1", unity::KeyCode::Alpha1},
+    {"2", unity::KeyCode::Alpha2},
+    {"3", unity::KeyCode::Alpha3},
+    {"4", unity::KeyCode::Alpha4},
+    {"5", unity::KeyCode::Alpha5},
+    {"6", unity::KeyCode::Alpha6},
+    {"7", unity::KeyCode::Alpha7},
+    {"8", unity::KeyCode::Alpha8},
+    {"9", unity::KeyCode::Alpha9},
+    {"A", unity::KeyCode::A},
+    {"B", unity::KeyCode::B},
+    {"C", unity::KeyCode::C},
+    {"D", unity::KeyCode::D},
+    {"E", unity::KeyCode::E},
+    {"F", unity::KeyCode::F},
+    {"G", unity::KeyCode::G},
+    {"H", unity::KeyCode::H},
+    {"I", unity::KeyCode::I},
+    {"J", unity::KeyCode::J},
+    {"K", unity::KeyCode::K},
+    {"L", unity::KeyCode::L},
+    {"M", unity::KeyCode::M},
+    {"N", unity::KeyCode::N},
+    {"O", unity::KeyCode::O},
+    {"P", unity::KeyCode::P},
+    {"Q", unity::KeyCode::Q},
+    {"R", unity::KeyCode::R},
+    {"S", unity::KeyCode::S},
+    {"T", unity::KeyCode::T},
+    {"U", unity::KeyCode::U},
+    {"V", unity::KeyCode::V},
+    {"W", unity::KeyCode::W},
+    {"X", unity::KeyCode::X},
+    {"Y", unity::KeyCode::Y},
+    {"Z", unity::KeyCode::Z},
+    {"F1", unity::KeyCode::F1},
+    {"F2", unity::KeyCode::F2},
+    {"F3", unity::KeyCode::F3},
+    {"F4", unity::KeyCode::F4},
+    {"F5", unity::KeyCode::F5},
+    {"F6", unity::KeyCode::F6},
+    {"F7", unity::KeyCode::F7},
+    {"F8", unity::KeyCode::F8},
+    {"F9", unity::KeyCode::F9},
+    {"F10", unity::KeyCode::F10},
+    {"F11", unity::KeyCode::F11},
+    {"F12", unity::KeyCode::F12},
+    {"F13", unity::KeyCode::F13},
+    {"F14", unity::KeyCode::F14},
+    {"F15", unity::KeyCode::F15},
+    {"NUMLOCK", unity::KeyCode::Numlock},
+    {"KEY0", unity::KeyCode::Keypad0},
+    {"KEY1", unity::KeyCode::Keypad1},
+    {"KEY2", unity::KeyCode::Keypad2},
+    {"KEY3", unity::KeyCode::Keypad3},
+    {"KEY4", unity::KeyCode::Keypad4},
+    {"KEY5", unity::KeyCode::Keypad5},
+    {"KEY6", unity::KeyCode::Keypad6},
+    {"KEY7", unity::KeyCode::Keypad7},
+    {"KEY8", unity::KeyCode::Keypad8},
+    {"KEY9", unity::KeyCode::Keypad9},
+    {"KEYDIVIDE", unity::KeyCode::KeypadDivide},
+    {"KEYENTER", unity::KeyCode::KeypadEnter},
+    {"KEYEQUAL", unity::KeyCode::KeypadEquals},
+    {"KEYMINUS", unity::KeyCode::KeypadMinus},
+    {"KEYMULTI", unity::KeyCode::KeypadMultiply},
+    {"KEYPERIOD", unity::KeyCode::KeypadPeriod},
+    {"KEYPLUS", unity::KeyCode::KeypadPlus},
 };
 
 // Modifier names. The unsided ones match either side of the keyboard. Badges use AutoHotkey's ASCII notation.
 struct ModifierName {
-  std::string_view       name;
-  std::array<KeyCode, 2> keys;
-  std::string_view       hint;
+  std::string_view              name;
+  std::array<unity::KeyCode, 2> keys;
+  std::string_view              hint;
 };
 
 constexpr ModifierName kModifiers[] = {
-    {"SHIFT", {KeyCode::LeftShift, KeyCode::RightShift}, "+"},
-    {"CTRL", {KeyCode::LeftControl, KeyCode::RightControl}, "^"},
-    {"ALT", {KeyCode::LeftAlt, KeyCode::RightAlt}, "!"},
-    {"APPLE", {KeyCode::LeftApple, KeyCode::RightApple}, "#"},
-    {"CMD", {KeyCode::LeftCommand, KeyCode::RightCommand}, "#"},
-    {"WIN", {KeyCode::LeftWindows, KeyCode::RightWindows}, "#"},
-    {"LSHIFT", {KeyCode::LeftShift, KeyCode::LeftShift}, "<+"},
-    {"RSHIFT", {KeyCode::RightShift, KeyCode::RightShift}, ">+"},
-    {"LCTRL", {KeyCode::LeftControl, KeyCode::LeftControl}, "<^"},
-    {"RCTRL", {KeyCode::RightControl, KeyCode::RightControl}, ">^"},
-    {"LALT", {KeyCode::LeftAlt, KeyCode::LeftAlt}, "<!"},
-    {"RALT", {KeyCode::RightAlt, KeyCode::RightAlt}, ">!"},
-    {"ALTGR", {KeyCode::AltGr, KeyCode::AltGr}, "!"},
-    {"LAPPLE", {KeyCode::LeftApple, KeyCode::LeftApple}, "<#"},
-    {"LCOM", {KeyCode::LeftCommand, KeyCode::LeftCommand}, "<#"},
-    {"LWIN", {KeyCode::LeftWindows, KeyCode::LeftWindows}, "<#"},
-    {"RAPPLE", {KeyCode::RightApple, KeyCode::RightApple}, ">#"},
-    {"RCOM", {KeyCode::RightCommand, KeyCode::RightCommand}, ">#"},
-    {"RWIN", {KeyCode::RightWindows, KeyCode::RightWindows}, ">#"},
+    {"SHIFT", {unity::KeyCode::LeftShift, unity::KeyCode::RightShift}, "+"},
+    {"CTRL", {unity::KeyCode::LeftControl, unity::KeyCode::RightControl}, "^"},
+    {"ALT", {unity::KeyCode::LeftAlt, unity::KeyCode::RightAlt}, "!"},
+    {"APPLE", {unity::KeyCode::LeftApple, unity::KeyCode::RightApple}, "#"},
+    {"CMD", {unity::KeyCode::LeftCommand, unity::KeyCode::RightCommand}, "#"},
+    {"WIN", {unity::KeyCode::LeftWindows, unity::KeyCode::RightWindows}, "#"},
+    {"LSHIFT", {unity::KeyCode::LeftShift, unity::KeyCode::LeftShift}, "<+"},
+    {"RSHIFT", {unity::KeyCode::RightShift, unity::KeyCode::RightShift}, ">+"},
+    {"LCTRL", {unity::KeyCode::LeftControl, unity::KeyCode::LeftControl}, "<^"},
+    {"RCTRL", {unity::KeyCode::RightControl, unity::KeyCode::RightControl}, ">^"},
+    {"LALT", {unity::KeyCode::LeftAlt, unity::KeyCode::LeftAlt}, "<!"},
+    {"RALT", {unity::KeyCode::RightAlt, unity::KeyCode::RightAlt}, ">!"},
+    {"ALTGR", {unity::KeyCode::AltGr, unity::KeyCode::AltGr}, "!"},
+    {"LAPPLE", {unity::KeyCode::LeftApple, unity::KeyCode::LeftApple}, "<#"},
+    {"LCOM", {unity::KeyCode::LeftCommand, unity::KeyCode::LeftCommand}, "<#"},
+    {"LWIN", {unity::KeyCode::LeftWindows, unity::KeyCode::LeftWindows}, "<#"},
+    {"RAPPLE", {unity::KeyCode::RightApple, unity::KeyCode::RightApple}, ">#"},
+    {"RCOM", {unity::KeyCode::RightCommand, unity::KeyCode::RightCommand}, ">#"},
+    {"RWIN", {unity::KeyCode::RightWindows, unity::KeyCode::RightWindows}, ">#"},
 };
 
 // Settings are only parsed at load, so the tables are searched in order.
@@ -196,30 +196,33 @@ const ModifierName* FindModifier(std::string_view name)
   return it == std::end(kModifiers) ? nullptr : it;
 }
 
-std::array<std::vector<KeyChord>, GameFunction::Max> bindings;
+std::array<std::vector<KeyChord>, static_cast<size_t>(Action::kCount)> bindings;
+
+std::vector<KeyChord>& BindingsOf(Action action)
+{ return bindings[static_cast<size_t>(action)]; }
 
 // Keys that completed a binding with modifiers, until released. A plain binding on the same key waits for the
 // release, so letting go of CTRL before PGUP does not turn a held CTRL-PGUP into PGUP.
-std::vector<KeyCode> used_keys;
+std::vector<unity::KeyCode> used_keys;
 
-bool IsUsed(KeyCode key)
+bool IsUsed(unity::KeyCode key)
 {
-  std::erase_if(used_keys, [](KeyCode used) { return !Key::Pressed(used); });
+  std::erase_if(used_keys, [](unity::KeyCode used) { return !unity::Key::Pressed(used); });
   return std::ranges::find(used_keys, key) != used_keys.end();
 }
 
 bool ModifiersHeld(const KeyChord& chord)
 {
   return std::ranges::all_of(chord.modifiers,
-                             [](const auto& group) { return std::ranges::any_of(group, Key::Pressed); });
+                             [](const auto& group) { return std::ranges::any_of(group, unity::Key::Pressed); });
 }
 
-template <bool (*KeyState)(KeyCode)> bool Matches(GameFunction action)
+template <bool (*KeyState)(unity::KeyCode)> bool Matches(Action action)
 {
-  for (const auto& chord : bindings[action]) {
-    if (chord.key == KeyCode::None || !KeyState(chord.key))
+  for (const auto& chord : BindingsOf(action)) {
+    if (chord.key == unity::KeyCode::None || !KeyState(chord.key))
       continue;
-    if (chord.modifiers.empty() ? Key::IsModified() || IsUsed(chord.key) : !ModifiersHeld(chord))
+    if (chord.modifiers.empty() ? unity::Key::IsModified() || IsUsed(chord.key) : !ModifiersHeld(chord))
       continue;
     if (!chord.modifiers.empty() && std::ranges::find(used_keys, chord.key) == used_keys.end())
       used_keys.push_back(chord.key);
@@ -232,7 +235,7 @@ enum class Tier { kAlways, kExtended, kExperimental };
 
 struct Setting {
   std::string_view                key;
-  GameFunction                    action;
+  Action                          action;
   std::string_view                fallback;
   Tier                            tier    = Tier::kAlways;
   std::array<std::string_view, 2> aliases = {};
@@ -240,116 +243,116 @@ struct Setting {
 
 // Order is the order of the debug log; the TOML output is sorted by key anyway.
 constexpr Setting kSettings[] = {
-    {"move_up", GameFunction::MoveUp, "W|UP"},
-    {"move_down", GameFunction::MoveDown, "S|DOWN"},
-    {"move_left", GameFunction::MoveLeft, "A|LEFT"},
-    {"move_right", GameFunction::MoveRight, "D|RIGHT"},
+    {"move_up", Action::kMoveUp, "W|UP"},
+    {"move_down", Action::kMoveDown, "S|DOWN"},
+    {"move_left", Action::kMoveLeft, "A|LEFT"},
+    {"move_right", Action::kMoveRight, "D|RIGHT"},
     {"set_hotkeys_disabled",
-     GameFunction::DisableHotKeys,
+     Action::kDisableHotKeys,
      "CTRL-ALT-MINUS",
      Tier::kAlways,
      {"set_hotkeys_disble", "set_hotkeys_disable"}},
-    {"set_hotkeys_enabled", GameFunction::EnableHotKeys, "CTRL-ALT-=", Tier::kAlways, {"set_hotkeys_enable"}},
-    {"select_chatalliance", GameFunction::SelectChatAlliance, "CTRL-2"},
-    {"select_chatglobal", GameFunction::SelectChatGlobal, "CTRL-1"},
-    {"select_chatprivate", GameFunction::SelectChatPrivate, "CTRL-3"},
-    {"quit", GameFunction::Quit, "F10"},
-    {"select_ship1", GameFunction::SelectShip1, "1"},
-    {"select_ship2", GameFunction::SelectShip2, "2"},
-    {"select_ship3", GameFunction::SelectShip3, "3"},
-    {"select_ship4", GameFunction::SelectShip4, "4"},
-    {"select_ship5", GameFunction::SelectShip5, "5"},
-    {"select_ship6", GameFunction::SelectShip6, "6"},
-    {"select_ship7", GameFunction::SelectShip7, "7"},
-    {"select_ship8", GameFunction::SelectShip8, "8"},
-    {"select_current", GameFunction::SelectCurrent, "CTRL-SPACE"},
-    {"focus_search", GameFunction::FocusSearch, "CTRL-F"},
-    {"action_primary", GameFunction::ActionPrimary, "SPACE|MOUSE1"},
-    {"action_secondary", GameFunction::ActionSecondary, "TAB|MOUSE4"},
-    {"action_queue", GameFunction::ActionQueue, "SPACE|MOUSE1"},
-    {"action_queue_clear", GameFunction::ActionQueueClear, "CTRL-C"},
-    {"action_view", GameFunction::ActionView, "V|MOUSE2"},
-    {"action_recall", GameFunction::ActionRecall, "R|MOUSE3"},
-    {"action_recall_cancel", GameFunction::ActionRecallCancel, "SPACE|MOUSE1"},
-    {"action_repair", GameFunction::ActionRepair, "R|MOUSE3"},
-    {"show_chat", GameFunction::ShowChat, "C"},
-    {"show_chatside1", GameFunction::ShowChatSide1, "ALT-C"},
-    {"show_chatside2", GameFunction::ShowChatSide2, "`"},
-    {"show_galaxy", GameFunction::ShowGalaxy, "G"},
-    {"show_galaxy_native", GameFunction::NativeShortcutGalaxy, "CTRL-G", Tier::kAlways, {"native_shortcut_galaxy"}},
-    {"show_system", GameFunction::ShowSystem, "H"},
-    {"zoom_preset1", GameFunction::ZoomPreset1, "F1"},
-    {"zoom_preset2", GameFunction::ZoomPreset2, "F2"},
-    {"zoom_preset3", GameFunction::ZoomPreset3, "F3"},
-    {"zoom_preset4", GameFunction::ZoomPreset4, "F4"},
-    {"zoom_preset5", GameFunction::ZoomPreset5, "F5"},
-    {"zoom_in", GameFunction::ZoomIn, "Q"},
-    {"zoom_out", GameFunction::ZoomOut, "E"},
-    {"zoom_max", GameFunction::ZoomMax, "MINUS"},
-    {"zoom_min", GameFunction::ZoomMin, "BACKSPACE"},
-    {"zoom_reset", GameFunction::ZoomReset, "="},
-    {"ui_scaleup", GameFunction::UiScaleUp, "PGUP"},
-    {"ui_scaledown", GameFunction::UiScaleDown, "PGDOWN"},
-    {"ui_scaleshipup", GameFunction::UiShipScaleUp, "CTRL-PGUP"},
-    {"ui_scaleshipdown", GameFunction::UiShipScaleDown, "CTRL-PGDOWN"},
-    {"ui_scaleviewerup", GameFunction::UiViewerScaleUp, "SHIFT-PGUP"},
-    {"ui_scaleviewerdown", GameFunction::UiViewerScaleDown, "SHIFT-PGDOWN"},
-    {"log_debug", GameFunction::LogLevelDebug, "CTRL-SHIFT-F9"},
-    {"log_trace", GameFunction::LogLevelTrace, "CTRL-SHIFT-F7"},
-    {"log_info", GameFunction::LogLevelInfo, "CTRL-SHIFT-F8"},
-    {"log_warn", GameFunction::LogLevelWarn, "CTRL-SHIFT-F10"},
-    {"log_error", GameFunction::LogLevelError, "CTRL-SHIFT-F11"},
-    {"log_off", GameFunction::LogLevelOff, "CTRL-SHIFT-F12"},
-    {"restart", GameFunction::Restart, "F9"},
-    {"reload_settings", GameFunction::ReloadSettings, "CTRL-SHIFT-F6"},
-    {"show_awayteam", GameFunction::ShowAwayTeam, "T"},
-    {"show_gifts", GameFunction::ShowGifts, "/"},
-    {"show_artifacts", GameFunction::ShowArtifacts, "SHIFT-I"},
-    {"show_commander", GameFunction::ShowCommander, "O"},
-    {"show_daily", GameFunction::ShowDaily, "Z"},
-    {"show_events", GameFunction::ShowEvents, "SHIFT-E"},
-    {"show_events_native", GameFunction::NativeShortcutEvents, "CTRL-E", Tier::kAlways, {"native_shortcut_events"}},
-    {"show_exocomp", GameFunction::ShowExoComp, "X"},
-    {"show_factions", GameFunction::ShowFactions, "F"},
-    {"show_inventory", GameFunction::ShowInventory, "I"},
-    {"show_missions", GameFunction::ShowMissions, "M"},
-    {"show_research", GameFunction::ShowResearch, "U"},
-    {"show_scrapyard", GameFunction::ShowScrapYard, "Y"},
-    {"show_settings", GameFunction::ShowSettings, "SHIFT-S"},
-    {"toggle_shortcut_hints", GameFunction::ToggleShortcutHints, "HOME"},
-    {"show_officers", GameFunction::ShowOfficers, "SHIFT-O"},
-    {"show_officerpresets", GameFunction::ShowOfficerPresets, "CTRL-O"},
-    {"show_officerswap", GameFunction::ShowOfficerSwap, "ALT-O"},
-    {"show_qtrials", GameFunction::ShowQTrials, "SHIFT-Q"},
-    {"show_refinery", GameFunction::ShowRefinery, "SHIFT-F"},
-    {"show_ships", GameFunction::ShowShips, "N"},
-    {"show_shipconstruction", GameFunction::ShowShipConstruction, "SHIFT-N"},
-    {"show_shipswap", GameFunction::ShowShipSwap, "ALT-N"},
-    {"show_shields", GameFunction::ShowShields, "CTRL-S"},
-    {"show_battlelogs", GameFunction::ShowBattlelogs, "SHIFT-B"},
-    {"show_stationexterior", GameFunction::ShowStationExterior, "SHIFT-G"},
-    {"show_stationinterior", GameFunction::ShowStationInterior, "SHIFT-H"},
-    {"show_haven", GameFunction::ShowHaven, "ALT-H"},
-    {"toggle_queue", GameFunction::ToggleQueue, "CTRL-Q"},
-    {"toggle_instant_warp", GameFunction::ToggleAutoConfirmInstantWarp, "ALT-I"},
-    {"show_alliance", GameFunction::ShowAlliance, "ALT-'", Tier::kExtended},
-    {"show_alliance_help", GameFunction::ShowAllianceHelp, "SHIFT-'", Tier::kExperimental},
-    {"show_alliance_armada", GameFunction::ShowAllianceArmada, "CTRL-'", Tier::kExperimental},
-    {"show_bookmarks", GameFunction::ShowBookmarks, "B", Tier::kExtended},
-    {"show_lookup", GameFunction::ShowLookup, "L", Tier::kExperimental},
-    {"set_zoom_preset1", GameFunction::SetZoomPreset1, "SHIFT-F1", Tier::kExtended},
-    {"set_zoom_preset2", GameFunction::SetZoomPreset2, "SHIFT-F2", Tier::kExtended},
-    {"set_zoom_preset3", GameFunction::SetZoomPreset3, "SHIFT-F3", Tier::kExtended},
-    {"set_zoom_preset4", GameFunction::SetZoomPreset4, "SHIFT-F4", Tier::kExtended},
-    {"set_zoom_preset5", GameFunction::SetZoomPreset5, "SHIFT-F5", Tier::kExtended},
-    {"set_zoom_default", GameFunction::SetZoomDefault, "CTRL-=", Tier::kExtended},
-    {"toggle_preview_locate", GameFunction::TogglePreviewLocate, "CTRL-R", Tier::kExtended},
-    {"toggle_preview_recall", GameFunction::TogglePreviewRecall, "CTRL-T", Tier::kExtended},
-    {"toggle_cargo_default", GameFunction::ToggleCargoDefault, "ALT-1", Tier::kExtended},
-    {"toggle_cargo_player", GameFunction::ToggleCargoPlayer, "ALT-2", Tier::kExtended},
-    {"toggle_cargo_station", GameFunction::ToggleCargoStation, "ALT-3", Tier::kExtended},
-    {"toggle_cargo_hostile", GameFunction::ToggleCargoHostile, "ALT-4", Tier::kExtended},
-    {"toggle_cargo_armada", GameFunction::ToggleCargoArmada, "ALT-5", Tier::kExtended},
+    {"set_hotkeys_enabled", Action::kEnableHotKeys, "CTRL-ALT-=", Tier::kAlways, {"set_hotkeys_enable"}},
+    {"select_chatalliance", Action::kSelectChatAlliance, "CTRL-2"},
+    {"select_chatglobal", Action::kSelectChatGlobal, "CTRL-1"},
+    {"select_chatprivate", Action::kSelectChatPrivate, "CTRL-3"},
+    {"quit", Action::kQuit, "F10"},
+    {"select_ship1", Action::kSelectShip1, "1"},
+    {"select_ship2", Action::kSelectShip2, "2"},
+    {"select_ship3", Action::kSelectShip3, "3"},
+    {"select_ship4", Action::kSelectShip4, "4"},
+    {"select_ship5", Action::kSelectShip5, "5"},
+    {"select_ship6", Action::kSelectShip6, "6"},
+    {"select_ship7", Action::kSelectShip7, "7"},
+    {"select_ship8", Action::kSelectShip8, "8"},
+    {"select_current", Action::kSelectCurrent, "CTRL-SPACE"},
+    {"focus_search", Action::kFocusSearch, "CTRL-F"},
+    {"action_primary", Action::kActionPrimary, "SPACE|MOUSE1"},
+    {"action_secondary", Action::kActionSecondary, "TAB|MOUSE4"},
+    {"action_queue", Action::kActionQueue, "SPACE|MOUSE1"},
+    {"action_queue_clear", Action::kActionQueueClear, "CTRL-C"},
+    {"action_view", Action::kActionView, "V|MOUSE2"},
+    {"action_recall", Action::kActionRecall, "R|MOUSE3"},
+    {"action_recall_cancel", Action::kActionRecallCancel, "SPACE|MOUSE1"},
+    {"action_repair", Action::kActionRepair, "R|MOUSE3"},
+    {"show_chat", Action::kShowChat, "C"},
+    {"show_chatside1", Action::kShowChatSide1, "ALT-C"},
+    {"show_chatside2", Action::kShowChatSide2, "`"},
+    {"show_galaxy", Action::kShowGalaxy, "G"},
+    {"show_galaxy_native", Action::kNativeShortcutGalaxy, "CTRL-G", Tier::kAlways, {"native_shortcut_galaxy"}},
+    {"show_system", Action::kShowSystem, "H"},
+    {"zoom_preset1", Action::kZoomPreset1, "F1"},
+    {"zoom_preset2", Action::kZoomPreset2, "F2"},
+    {"zoom_preset3", Action::kZoomPreset3, "F3"},
+    {"zoom_preset4", Action::kZoomPreset4, "F4"},
+    {"zoom_preset5", Action::kZoomPreset5, "F5"},
+    {"zoom_in", Action::kZoomIn, "Q"},
+    {"zoom_out", Action::kZoomOut, "E"},
+    {"zoom_max", Action::kZoomMax, "MINUS"},
+    {"zoom_min", Action::kZoomMin, "BACKSPACE"},
+    {"zoom_reset", Action::kZoomReset, "="},
+    {"ui_scaleup", Action::kUiScaleUp, "PGUP"},
+    {"ui_scaledown", Action::kUiScaleDown, "PGDOWN"},
+    {"ui_scaleshipup", Action::kUiShipScaleUp, "CTRL-PGUP"},
+    {"ui_scaleshipdown", Action::kUiShipScaleDown, "CTRL-PGDOWN"},
+    {"ui_scaleviewerup", Action::kUiViewerScaleUp, "SHIFT-PGUP"},
+    {"ui_scaleviewerdown", Action::kUiViewerScaleDown, "SHIFT-PGDOWN"},
+    {"log_debug", Action::kLogLevelDebug, "CTRL-SHIFT-F9"},
+    {"log_trace", Action::kLogLevelTrace, "CTRL-SHIFT-F7"},
+    {"log_info", Action::kLogLevelInfo, "CTRL-SHIFT-F8"},
+    {"log_warn", Action::kLogLevelWarn, "CTRL-SHIFT-F10"},
+    {"log_error", Action::kLogLevelError, "CTRL-SHIFT-F11"},
+    {"log_off", Action::kLogLevelOff, "CTRL-SHIFT-F12"},
+    {"restart", Action::kRestart, "F9"},
+    {"reload_settings", Action::kReloadSettings, "CTRL-SHIFT-F6"},
+    {"show_awayteam", Action::kShowAwayTeam, "T"},
+    {"show_gifts", Action::kShowGifts, "/"},
+    {"show_artifacts", Action::kShowArtifacts, "SHIFT-I"},
+    {"show_commander", Action::kShowCommander, "O"},
+    {"show_daily", Action::kShowDaily, "Z"},
+    {"show_events", Action::kShowEvents, "SHIFT-E"},
+    {"show_events_native", Action::kNativeShortcutEvents, "CTRL-E", Tier::kAlways, {"native_shortcut_events"}},
+    {"show_exocomp", Action::kShowExoComp, "X"},
+    {"show_factions", Action::kShowFactions, "F"},
+    {"show_inventory", Action::kShowInventory, "I"},
+    {"show_missions", Action::kShowMissions, "M"},
+    {"show_research", Action::kShowResearch, "U"},
+    {"show_scrapyard", Action::kShowScrapYard, "Y"},
+    {"show_settings", Action::kShowSettings, "SHIFT-S"},
+    {"toggle_shortcut_hints", Action::kToggleShortcutHints, "HOME"},
+    {"show_officers", Action::kShowOfficers, "SHIFT-O"},
+    {"show_officerpresets", Action::kShowOfficerPresets, "CTRL-O"},
+    {"show_officerswap", Action::kShowOfficerSwap, "ALT-O"},
+    {"show_qtrials", Action::kShowQTrials, "SHIFT-Q"},
+    {"show_refinery", Action::kShowRefinery, "SHIFT-F"},
+    {"show_ships", Action::kShowShips, "N"},
+    {"show_shipconstruction", Action::kShowShipConstruction, "SHIFT-N"},
+    {"show_shipswap", Action::kShowShipSwap, "ALT-N"},
+    {"show_shields", Action::kShowShields, "CTRL-S"},
+    {"show_battlelogs", Action::kShowBattlelogs, "SHIFT-B"},
+    {"show_stationexterior", Action::kShowStationExterior, "SHIFT-G"},
+    {"show_stationinterior", Action::kShowStationInterior, "SHIFT-H"},
+    {"show_haven", Action::kShowHaven, "ALT-H"},
+    {"toggle_queue", Action::kToggleQueue, "CTRL-Q"},
+    {"toggle_instant_warp", Action::kToggleAutoConfirmInstantWarp, "ALT-I"},
+    {"show_alliance", Action::kShowAlliance, "ALT-'", Tier::kExtended},
+    {"show_alliance_help", Action::kShowAllianceHelp, "SHIFT-'", Tier::kExperimental},
+    {"show_alliance_armada", Action::kShowAllianceArmada, "CTRL-'", Tier::kExperimental},
+    {"show_bookmarks", Action::kShowBookmarks, "B", Tier::kExtended},
+    {"show_lookup", Action::kShowLookup, "L", Tier::kExperimental},
+    {"set_zoom_preset1", Action::kSetZoomPreset1, "SHIFT-F1", Tier::kExtended},
+    {"set_zoom_preset2", Action::kSetZoomPreset2, "SHIFT-F2", Tier::kExtended},
+    {"set_zoom_preset3", Action::kSetZoomPreset3, "SHIFT-F3", Tier::kExtended},
+    {"set_zoom_preset4", Action::kSetZoomPreset4, "SHIFT-F4", Tier::kExtended},
+    {"set_zoom_preset5", Action::kSetZoomPreset5, "SHIFT-F5", Tier::kExtended},
+    {"set_zoom_default", Action::kSetZoomDefault, "CTRL-=", Tier::kExtended},
+    {"toggle_preview_locate", Action::kTogglePreviewLocate, "CTRL-R", Tier::kExtended},
+    {"toggle_preview_recall", Action::kTogglePreviewRecall, "CTRL-T", Tier::kExtended},
+    {"toggle_cargo_default", Action::kToggleCargoDefault, "ALT-1", Tier::kExtended},
+    {"toggle_cargo_player", Action::kToggleCargoPlayer, "ALT-2", Tier::kExtended},
+    {"toggle_cargo_station", Action::kToggleCargoStation, "ALT-3", Tier::kExtended},
+    {"toggle_cargo_hostile", Action::kToggleCargoHostile, "ALT-4", Tier::kExtended},
+    {"toggle_cargo_armada", Action::kToggleCargoArmada, "ALT-5", Tier::kExtended},
 };
 
 // Binds every chord in `value` ("CTRL-G|F8"). Reports whether any was valid.
@@ -357,7 +360,7 @@ bool BindChords(const Setting& setting, std::string_view key, std::string_view v
 {
   bool bound = false;
   for (const auto& text : StrSplit(value, '|')) {
-    if (auto chord = KeyChord::Parse(text); chord.key != KeyCode::None) {
+    if (auto chord = KeyChord::Parse(text); chord.key != unity::KeyCode::None) {
       Shortcut::Bind(setting.action, std::move(chord));
       bound = true;
     } else {
@@ -433,7 +436,7 @@ KeyChord KeyChord::Parse(std::string_view text)
       key_token = std::move(token);
     }
   }
-  if (chord.key != KeyCode::None)
+  if (chord.key != unity::KeyCode::None)
     chord.tokens.push_back(std::move(key_token));
   return chord;
 }
@@ -454,7 +457,7 @@ std::string KeyChord::Hint() const
   std::string hint;
   for (size_t i = 0; i < tokens.size(); ++i) {
     // The key is always last; everything before it is a modifier.
-    const auto* key      = i + 1 == tokens.size() && this->key != KeyCode::None ? FindKey(tokens[i]) : nullptr;
+    const auto* key      = i + 1 == tokens.size() && this->key != unity::KeyCode::None ? FindKey(tokens[i]) : nullptr;
     const auto* modifier = key ? nullptr : FindModifier(tokens[i]);
     hint += key && !key->hint.empty() ? key->hint : modifier ? modifier->hint : std::string_view(tokens[i]);
   }
@@ -479,8 +482,8 @@ void Load(const toml::table& config, toml::table& parsed, bool extended, bool ex
   }
 }
 
-void Bind(GameFunction action, KeyChord chord)
-{ bindings[action].push_back(std::move(chord)); }
+void Bind(Action action, KeyChord chord)
+{ BindingsOf(action).push_back(std::move(chord)); }
 
 void Clear()
 {
@@ -489,24 +492,24 @@ void Clear()
   used_keys.clear();
 }
 
-bool Owns(KeyCode key)
+bool Owns(unity::KeyCode key)
 { return IsUsed(key); }
 
-bool HasBinding(GameFunction action)
+bool HasBinding(Action action)
 {
-  return std::ranges::any_of(bindings[action], [](const auto& chord) { return chord.key != KeyCode::None; });
+  return std::ranges::any_of(BindingsOf(action), [](const auto& chord) { return chord.key != unity::KeyCode::None; });
 }
 
-bool IsPressed(GameFunction action)
-{ return Matches<Key::Pressed>(action); }
+bool IsPressed(Action action)
+{ return Matches<unity::Key::Pressed>(action); }
 
-bool IsDown(GameFunction action)
-{ return Matches<Key::Down>(action); }
+bool IsDown(Action action)
+{ return Matches<unity::Key::Down>(action); }
 
-std::string Describe(GameFunction action)
+std::string Describe(Action action)
 {
   std::string text;
-  for (const auto& chord : bindings[action]) {
+  for (const auto& chord : BindingsOf(action)) {
     if (!text.empty())
       text += " | ";
     text += chord.Text();
@@ -514,9 +517,9 @@ std::string Describe(GameFunction action)
   return text;
 }
 
-std::string Hint(GameFunction action)
+std::string Hint(Action action)
 {
   // The game's badges have room for one binding.
-  return bindings[action].empty() ? std::string{} : bindings[action].front().Hint();
+  return BindingsOf(action).empty() ? std::string{} : BindingsOf(action).front().Hint();
 }
 } // namespace Shortcut

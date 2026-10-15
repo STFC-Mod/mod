@@ -1,5 +1,17 @@
 #pragma once
 
+// Keyboard and pointer input: Unity's KeyCode, the legacy Input API through its internal calls, a per-frame key
+// snapshot, text-field focus, and the Input System types bindings pass around.
+
+#include "core.h"
+
+#include <il2cpp/il2cpp.h>
+
+#include <cstdint>
+
+namespace unity
+{
+// UnityEngine.KeyCode.
 enum class KeyCode {
   None              = 0,
   Backspace         = 8,
@@ -328,6 +340,102 @@ enum class KeyCode {
   Joystick8Button18 = 508, // 0x000001FC
   Joystick8Button19 = 509, // 0x000001FD
 
-  // Autoamtic maximum
+  // One past the largest code, for tables indexed by key.
   Max
 };
+
+// UnityEngine.Input through its internal calls, which skip the managed wrappers. A call that a Unity upgrade
+// renamed is reported once and then reads as nothing pressed.
+struct Input {
+  // True when Unity lacks the call, so a caller that skips key checks on idle frames still checks.
+  static bool anyKey()
+  {
+    static const il2cpp::ICall<bool()> call{"UnityEngine.Input::get_anyKey()"};
+    return !call || call();
+  }
+  static bool anyKeyDown()
+  {
+    static const il2cpp::ICall<bool()> call{"UnityEngine.Input::get_anyKeyDown()"};
+    return !call || call();
+  }
+  static bool GetKey(KeyCode key)
+  {
+    static const il2cpp::ICall<bool(KeyCode)> call{"UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)"};
+    return call(key);
+  }
+  static bool GetKeyDown(KeyCode key)
+  {
+    static const il2cpp::ICall<bool(KeyCode)> call{"UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)"};
+    return call(key);
+  }
+  static bool GetMouseButton(int32_t button)
+  {
+    static const il2cpp::ICall<bool(int32_t)> call{"UnityEngine.Input::GetMouseButton(System.Int32)"};
+    return call(button);
+  }
+  static int32_t touchCount()
+  {
+    static const il2cpp::ICall<int32_t()> call{"UnityEngine.Input::get_touchCount()"};
+    return call();
+  }
+  static Vector3 mousePosition()
+  {
+    static const il2cpp::ICall<void(Vector3*)> call{
+        "UnityEngine.Input::get_mousePosition_Injected(UnityEngine.Vector3&)"};
+    Vector3 position{};
+    call(&position);
+    return position;
+  }
+};
+
+enum class TouchPhase : int32_t {
+  Began      = 0,
+  Moved      = 1,
+  Stationary = 2,
+  Ended      = 3,
+  Canceled   = 4,
+};
+
+struct InputAction : il2cpp::Object {
+  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputAction">;
+
+  Il2CppString* name()
+  { return Get<"name", Il2CppString*>(); }
+};
+
+struct InputActionReference : il2cpp::Object {
+  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputActionReference">;
+
+  InputAction* action()
+  { return Get<"action", InputAction*>(); }
+};
+
+// UnityEngine.InputSystem.InputAction.CallbackContext, passed empty. Generated code takes it by value with the
+// platform's C++ ABI, so this layout must match the managed struct.
+struct InputActionCallbackContext {
+  void*   state;
+  int32_t action_index;
+};
+static_assert(sizeof(InputActionCallbackContext) == 16);
+
+// This frame's keyboard. Unity answers each key from its own per-frame state; the snapshot only skips asking on
+// idle frames and caches the derived checks.
+namespace Key
+{
+  // Starts a frame's reads. Every hook that reads keys calls it first, since hooks run in no fixed order within a
+  // frame and reads before it see the previous frame. Cheap after the first call in a frame.
+  void Poll();
+
+  // Held during this frame.
+  bool Pressed(KeyCode key);
+  // Went down this frame.
+  bool Down(KeyCode key);
+  // Any of Ctrl, Alt, AltGr, Shift, Cmd, or Win is held.
+  bool IsModified();
+
+  // A TextMeshPro input field has keyboard focus, so typing must not trigger shortcuts.
+  bool IsInputFocused();
+  // Takes keyboard focus away from the focused input field. Unity UI only does this on a click elsewhere.
+  void ClearInputFocus();
+} // namespace Key
+} // namespace unity

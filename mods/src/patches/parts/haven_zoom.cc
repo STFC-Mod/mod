@@ -2,7 +2,7 @@
 
 #include <il2cpp/il2cpp_helper.h>
 #include <il2cpp/method_contract.h>
-#include <prime/unity.h>
+#include <unity/core.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
@@ -53,7 +53,7 @@ bool ReadHavenRadius(Il2CppObject *provider, float &radius)
          && std::abs(radius - maximum) < 0.01f;
 }
 
-void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, Camera *camera)
+void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, unity::Camera *camera)
 {
   // Native input, constraints and endpoint updates run first. Only this blend's
   // newly generated output is extended; endpoint assets and normalized LOD stay native.
@@ -91,7 +91,7 @@ void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, C
       || !std::isfinite(maximum) || !std::isfinite(ratio) || minimum < 0.0f || maximum > 1.0f || maximum <= minimum)
     return;
 
-  Vector3       position{};
+  unity::Vector3 position{};
   HavenRotation ar{}, br{};
   float         af = 0.0f, bf = 0.0f;
   bool          source_orthographic = false, target_orthographic = false, result_orthographic = false;

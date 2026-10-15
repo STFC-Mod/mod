@@ -42,3 +42,5 @@ inline const MethodInfo* Resolve(Il2CppClass* cls, const char* name, bool is_sta
 inline void* Pointer(const MethodInfo* method)
 { return method ? reinterpret_cast<void*>(method->methodPointer) : nullptr; }
 } // namespace method_contract
+
+namespace il2cpp { namespace contract = ::method_contract; }

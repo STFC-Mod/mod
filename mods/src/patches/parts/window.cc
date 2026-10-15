@@ -1,13 +1,16 @@
-// The game window on Windows: free resizing, the -ccm profile in the title bar, and the monitor's DPI scale.
+// The game window on Windows: free resizing, the -ccm profile in the title bar, allow_cursor, and the monitor's DPI
+// scale.
 
 #include "patches/patches.h"
 
 #if _WIN32
 #include "config.h"
 #include "file.h"
+#include "prime/Hub.h"
+#include <unity/ui.h>
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-#include <spud/detour.h>
 
 #include <Windows.h>
 
@@ -15,13 +18,6 @@
 
 namespace
 {
-struct AspectRatioConstraintHandler {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Utils", "AspectRatioConstraintHandler">;
-
-  static WNDPROC _unityWndProc()
-  { return reinterpret_cast<WNDPROC>(Class::Field<"_unityWndProc", intptr_t>()); }
-};
-
 // The first visible, unowned top-level window of this process. Found once it exists, then cached.
 HWND GameWindow()
 {
@@ -67,7 +63,7 @@ bool ApplyProfileTitle()
 // with a tested trigger if the fallback is still seen.
 // With free_resize the original is skipped: the game's per-frame aspect-ratio enforcement is what would snap the
 // window back.
-void AspectRatioConstraintHandler_Update(auto original, void* _this)
+void AspectRatioConstraintHandler_Update_Hook(auto original, void* _this)
 {
   static bool title_pending = !File::Profile().empty();
   if (title_pending && ApplyProfileTitle())
@@ -76,17 +72,41 @@ void AspectRatioConstraintHandler_Update(auto original, void* _this)
     original(_this);
 }
 
-intptr_t AspectRatioConstraintHandler_WndProc(auto original, HWND hWnd, uint32_t msg, intptr_t wParam, intptr_t lParam)
+// allow_cursor = false: the plain arrow, never clipped to the window.
+void Cursor_SetCursor_Hook(auto original, void* _this, ptrdiff_t texture, unity::Vector2* hotspot, int mode)
+{
+  if (Config::Get().graphics.allow_cursor)
+    return original(_this, texture, hotspot, mode);
+  SetCursor(LoadCursor(NULL, IDC_ARROW));
+  ClipCursor(nullptr);
+}
+
+intptr_t AspectRatioConstraintHandler_WndProc_Hook(auto original, HWND hWnd, uint32_t msg, intptr_t wParam,
+                                                   intptr_t lParam)
 {
   // Skip the game's aspect-ratio clamp and hand the message straight to Unity. The message arrives in the form of
   // the window's current procedure (the game's, installed through its own P/Invoke), and the A and W calls each
   // convert from their own form; the wrong one garbles non-ASCII text such as chat input.
   if (Config::Get().graphics.free_resize) {
     const auto forward = IsWindowUnicode(hWnd) ? CallWindowProcW : CallWindowProcA;
-    return forward(AspectRatioConstraintHandler::_unityWndProc(), hWnd, msg, wParam, lParam);
+    return forward(reinterpret_cast<WNDPROC>(AspectRatioConstraintHandler::unityWndProc()), hWnd, msg, wParam, lParam);
   }
   return original(hWnd, msg, wParam, lParam);
 }
+
+void InstallFreeResize()
+{
+  auto update  = AspectRatioConstraintHandler::Class::Method("Update");
+  auto wndproc = AspectRatioConstraintHandler::Class::Method("WndProc");
+  if (!update || !wndproc)
+    return;
+
+  IL2CPP_HOOK(update, AspectRatioConstraintHandler_Update_Hook);
+  IL2CPP_HOOK(wndproc, AspectRatioConstraintHandler_WndProc_Hook);
+}
+
+void InstallCursor()
+{ IL2CPP_HOOK(unity::Cursor::Method("SetCursor_Injected"), Cursor_SetCursor_Hook); }
 } // namespace
 
 float WindowDpiScale(bool refresh)
@@ -113,16 +133,9 @@ float WindowDpiScale(bool refresh)
   return scale;
 }
 
-void InstallFreeResizeHooks()
-{
-  auto update  = AspectRatioConstraintHandler::Class::Method("Update");
-  auto wndproc = AspectRatioConstraintHandler::Class::Method("WndProc");
-  if (!update || !wndproc)
-    return;
-
-  SPUD_STATIC_DETOUR(update.Pointer(), AspectRatioConstraintHandler_Update);
-  SPUD_STATIC_DETOUR(wndproc.Pointer(), AspectRatioConstraintHandler_WndProc);
-}
+const Feature kFreeResize{"FreeResize", &Config::Patches::freeresizehooks, InstallFreeResize};
+// TODO: allow_cursor is not a test patch; it sits in testpatches only because it always has.
+const Feature kCursor{"Cursor", &Config::Patches::testpatches, InstallCursor};
 #else
 float WindowDpiScale(bool)
 { return 1.0f; }

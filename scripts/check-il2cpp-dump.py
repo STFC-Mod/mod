@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check the IL2CPP bindings in mods/src against an Il2CppDumper dump.cs.
+"""Check the IL2CPP bindings under src/ against an Il2CppDumper dump.cs.
 
   check-il2cpp-dump.py check <dump.cs> [--old <dump.cs>]
       Every binding class, member and hook target used in the source must exist in the dump with
@@ -21,7 +21,7 @@ import os
 import re
 from collections import defaultdict
 
-SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'mods', 'src')
+SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
 
 TYPE_HEAD = re.compile(
     r'^(?:\[.*\]\s*)?(?:(?:public|private|protected|internal|static|sealed|abstract|readonly|ref|unsafe|partial)\s+)*'
@@ -137,7 +137,10 @@ class Dump:
 
 CLASS = r'il2cpp::Class<\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*>'
 USE = re.compile(r'(?<![\w:])(Class::)?(Get|Set|Field|SetField|Call)<\s*"([^"]+)"')
-HOOK = re.compile(r'(?<![\w:])(\w+)::(?:Class::)?Method\(\s*"([^"]+)"\s*(?:,\s*(\d+|\{[^}]*\}))?\)')
+# The owner may carry a namespace: unity::Cursor::Method("SetCursor_Injected").
+HOOK = re.compile(r'(?<![\w:])(?:\w+::)*?(\w+)::(?:Class::)?Method\(\s*"([^"]+)"\s*(?:,\s*(\d+|\{[^}]*\}))?\)')
+# Static uses through a class alias outside any binding struct: ObjectClass::Call<"Destroy">(object).
+ALIAS_USE = re.compile(r'(?<![\w:])(\w+)::(Get|Set|Field|SetField|Call)<\s*"([^"]+)"')
 KIND = {'Get': 'prop', 'Set': 'prop', 'Field': 'field', 'SetField': 'field', 'Call': 'method'}
 
 
@@ -158,7 +161,8 @@ def call_arity(text):
 def scan_source(root):
     """Returns ({binding name: (asm, ns, class)}, [(file, owner, kind, member, static, arity)])."""
     classes, uses = {}, []
-    for dirpath, _, files in os.walk(root):
+    for dirpath, _, files in (entry for directory in ('mods/src', 'libs')
+                              for entry in os.walk(os.path.join(root, directory))):
         if os.sep + 'proto' in dirpath:
             continue
         for f in files:
@@ -166,8 +170,16 @@ def scan_source(root):
                 continue
             path = os.path.join(dirpath, f)
             text = open(path, encoding='utf-8', errors='replace').read()
+            aliases = set()
             for m in re.finditer(r'using\s+(\w+)\s*=\s*' + CLASS, text):
                 classes.setdefault(m.group(1), m.group(2, 3, 4))
+                if m.group(1) != 'Class':
+                    aliases.add(m.group(1))
+            for u in ALIAS_USE.finditer(text):
+                if u.group(1) in aliases:
+                    kind = KIND[u.group(2)]
+                    arity = call_arity(text[u.end():]) if kind == 'method' else None
+                    uses.append((path, u.group(1), kind, u.group(3), True, arity))
             for m in re.finditer(r'^\s*struct\s+(\w+)[^;{]*\{', text, re.M):
                 i, depth = m.end(), 1
                 while i < len(text) and depth:

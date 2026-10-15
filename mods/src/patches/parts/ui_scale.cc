@@ -1,17 +1,17 @@
 // UI, object viewer, and system ship scaling, and the hotkeys that adjust them at runtime.
 
 #include "config.h"
-#include "patches/object_tracker.h"
 #include "patches/patches.h"
 #include "str_utils.h"
 
-#include <prime/fleet.h>
-#include <prime/ui.h>
-#include <prime/unity.h>
+#include "prime/fleet.h"
+#include "prime/ui.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
+#include <unity/tracker.h>
+#include <unity/ui.h>
 
 #include <algorithm>
 #include <cmath>
@@ -35,9 +35,9 @@ void RescaleLoadedShips(float old_multiplier, float new_multiplier)
     return;
 
   const auto ratio = new_multiplier / old_multiplier;
-  for (auto* selector : ObjectFinder<FleetMeshSelector>::GetAll()) {
+  for (auto* selector : unity::Instances<FleetMeshSelector>()) {
     auto* object    = selector ? selector->LoadedObject() : nullptr;
-    auto* transform = object ? object->Get<"transform", Transform*>() : nullptr;
+    auto* transform = object ? object->transform() : nullptr;
     if (!transform)
       continue;
     const auto scale = transform->localScale();
@@ -70,19 +70,31 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 
   auto factor = ui_scale * WindowDpiScale();
   factor      = std::isnan(factor) ? 1.0f : std::clamp(factor, 0.1f, 5.0f);
-  // Property setter, not the managed SetScaleFactor method; the scaler applies it on its next Update.
   if (auto* scaler = _this->canvasRootScaler())
-    scaler->set_scaleFactor(factor);
+    scaler->SetScaleFactor(factor);
 }
 
-void CanvasController_Show(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
+void CanvasController_Show_Hook(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
 {
   const auto viewer_scale = Config::Get().graphics.ui_scale_viewer;
-  if (_this && viewer_scale != 0.0f && StringIs(_this->name(), "ObjectViewerTemplate_Canvas")) {
+  if (_this && viewer_scale != 0.0f && il2cpp::Equals(_this->name(), "ObjectViewerTemplate_Canvas")) {
     if (auto* transform = _this->transform())
       transform->SetLocalScale({viewer_scale, viewer_scale, viewer_scale});
   }
   return original(_this, desiredEntryPoint, instant);
+}
+
+void InstallUiScale()
+{
+  IL2CPP_HOOK(SystemViewShip::Method("TryGetShipAssetBundleResource", 2),
+              SystemViewShip_TryGetShipAssetBundleResource_Hook);
+
+  IL2CPP_HOOK(ScreenManager::Class::Method("UpdateCanvasRootScaleFactor"),
+              ScreenManager_UpdateCanvasRootScaleFactor_Hook);
+
+  IL2CPP_HOOK(CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}), CanvasController_Show_Hook);
+
+  WindowDpiScale(true);
 }
 } // namespace
 
@@ -124,18 +136,4 @@ void AdjustUiShipScale(bool up)
   RescaleLoadedShips(old_scale, config.graphics.ui_scale_ship);
 }
 
-void InstallUiScaleHooks()
-{
-  using SystemViewShip = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "SystemViewShip">;
-
-  if (auto method = SystemViewShip::Method("TryGetShipAssetBundleResource", 2))
-    SPUD_STATIC_DETOUR(method.Pointer(), SystemViewShip_TryGetShipAssetBundleResource_Hook);
-
-  if (auto method = ScreenManager::Class::Method("UpdateCanvasRootScaleFactor"))
-    SPUD_STATIC_DETOUR(method.Pointer(), ScreenManager_UpdateCanvasRootScaleFactor_Hook);
-
-  if (auto method = CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}))
-    SPUD_STATIC_DETOUR(method.Pointer(), CanvasController_Show);
-
-  WindowDpiScale(true);
-}
+const Feature kUiScale{"UiScale", &Config::Patches::uiscalehooks, InstallUiScale};

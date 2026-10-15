@@ -27,12 +27,12 @@ struct Subscription {
   BaselineCallback on_baseline = nullptr;
 };
 
-// Registers a process-lifetime fleet-state observer. The first subscription asks for the ScreenManager.Update tick;
-// with no subscriptions, Fleet Watch performs no scans or IL2CPP work.
+// Registers a process-lifetime fleet-state observer. With no subscriptions, Fleet Watch performs no scans or IL2CPP
+// work.
 // Register during patch installation. Callbacks run synchronously on the game thread, and Transition::fleet is valid
 // only for the duration of the callback.
 bool Subscribe(Subscription subscription);
 
-// Called from the ScreenManager.Update tick. Consumers should use Subscribe rather than calling this directly.
+// Runs once a frame from the subscriber's frame work (fleet sync, the only subscriber).
 void Tick();
 } // namespace fleet_watch

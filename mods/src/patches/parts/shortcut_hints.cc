@@ -3,88 +3,65 @@
 // action that replaces it.
 
 #include "config.h"
-#include "patches/object_tracker.h"
 #include "patches/patches.h"
 #include "patches/ship_shortcut_hint.h"
 #include "patches/shortcuts.h"
 #include "prime/fleet.h"
 #include "str_utils.h"
+#include <unity/tracker.h>
 
-#include <prime/ui.h>
+#include "prime/ui.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
 
 #include <array>
 #include <string_view>
 
 namespace
 {
-struct InputAction : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputAction">;
-
-  Il2CppString* name()
-  { return Get<"name", Il2CppString*>(); }
-};
-
-struct InputActionReference : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.InputSystem", "UnityEngine.InputSystem", "InputActionReference">;
-
-  InputAction* action()
-  { return Get<"action", InputAction*>(); }
-};
-
-struct ShortcutKeybindHint : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutKeybindHint">;
-
-  InputActionReference* inputAction()
-  { return Field<"_inputAction", InputActionReference*>(); }
-  TextLocalizer* keyTextLocalizer()
-  { return Field<"_keyTextLocalizer", TextLocalizer*>(); }
-};
-
 struct NativeAction {
   std::string_view name;
-  GameFunction     primary;
-  GameFunction     fallback = GameFunction::Max;
+  Action           primary;
+  Action           fallback = Action::kCount;
 };
 
 // The game's input action names and the mod actions that replace them.
 constexpr auto kNativeActions = std::to_array<NativeAction>({
-    {"interior_view", GameFunction::ShowStationInterior},
-    {"exterior_view", GameFunction::ShowStationExterior},
-    {"system_view", GameFunction::ShowSystem},
-    {"galaxy_view", GameFunction::ShowGalaxy},
-    {"events", GameFunction::ShowEvents},
-    {"ship_a", GameFunction::SelectShip1},
-    {"ship_b", GameFunction::SelectShip2},
-    {"ship_c", GameFunction::SelectShip3},
-    {"ship_d", GameFunction::SelectShip4},
-    {"ship_e", GameFunction::SelectShip5},
-    {"ship_f", GameFunction::SelectShip6},
-    {"ship_g", GameFunction::SelectShip7},
-    {"ship_h", GameFunction::SelectShip8},
-    {"alliance", GameFunction::ShowAlliance},
-    {"chat", GameFunction::ShowChat},
-    {"side_chat", GameFunction::ShowChatSide1, GameFunction::ShowChatSide2},
-    {"away_teams", GameFunction::ShowAwayTeam},
-    {"missions", GameFunction::ShowMissions},
-    {"daily_goals", GameFunction::ShowDaily},
-    {"ship_locate", GameFunction::SelectCurrent},
-    {"ship_manage", GameFunction::ShowShips},
-    {"research", GameFunction::ShowResearch},
-    {"consumables", GameFunction::ShowExoComp},
-    {"ship_recall", GameFunction::ActionRecall},
-    {"show_keybindings", GameFunction::ToggleShortcutHints},
-    {"gifts", GameFunction::ShowGifts},
-    {"help_alliance", GameFunction::ShowAllianceHelp},
-    {"officers", GameFunction::ShowOfficers},
-    {"factions", GameFunction::ShowFactions},
-    {"items", GameFunction::ShowInventory},
-    {"refinery", GameFunction::ShowRefinery},
-    {"commanders", GameFunction::ShowCommander},
-    {"challenges", GameFunction::ShowQTrials},
+    {"interior_view", Action::kShowStationInterior},
+    {"exterior_view", Action::kShowStationExterior},
+    {"system_view", Action::kShowSystem},
+    {"galaxy_view", Action::kShowGalaxy},
+    {"events", Action::kShowEvents},
+    {"ship_a", Action::kSelectShip1},
+    {"ship_b", Action::kSelectShip2},
+    {"ship_c", Action::kSelectShip3},
+    {"ship_d", Action::kSelectShip4},
+    {"ship_e", Action::kSelectShip5},
+    {"ship_f", Action::kSelectShip6},
+    {"ship_g", Action::kSelectShip7},
+    {"ship_h", Action::kSelectShip8},
+    {"alliance", Action::kShowAlliance},
+    {"chat", Action::kShowChat},
+    {"side_chat", Action::kShowChatSide1, Action::kShowChatSide2},
+    {"away_teams", Action::kShowAwayTeam},
+    {"missions", Action::kShowMissions},
+    {"daily_goals", Action::kShowDaily},
+    {"ship_locate", Action::kSelectCurrent},
+    {"ship_manage", Action::kShowShips},
+    {"research", Action::kShowResearch},
+    {"consumables", Action::kShowExoComp},
+    {"ship_recall", Action::kActionRecall},
+    {"show_keybindings", Action::kToggleShortcutHints},
+    {"gifts", Action::kShowGifts},
+    {"help_alliance", Action::kShowAllianceHelp},
+    {"officers", Action::kShowOfficers},
+    {"factions", Action::kShowFactions},
+    {"items", Action::kShowInventory},
+    {"refinery", Action::kShowRefinery},
+    {"commanders", Action::kShowCommander},
+    {"challenges", Action::kShowQTrials},
 });
 
 constexpr const NativeAction* FindNativeAction(std::string_view name)
@@ -105,7 +82,7 @@ consteval bool NativeActionsAreUnique()
 }
 
 static_assert(NativeActionsAreUnique());
-static_assert(FindNativeAction("side_chat")->fallback == GameFunction::ShowChatSide2);
+static_assert(FindNativeAction("side_chat")->fallback == Action::kShowChatSide2);
 static_assert(FindNativeAction("unknown") == nullptr);
 
 // The badge text for a native action: its mod binding, or "-" when it has none.
@@ -115,9 +92,9 @@ std::string BadgeText(std::string_view action_name)
   if (!action)
     return "-";
   auto hint_action = action->primary;
-  if (hint_action >= GameFunction::SelectShip1 && hint_action <= GameFunction::SelectShip8) {
+  if (hint_action >= Action::kSelectShip1 && hint_action <= Action::kSelectShip8) {
     // Use the same context array as FleetBarViewController::RequestSelect(int, bool), not the native dock index.
-    auto* bar     = ObjectFinder<FleetBarViewController>::Get();
+    auto* bar     = unity::Newest<FleetBarViewController>();
     auto* context = bar ? bar->CanvasContext() : nullptr;
     auto* fleets  = context ? context->FleetData() : nullptr;
     hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->size() : 0, [fleets](std::size_t position) {
@@ -125,9 +102,10 @@ std::string BadgeText(std::string_view action_name)
       return fleet ? fleet->Index() : -1;
     });
   }
-  auto hint = hint_action == GameFunction::Max ? std::string{} : Shortcut::Hint(hint_action);
+  auto hint = hint_action == Action::kCount ? std::string{} : Shortcut::Hint(hint_action);
 
-  if (hint.empty() && action->fallback != GameFunction::Max)
+  if (hint.empty() && action->fallback != Action::kCount)
+
     hint = Shortcut::Hint(action->fallback);
   return hint.empty() ? "-" : hint;
 }
@@ -156,7 +134,7 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _th
   auto* action    = reference ? reference->action() : nullptr;
   auto* name      = action ? action->name() : nullptr;
   if (name)
-    label->OverrideLocalizedText(il2cpp_string_new(BadgeText(to_string(name)).c_str()));
+    label->OverrideLocalizedText(il2cpp::NewString(BadgeText(il2cpp::ToUtf8(name)).c_str()));
 }
 
 void ShortcutKeybindHint_UpdateVisibility_Hook(auto original, ShortcutKeybindHint* _this, bool visible)
@@ -167,7 +145,7 @@ void ShortcutKeybindHint_UpdateVisibility_Hook(auto original, ShortcutKeybindHin
 }
 } // namespace
 
-bool ToggleShortcutBadges()
+bool ToggleKeybindBadges()
 {
   if (!installed)
     return false;
@@ -180,17 +158,17 @@ bool ToggleShortcutBadges()
   return true;
 }
 
-void HideShortcutBadges()
+void HideKeybindBadges()
 {
   auto* manager = installed ? ShortcutsManager::Instance() : nullptr;
   if (manager && manager->ShowKeybindings())
     manager->SetShowKeybindings(false);
 }
 
-void InstallShortcutHintHooks()
+void InstallKeybindBadges()
 {
   // Settings are parsed before installation; NONE, empty and invalid bindings opt out.
-  if (!Shortcut::HasBinding(GameFunction::ToggleShortcutHints))
+  if (!Shortcut::HasBinding(Action::kToggleShortcutHints))
     return;
 
   // Only the detour targets gate the feature. Members the badge path reads resolve on first use; a missing one is
@@ -200,7 +178,6 @@ void InstallShortcutHintHooks()
   if (!update_text || !update_visibility)
     return;
 
-  original_update_text = SPUD_STATIC_DETOUR(update_text.Pointer(), ShortcutKeybindHint_UpdateText_Hook);
-  SPUD_STATIC_DETOUR(update_visibility.Pointer(), ShortcutKeybindHint_UpdateVisibility_Hook);
-  installed = true;
+  original_update_text = IL2CPP_HOOK(update_text, ShortcutKeybindHint_UpdateText_Hook);
+  installed = original_update_text && IL2CPP_HOOK(update_visibility, ShortcutKeybindHint_UpdateVisibility_Hook);
 }

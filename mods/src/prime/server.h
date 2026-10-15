@@ -1,6 +1,7 @@
 #pragma once
 
-// Server payloads: entity groups, realtime data, battle results, and buff data.
+// The game server (Digit.PrimeServer): its sessions, the entity groups and realtime messages it sends, and the
+// server models and services the mod reads, such as battle results, hull specs, buffs and events.
 
 #include <il2cpp/il2cpp.h>
 
@@ -18,7 +19,8 @@ struct ByteString : il2cpp::Object {
 struct EntityGroup : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntityGroup">;
 
-  enum Type : int32_t {
+  // The payload type, which also says which protobuf message the group's bytes hold.
+  enum class Kind : int32_t {
     UserProfiles                             = 0,   // 0x00000000
     HullSpecs                                = 1,   // 0x00000001
     ResourceSpecs                            = 2,   // 0x00000002
@@ -269,8 +271,8 @@ struct EntityGroup : il2cpp::Object {
     ResearchConfig       = 91100, // 0x000163DC
   };
 
-  Type Type_()
-  { return Get<"Type", Type>(); }
+  Kind Type()
+  { return Get<"Type", Kind>(); }
   ByteString* Group()
   { return Get<"Group", ByteString*>(); }
 };
@@ -283,45 +285,45 @@ struct ServiceResponse : il2cpp::Object {
   { return Get<"EntityGroups", il2cpp::List<EntityGroup*>*>(); }
 };
 
-// The platform service's responses, Digit.Platform.Models. They pass through the same model registry code as game
-// server responses, but their entity groups have their own type enum.
+// The platform service's responses (store offers among them), Digit.Platform.Models. They pass through the same
+// model registry code as game server responses, but their entity groups have a type enum of their own.
 struct PlatformEntityGroup : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Platform.Models", "EntityGroup">;
 
-  enum Type : int32_t {
-    StaticTranslations             = 0,
-    DynamicTranslations            = 1,
-    StoreOffers                    = 2,
-    OrderVirtualGood               = 3,
-    Json                           = 4,
-    TournamentBundles              = 5,
-    EventRanking                   = 6,
-    EventsModel                    = 7,
-    LeaderboardRanking             = 8,
-    LeaderboardsModel              = 9,
-    EventNotification              = 10,
-    PlayerStats                    = 11,
-    GameNews                       = 12,
-    FileSignedUrls                 = 13,
-    GameInfo                       = 14,
-    PlayerProfiles                 = 15,
-    PlayerlifecycleNotification    = 16,
-    MinigamesList                  = 17,
-    GameNewsVideo                  = 18,
-    PromoCodeRedeem                = 19,
-    StoreGroups                    = 20,
-    AllianceGameState              = 21,
-    AllianceGameChangeNotification = 22,
-    ApmFiltersStatus               = 23,
-    ApmFiltersUpdated              = 24,
-    ListReferralConnections        = 25,
-    RewardRedeem                   = 26,
-    LoginStreakRecalculate         = 27,
-    OrdersVirtualGood              = 28,
+  enum class Kind : int32_t {
+    StaticTranslations             = 0,  // 0x00000000
+    DynamicTranslations            = 1,  // 0x00000001
+    StoreOffers                    = 2,  // 0x00000002
+    OrderVirtualGood               = 3,  // 0x00000003
+    Json                           = 4,  // 0x00000004
+    TournamentBundles              = 5,  // 0x00000005
+    EventRanking                   = 6,  // 0x00000006
+    EventsModel                    = 7,  // 0x00000007
+    LeaderboardRanking             = 8,  // 0x00000008
+    LeaderboardsModel              = 9,  // 0x00000009
+    EventNotification              = 10, // 0x0000000A
+    PlayerStats                    = 11, // 0x0000000B
+    GameNews                       = 12, // 0x0000000C
+    FileSignedUrls                 = 13, // 0x0000000D
+    GameInfo                       = 14, // 0x0000000E
+    PlayerProfiles                 = 15, // 0x0000000F
+    PlayerlifecycleNotification    = 16, // 0x00000010
+    MinigamesList                  = 17, // 0x00000011
+    GameNewsVideo                  = 18, // 0x00000012
+    PromoCodeRedeem                = 19, // 0x00000013
+    StoreGroups                    = 20, // 0x00000014
+    AllianceGameState              = 21, // 0x00000015
+    AllianceGameChangeNotification = 22, // 0x00000016
+    ApmFiltersStatus               = 23, // 0x00000017
+    ApmFiltersUpdated              = 24, // 0x00000018
+    ListReferralConnections        = 25, // 0x00000019
+    RewardRedeem                   = 26, // 0x0000001A
+    LoginStreakRecalculate         = 27, // 0x0000001B
+    OrdersVirtualGood              = 28, // 0x0000001C
   };
 
-  Type Type_()
-  { return Get<"Type", Type>(); }
+  Kind Type()
+  { return Get<"Type", Kind>(); }
   ByteString* Group()
   { return Get<"Group", ByteString*>(); }
 };
@@ -333,30 +335,105 @@ struct PlatformServiceResponse : il2cpp::Object {
   { return Get<"EntityGroups", il2cpp::List<PlatformEntityGroup*>*>(); }
 };
 
-enum DataType : int32_t {
-  Unspecified = -1,
-  JSON        = 0,
-  MsgPack     = 1,
-  ProtoBuff   = 2,
-  UrlEncoded  = 3,
+// Hands each server response's entity groups to the client's models.
+using GameServerModelRegistry =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry">;
+// The client's session with the game server.
+using GameServer = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServer">;
+
+// Realtime (Centrifugo) messages that change an entity slot.
+using SlotAssignRtcParser =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotAssignRtcParser">;
+using SlotClearRtcParser =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotClearRtcParser">;
+
+// Digit.Networking.RTC.CentrifugoInfo, a value type passed by value: a hook must keep it by value so the arguments
+// after it keep their ABI positions.
+struct CentrifugoInfo {
+  Il2CppString* Channel;
+  int32_t       Offset;
 };
+static_assert(sizeof(CentrifugoInfo) == 16);
 
 struct RealtimeDataPayload : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Networking.RTC", "RealtimeDataPayload">;
 
-  // Managed DataType is a string, not the DataType enum above.
+  // The DataType enum as a number in a string: "0" is JSON.
   Il2CppString* DataType()
   { return Get<"DataType", Il2CppString*>(); }
-  Il2CppString* ChannelId()
-  { return Get<"ChannelId", Il2CppString*>(); }
-  int32_t InstanceIdJson()
-  { return Get<"InstanceIdJson", int32_t>(); }
   Il2CppString* Target()
   { return Get<"Target", Il2CppString*>(); }
-  Il2CppString* Source()
-  { return Get<"Source", Il2CppString*>(); }
   Il2CppString* Data()
   { return Get<"Data", Il2CppString*>(); }
+};
+
+enum class HullType : int32_t {
+  Any          = -1,
+  Destroyer    = 0,
+  Survey       = 1,
+  Explorer     = 2,
+  Battleship   = 3,
+  Defense      = 4,
+  ArmadaTarget = 5,
+};
+
+struct IdRefs : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "IdRefs">;
+
+  Il2CppString* locaStringId()
+  { return Field<"_locaStringId", Il2CppString*>(); }
+  int64_t locaId()
+  { return Field<"locaId_", int64_t>(); }
+};
+
+struct HullSpec : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "HullSpec">;
+
+  int64_t Id()
+  { return Field<"id_", int64_t>(); }
+  // The internal key, such as "Hull_L30_Destroyer_Klingon_LIVE".
+  Il2CppString* name()
+  { return Field<"name_", Il2CppString*>(); }
+  HullType Type()
+  { return Get<"Type", HullType>(); }
+  IdRefs* idRefs()
+  { return Field<"idRefs_", IdRefs*>(); }
+};
+
+// IShipModel, read on each ship's runtime class.
+struct ShipModel : il2cpp::Object {
+  HullSpec* Hull()
+  { return Get<"Hull", HullSpec*>(); }
+  float HullDamage()
+  { return Get<"HullDamage", float>(); }
+};
+
+struct FleetService : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "FleetService">;
+
+  ShipModel* GetShip(int64_t ship_id)
+  { return Call<"GetShip", ShipModel*>(ship_id); }
+};
+
+struct SpecService : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "SpecService">;
+
+  HullSpec* GetHull(int64_t hullId)
+  { return Call<"GetHull", HullSpec*>(hullId); }
+};
+
+struct UserProfile : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "UserProfile">;
+
+  // NPC and marauder profiles have no name; the game names them by this localization id.
+  int64_t locaId()
+  { return Field<"_locaId", int64_t>(); }
+  Il2CppString* name()
+  { return Field<"name_", Il2CppString*>(); }
+  Il2CppString* UserId()
+  { return Get<"UserId", Il2CppString*>(); }
+  int32_t Level()
+  { return Get<"Level", int32_t>(); }
 };
 
 enum class BattleType : int32_t {
@@ -376,263 +453,130 @@ enum class BattleType : int32_t {
   PveCuttingBeam              = 13,
   PvpCuttingBeam              = 14,
   PveChainShot                = 15,
-  PvpChainShot                = 16
+  PvpChainShot                = 16,
 };
 
+// What a battle toast's Data is.
 struct BattleResultHeader : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "BattleResultHeader">;
 
-  Il2CppObject* get_PlayerUserProfile()
-  { return Get<"PlayerUserProfile", Il2CppObject*>(); }
-  Il2CppObject* get_EnemyUserProfile()
-  { return Get<"EnemyUserProfile", Il2CppObject*>(); }
-  Il2CppObject* get_SpecService()
-  { return Field<"_specService", Il2CppObject*>(); }
-  int32_t get_BattleType()
-  { return Get<"BattleType", int32_t>(); }
-
+  // The profiles are read untyped and treated as UserProfile, as the game does.
+  UserProfile* PlayerUserProfile()
+  { return static_cast<UserProfile*>(Get<"PlayerUserProfile", Il2CppObject*>()); }
+  UserProfile* EnemyUserProfile()
+  { return static_cast<UserProfile*>(Get<"EnemyUserProfile", Il2CppObject*>()); }
+  SpecService* specService()
+  { return static_cast<SpecService*>(Field<"_specService", Il2CppObject*>()); }
+  BattleType BattleType()
+  { return Get<"BattleType", ::BattleType>(); }
   int64_t PlayerShipHullId()
   { return Get<"PlayerShipHullId", int64_t>(); }
   int64_t EnemyShipHullId()
   { return Get<"EnemyShipHullId", int64_t>(); }
 };
 
-enum class ClientModifierType : int32_t {
-  Invalid                                 = -0x7FFF,
-  FleetOfficerBonusHealth                 = -17,
-  FleetOfficerBonusDefense                = -16,
-  FleetOfficerBonusAttack                 = -15,
-  FleetStrength                           = -14,
-  FleetOfficerRating                      = -13,
-  FleetSensorRating                       = -12,
-  FleetDeflectorRating                    = -11,
-  FleetHealthRating                       = -10,
-  FleetDefenseRating                      = -9,
-  FleetOffenseRating                      = -8,
-  FleetGrade                              = -7,
-  ShipShieldDamage                        = -6,
-  ShipHullDamage                          = -5,
-  FleetMiningBonus                        = -4,
-  ShipPlating                             = -3,
-  ShipAbsorption                          = -2,
-  ShipDamagePerRound                      = -1,
-  ModEnergyDamage                         = 0,
-  ModKineticDamage                        = 1,
-  ModAllDamage                            = 2,
-  ModShotsPerAttack                       = 3,
-  ModAllLoadSpeed                         = 4,
-  ModAllReloadSpeed                       = 5,
-  ModAccuracy                             = 6,
-  ModArmorPiercing                        = 7,
-  ModShieldPiercing                       = 8,
-  ModCritChance                           = 9,
-  ModCritDamage                           = 10,
-  ModShipDodge                            = 11,
-  ModShipArmor                            = 12,
-  ModShields                              = 13,
-  ModCptManeuverEffect                    = 14,
-  ModOffAbilityEffect                     = 15,
-  ModShieldHpRepair                       = 16,
-  ModHullHpRepair                         = 17,
-  ModAddState                             = 18,
-  ModRemoveState                          = 19,
-  ModParsteelProtection                   = 20,
-  ModTritaniumProtection                  = 21,
-  ModDilithiumProtection                  = 22,
-  ModCombatParsteelReward                 = 23,
-  ModCombatTritaniumReward                = 24,
-  ModCombatDilithiumReward                = 25,
-  ModCombatIntelReward                    = 26,
-  ModCombatLootDropChance                 = 27,
-  ModCombatLootDropQuantity               = 28,
-  ModCombatXpReward                       = 29,
-  ModMissionsParsteelReward               = 30,
-  ModMissionsTritaniumReward              = 31,
-  ModMissionsDilithiumReward              = 32,
-  ModMissionsIntelReward                  = 33,
-  ModMissionsLootDropChance               = 34,
-  ModMissionsLootDropQuantity             = 35,
-  ModMissionsXpReward                     = 36,
-  ModFactionPointsFederationReward        = 37,
-  ModFactionPointsKlingonReward           = 38,
-  ModFactionPointsRomulanReward           = 39,
-  ModFactionPointsAllReward               = 40,
-  ModMiningRateParsteel                   = 41,
-  ModMiningRateTritanium                  = 42,
-  ModMiningRateDilithium                  = 43,
-  ModMiningRateOre                        = 44,
-  ModMiningRateHydrocarbon                = 45,
-  ModMiningRewardParsteel                 = 46,
-  ModMiningRewardTritanium                = 47,
-  ModMiningRewardDilithium                = 48,
-  ModMiningRewardOre                      = 49,
-  ModMiningRewardHydrocarbon              = 50,
-  ModRepairCostsParsteel                  = 51,
-  ModRepairCostsTritanium                 = 52,
-  ModRepairCostsDilithium                 = 53,
-  ModRepairCostsAll                       = 54,
-  ModRepairTime                           = 55,
-  ModOfficerStatAttack                    = 56,
-  ModOfficerStatDefense                   = 57,
-  ModOfficerStatHealth                    = 58,
-  ModOfficerStatAll                       = 59,
-  ModShieldHpMax                          = 60,
-  ModHullHpMax                            = 61,
-  ModImpulseSpeed                         = 62,
-  ModWarpSpeed                            = 63,
-  ModWarpDistance                         = 64,
-  ModEnterWarpDelay                       = 65,
-  ModCargoCapacity                        = 66,
-  ModCargoProtection                      = 67,
-  ModAutoRecall                           = 68,
-  ModEnergyLoadSpeed                      = 69,
-  ModKineticLoadSpeed                     = 70,
-  ModEnergyReloadSpeed                    = 71,
-  ModKineticReloadSpeed                   = 72,
-  ModAllDefenses                          = 73,
-  ModAllPiercing                          = 74,
-  ModShieldRegenTime                      = 75,
-  ModShieldMitigation                     = 76,
-  ModResourceProtection                   = 100,
-  ModCombatResourceReward                 = 101,
-  ModMissionResourceReward                = 102,
-  ModFactionPointsRewards                 = 103,
-  ModFactionPointsLosses                  = 104,
-  ModMiningRate                           = 105,
-  ModMiningReward                         = 106,
-  ModRepairCosts                          = 107,
-  ModStarbaseModuleConstructionSpeed      = 108,
-  ModStarbaseModuleConstructionCost       = 109,
-  ModResearchSpeed                        = 110,
-  ModResearchCost                         = 111,
-  ModResourceGeneration                   = 112,
-  ModResourceStorage                      = 113,
-  ModForcefieldRechargeSpeed              = 114,
-  ModForcefieldHp                         = 115,
-  ModComponentCost                        = 116,
-  ModShipConstructionSpeed                = 117,
-  ModShipConstructionCost                 = 118,
-  ModTierUpSpeed                          = 119,
-  ModFactionPointsPenaltyRecution         = 120,
-  ModFactionStoreLootBonus                = 121,
-  ModOfficerLevelUpCost                   = 122,
-  ModOfficerPromoteCost                   = 123,
-  ModScanShip                             = 124,
-  ModScanStation                          = 125,
-  ModScanSystem                           = 126,
-  ModIncomingStationAttackInformation     = 127,
-  ModIncomingStationAttackAdvancedWarning = 128,
-  ModShipScrapResourceBonus               = 129,
-  ModShipScrapLootBonus                   = 130,
-  ModShipScrapSpeed                       = 131,
-  ModAwayMissionSpeed                     = 132,
-  ModAwayMissionResourceRewards           = 133,
-  ModAwayMissionLootBonus                 = 134,
-  ModResourceProducerResourceStorage      = 135,
-  ModWarehouseResourceStorage             = 136,
-  ModVaultResourceStorage                 = 137,
-  ModHullId                               = 138,
-  ModShipInventorySize                    = 139,
-  ModScanCost                             = 140,
-  ModTradeTax                             = 141,
-  ModRepairStation                        = 142,
-  ModArmadaSize                           = 143,
-  ModJumpAndTowCostEff                    = 147,
-  ModSkillCloakingCooldown                = 150,
-  ModSkillCloakingDuration                = 151,
-  ModSkillCloakingCost                    = 152,
-  ModSkillCloakingSneakChance             = 153
+// What an ArmadaCreated toast's Data is. These classes are read on their runtime classes: the toast payload types
+// have moved between client builds, and the fields below are all the mod needs.
+struct ArmadaCreatedData : il2cpp::Object {
+  struct Profile : il2cpp::Object {
+    Il2CppString* name()
+    { return Field<"name_", Il2CppString*>(); }
+    int64_t locaId()
+    { return Field<"_locaId", int64_t>(); }
+  };
+
+  struct Attack : il2cpp::Object {
+    Profile* Owner()
+    { return Field<"<Owner>k__BackingField", Profile*>(); }
+    Profile* TargetUserProfile()
+    { return Field<"<TargetUserProfile>k__BackingField", Profile*>(); }
+    int32_t TargetLevel()
+    { return Field<"<TargetLevel>k__BackingField", int32_t>(); }
+  };
+
+  struct AllianceProfile : il2cpp::Object {
+    Il2CppString* tag()
+    { return Field<"tag_", Il2CppString*>(); }
+  };
+
+  Attack* ArmadaAttack()
+  { return Field<"ArmadaAttack", Attack*>(); }
+  AllianceProfile* Alliance()
+  { return Field<"Alliance", AllianceProfile*>(); }
 };
+
+// Digit.PrimePlatform.Models.EventCategories, a struct around one int32. The binding layer checks the kind, so it
+// is read as the struct, not as an int.
+struct EventCategories {
+  int32_t value;
+};
+
+// What an event toast's Data is.
+struct EventModel : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimePlatform.Models", "EventModel">;
+
+  int32_t category()
+  { return Field<"category_", EventCategories>().value; }
+};
+
+struct ResourceSpec : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ResourceSpec">;
+
+  // Such as "Resource_FactionPoint_Federation".
+  Il2CppString* resourceId()
+  { return Field<"resourceId_", Il2CppString*>(); }
+};
+
+struct ForbiddenTech : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ForbiddenTech">;
+
+  int64_t Id()
+  { return Get<"Id", int64_t>(); }
+};
+
+struct ForbiddenTechSlotParams : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ForbiddenTechSlotParams">;
+
+  // The ship the tech is equipped on, whether or not it has a dock.
+  int64_t OwnerId()
+  { return Get<"OwnerId", int64_t>(); }
+};
+
+struct EntitySlot : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
+
+  ForbiddenTechSlotParams* forbiddenTechSlotParams()
+  { return Get<"ForbiddenTechSlotParams", ForbiddenTechSlotParams*>(); }
+};
+
+struct InventoryItem : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem">;
+
+  ResourceSpec* resourceSpec()
+  { return Field<"_resourceSpec", ResourceSpec*>(); }
+  ForbiddenTech* forbiddenTech()
+  { return Get<"ForbiddenTech", ForbiddenTech*>(); }
+};
+
+// The context of a cargo bar.
+using CargoProgressData =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "CargoProgressData">;
+
+// Works out which buffs apply. The hooks only pass the buff types through.
+using BuffService = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "BuffService">;
 
 struct IBuffData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit", "IBuffData">;
-
-  ClientModifierType ModifierType()
-  { return Get<"ModifierType", ClientModifierType>(); }
 };
 
-// Interface binding; the getters dispatch to the receiver's implementation.
 struct IBuffComparer : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "IBuffComparer">;
-
-  int64_t get_HullId()
-  { return Get<"HullID", int64_t>(); }
-  int64_t get_FactionId()
-  { return Get<"FactionID", int64_t>(); }
 };
 
-// Digit.PrimeServer.Models.BuffCondition; only the values the mod or curious readers care about are named.
+// Digit.PrimeServer.Models.ClientModifierType: which stat a buff modifies. The mod passes it through unread.
+enum class ClientModifierType : int32_t {};
+
+// Digit.PrimeServer.Models.BuffCondition; only the value the mod tests is named.
 enum class BuffCondition : int32_t {
-  Invalid                = -1,
-  SelfExplorer           = 0,
-  SelfInterceptor        = 1,
-  SelfBattleship         = 2,
-  SelfSurveyor           = 3,
-  EnemyExplorer          = 4,
-  EnemyInterceptor       = 5,
-  EnemyBattleship        = 6,
-  EnemySentinel          = 8,
-  CondCargoFull          = 9,
-  CondCargoEmpty         = 10,
-  CondSelfMining         = 12,
-  SelfOrSentinelAttacked = 14,
-  // TODO(alexander): Find a better name
-  EnemyStronger                    = 16,
-  CondEnemyHullFaction             = 17,
-  CondEnemyHostile                 = 27,
-  CondEnemyPlayer                  = 28,
-  CondSelfHasMorale                = 33,
-  CondSelfHasHullBreach            = 34,
-  CondSelfIsBurning                = 35,
-  CondEnemyHullBreach              = 37,
-  CondEnemyBurning                 = 38,
-  CondModuleEnergy                 = 39,
-  CondModuleKinetic                = 40,
-  CondHitEnemyWithEnergy           = 41,
-  CondHitEnemyWithKinetic          = 42,
-  CondHullHealthBelow              = 43,
-  CondHullHealthBelowStartOfCombat = 44,
-  // I wonder what could be here...maybe some server only things? Who knows
-  CondSelfShipGrade   = 102,
-  CondSelfHullFaction = 113,
-  CondSelfAtStation   = 114,
-  SelfSentinel        = 116,
-  // TODO(alexander): What wait???? We have the before aswell, why is this a thing again??? see condition 8
-  CondEnemySentinel          = 117,
-  CondResourceId             = 118,
-  CondSelfModuleId           = 119,
-  CondSelfShipgrade1         = 120,
-  CondSelfShipgrade2         = 121,
-  CondSelfShipgrade3         = 122,
-  CondSelfShipgrade4         = 123,
-  CondSelfIsFederation       = 124, // Not sure why they haven't used CondSelfHullFaction for this...but hey whatever
-  CondSelfIsRomulan          = 125,
-  CondSelfIsKlingon          = 126,
-  CondSelfFranklin           = 127,
-  CondSelfIsArmada           = 129,
-  CondSelfIsNotArmada        = 131,
-  CondTargetShipGrade1       = 132,
-  CondTargetShipGrade2       = 133,
-  CondTargetShipGrade3       = 134,
-  CondTargetShipGrade4       = 135,
-  CondSelfHullMudd           = 150,
-  CondSelfHullBotanyBay      = 151,
-  CondSelfHullDiscovery      = 152,
-  CondSelfHullSarcophagus    = 153,
-  CondSelfHullVidar          = 154,
-  CondSelfHullDvor           = 155,
-  CondSelfHullFranklin       = 156,
-  CondSelfHullBlackJellyfish = 157,
-  CondSelfHullFranklin2      = 158,
-  CondSelfHullEnterprise     = 159,
-  CondSelfHullEnterpriseA    = 160,
-  CondSelfHullD4             = 161,
-  CondSelfHullHeghta         = 162,
-  CondSelfHullAugur          = 163,
-  CondSelfHullTribune        = 164,
-  CondSelfHullSaladin        = 165,
-  CondSelfHullCenturion      = 166,
-  CondSelfHullBortas         = 167,
-  CondSelfIsSynciate30       = 203,
-  CondSelfIsMantis           = 207,
+  CondSelfAtStation = 114,
 };

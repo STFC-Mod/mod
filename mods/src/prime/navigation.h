@@ -2,10 +2,9 @@
 
 // System and galaxy navigation: camera zoom and pan, LOD, sections, bookmarks, course prompts.
 
-#include "Hub.h"
-#include "fleet.h"
-#include "ui.h"
-#include "unity.h"
+#include "prime/Hub.h"
+#include "prime/fleet.h"
+#include "prime/ui.h"
 
 #include <il2cpp/il2cpp.h>
 
@@ -29,24 +28,18 @@ struct NavigationLOD : il2cpp::Object {
   { SetField<"<TargetLevel>k__BackingField">(level); }
 };
 
-#pragma pack(push, 1)
-struct vec3 {
-  float x, y, z;
-};
-#pragma pack(pop)
-
 struct NavigationPan : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationPan">;
 
-  void MoveCamera(vec2 delta, bool isMomentum = false)
+  void MoveCamera(unity::Vector2 delta, bool isMomentum = false)
   { Call<"MoveCamera">(delta, isMomentum); }
 
   static bool BlockPan()
   { return Class::Field<"BlockPan", bool>(); }
 
-  Vector2 lastDelta()
-  { return Field<"_lastDelta", Vector2>(); }
-  void SetLastDelta(Vector2 value)
+  unity::Vector2 lastDelta()
+  { return Field<"_lastDelta", unity::Vector2>(); }
+  void SetLastDelta(unity::Vector2 value)
   { SetField<"_lastDelta">(value); }
   bool panningStarted()
   { return Field<"_panningStarted", bool>(); }
@@ -73,11 +66,17 @@ enum class NodeDepth : int32_t {
   Starbase     = 8,
 };
 
+struct MathUtils {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils">;
+
+  // The world point under the screen position `mouse`, as seen by `camera`.
+  static unity::Vector3 GetMouseWorldPos(unity::Camera* camera, unity::Vector3 mouse)
+  { return Class::Call<"GetMouseWorldPos", unity::Vector3>(camera, mouse); }
+};
+
 struct NavigationZoom : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom">;
 
-  void SetViewParameters(float radius, NodeDepth depth)
-  { Call<"SetViewParameters">(radius, depth); }
   void ZoomCameraAtWorldPoint()
   { Call<"ZoomCameraAtWorldPoint">(); }
 
@@ -90,12 +89,10 @@ struct NavigationZoom : il2cpp::Object {
 
   NodeDepth depth()
   { return Field<"_depth", NodeDepth>(); }
-  void SetDepth(NodeDepth value)
-  { SetField<"_depth">(value); }
   ZoomLevels zoomLevel()
   { return Field<"_zoomLevel", ZoomLevels>(); }
-  Camera* sceneCamera()
-  { return Field<"_sceneCamera", Camera*>(); }
+  unity::Camera* sceneCamera()
+  { return Field<"_sceneCamera", unity::Camera*>(); }
 
   void SetZoomtotal(float value)
   { SetField<"_zoomtotal">(value); }
@@ -111,13 +108,9 @@ struct NavigationZoom : il2cpp::Object {
   { return Field<"_viewRadius", float>(); }
   void SetLastZoomDelta(float value)
   { SetField<"_lastZoomDelta">(value); }
-  vec2 zoomLocation()
-  { return Field<"_zoomLocation", vec2>(); }
-  void SetZoomLocation(vec2 value)
+  void SetZoomLocation(unity::Vector2 value)
   { SetField<"_zoomLocation">(value); }
-  vec3 worldPoint()
-  { return Field<"_worldPoint", vec3>(); }
-  void SetWorldPoint(vec3 value)
+  void SetWorldPoint(unity::Vector3 value)
   { SetField<"_worldPoint">(value); }
   void SetFarRatioSystemNormal(float value)
   { SetField<"_farRatioSystemNormal">(value); }
@@ -189,17 +182,16 @@ struct NavigationInteractionUIViewController : il2cpp::Object {
       return false;
     }
     // Button.Press preserves Unity's active/interactable checks and the native join callback.
-    if (auto* button = listener->TheButton()) {
-      button->Press();
-    }
+    listener->Press();
     return true;
   }
 
   bool IsSetCourseVisible()
   {
-    auto* widget = Field<"_setCourseWidget", SetCourseWidget*>();
+    auto* widget     = Field<"_setCourseWidget", SetCourseWidget*>();
     auto* visibility = widget ? widget->visibilityController() : nullptr;
-    return visibility && (visibility->state() == VisibilityState::Visible || visibility->state() == VisibilityState::Show)
+    return visibility
+           && (visibility->state() == VisibilityState::Visible || visibility->state() == VisibilityState::Show)
            && widget->isActiveAndEnabled();
   }
   void OnSetCourseButtonClick()
@@ -219,9 +211,9 @@ struct OrbitFrameProvider : il2cpp::Object {
 struct PlanetViewUtils : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "PlanetViewUtils">;
 
-  // Managed FlatRenderable. Calling this also runs any detour on get_FlatRenderable.
-  void* GetFlatRenderable()
-  { return Get<"FlatRenderable", void*>(); }
+  // The planet's 2D sprite, a Component. Calling this also runs any detour on get_FlatRenderable.
+  unity::Component* FlatRenderable()
+  { return static_cast<unity::Component*>(Get<"FlatRenderable", Il2CppObject*>()); }
 };
 
 struct CoordinateSearchContext : il2cpp::Object {
@@ -250,12 +242,11 @@ struct BookmarksManager : MonoSingleton<BookmarksManager> {
       return;
     }
 
-    auto* zero = il2cpp_string_new("0");
+    auto* zero = il2cpp::NewString("0");
     context->SetDefaultXCoordinate(zero);
     context->SetDefaultYCoordinate(zero);
-    context->SetDefaultSystemInput(il2cpp_string_new(""));
-    Hub::get_SectionManager()->TriggerSectionChange(SectionID::Bookmarks_Search_Coordinates, context, false, false,
-                                                    true);
+    context->SetDefaultSystemInput(il2cpp::NewString(""));
+    Hub::Sections()->TriggerSectionChange(SectionID::Bookmarks_Search_Coordinates, context, false, false, true);
   }
 };
 
@@ -277,9 +268,45 @@ struct CoursePromptPopupWidget : Widget<CoursePromptPopupDataContext> {
   { Call<"OnInstantWarpButtonClick">(); }
 };
 
-struct CoursePromptPopupViewController : ViewController<CoursePromptPopupDataContext> {
+struct CoursePromptPopupViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "CoursePromptPopupViewController">;
 
   CoursePromptPopupWidget* PopupWidget()
   { return Field<"_coursePromptPopupWidget", CoursePromptPopupWidget*>(); }
+};
+
+// TouchKit's touch; a held touch reports Stationary, which the pan ignores.
+struct TKTouch : il2cpp::Object {
+  using Class = il2cpp::Class<"TouchKit", "", "TKTouch">;
+
+  unity::TouchPhase phase()
+  { return Field<"phase", unity::TouchPhase>(); }
+  void SetPhase(unity::TouchPhase phase)
+  { SetField<"phase">(phase); }
+};
+
+struct InteriorRadiusConstraint : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.CameraController", "Constraint/FloatData">;
+  bool Enabled()
+  { return Field<"_enabled", bool>(); }
+  float Minimum()
+  { return Field<"_min", float>(); }
+  float Maximum()
+  { return Field<"_max", float>(); }
+  void SetMinimum(float value)
+  { SetField<"_min">(value); }
+  void SetMaximum(float value)
+  { SetField<"_max">(value); }
+};
+
+struct InteriorOrbitConstraint : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.CameraController", "OrbitConstraint">;
+  InteriorRadiusConstraint* Radius()
+  { return Field<"_radius", InteriorRadiusConstraint*>(); }
+};
+
+struct InteriorOrbitProvider : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.CameraController", "AbstractOrbitFrameProvider">;
+  InteriorOrbitConstraint* Constraint()
+  { return Field<"_constraint", InteriorOrbitConstraint*>(); }
 };

@@ -4,7 +4,7 @@
 
 #include <string_view>
 
-#include "patches/patches.h"
+#include "mod.h"
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
 {
@@ -17,6 +17,6 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
   const auto length = GetModuleFileNameW(nullptr, path, MAX_PATH);
   const auto exe    = std::wstring_view(path, length);
   if (exe.substr(exe.find_last_of(L"\\/") + 1).starts_with(L"prime"))
-    ApplyPatches();
+    StartMod();
   return TRUE;
 }

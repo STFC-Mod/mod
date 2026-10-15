@@ -2,26 +2,16 @@
 
 // Object viewer cards shown for targets in space, and their scan/engage buttons.
 
-#include "fleet.h"
-#include "navigation.h"
-#include "ui.h"
+#include "prime/fleet.h"
+#include "prime/navigation.h"
+#include "prime/ui.h"
 
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
 
-struct ParentObjectViewerViewController : ViewController<NavigationInteractionUIContext> {
+struct ParentObjectViewerViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "ParentObjectViewerViewController">;
-
-  void ActivateViewerHUDState(bool isHUDOpen = false)
-  { Call<"ActivateViewerHUDState">(isHUDOpen); }
-  void TriggerInstantHide()
-  { Call<"TriggerInstantHide">(); }
-  void TriggerShow()
-  { Call<"TriggerShow">(); }
-
-  VisibilityController* visibilityController()
-  { return Field<"_visibilityController", VisibilityController*>(); }
   bool IsShowing()
   { return Get<"IsShowing", bool>(); }
 };
@@ -29,22 +19,17 @@ struct ParentObjectViewerViewController : ViewController<NavigationInteractionUI
 struct ObjectViewerBaseWidget : Widget<NavigationInteractionUIContext> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "ObjectViewerBaseWidget">;
 
+  ParentObjectViewerViewController* Parent()
+  { return Get<"Parent", ParentObjectViewerViewController*>(); }
   void HideAllViewers()
   { Call<"HideAllViewers">(); }
 
   VisibilityController* visibilityController()
   { return Field<"_visibilityController", VisibilityController*>(); }
-  ParentObjectViewerViewController* Parent()
-  { return Get<"Parent", ParentObjectViewerViewController*>(); }
-  bool IsInfoShown()
-  { return Get<"IsInfoShown", bool>(); }
 };
 
 struct RewardsButtonWidget : Widget<BattleTargetData> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Combat", "RewardsButtonWidget">;
-
-  void RewardsClicked()
-  { Call<"RewardsClicked">(); }
 
   VisibilityController* rewardsController()
   { return Field<"_rewardsController", VisibilityController*>(); }
@@ -64,14 +49,6 @@ struct ScanEngageButtonsWidget : Widget<BattleTargetData> {
 struct PreScanTargetWidget : ObjectViewerBaseWidget {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Combat", "PreScanTargetWidget">;
 
-  void ValidateThenCreateArmada()
-  { Call<"ValidateThenCreateArmada">(); }
-  void OnAddToQueueClickedEventHandler()
-  { Call<"OnAddToQueueClickedEventHandler">(); }
-  // Declared on ObjectViewerBaseWidget.
-  void OnInfoClick()
-  { Call<"OnInfoClick">(); }
-
   ScanEngageButtonsWidget* scanEngageButtonsWidget()
   { return Field<"_scanEngageButtonsWidget", ScanEngageButtonsWidget*>(); }
   RewardsButtonWidget* rewardsButtonWidget()
@@ -89,14 +66,8 @@ struct AllianceStarbaseObjectViewerWidget : ObjectViewerBaseWidget {
 struct ArmadaObjectViewerWidget : ObjectViewerBaseWidget {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "ArmadaObjectViewerWidget">;
 
-  void SetCourseToArmada()
-  { Call<"SetCourseToArmada">(); }
   void ValidateThenJoinArmada()
   { Call<"ValidateThenJoinArmada">(); }
-  void JoinArmada()
-  { Call<"JoinArmada">(); }
-  bool IsAllowedToJoinArmada(FleetPlayerData* fleet)
-  { return Call<"IsAllowedToJoinArmada", bool>(fleet); }
 
   GenericButtonContext* joinContext()
   { return Field<"_joinContext", GenericButtonContext*>(); }
@@ -134,14 +105,6 @@ struct MissionsObjectViewerWidget : ObjectViewerBaseWidget {
 struct WaveDefenseObjectViewerWidget : ObjectViewerBaseWidget {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "WaveDefenseObjectViewerWidget">;
 
-  // Every active viewer of this class in the loaded scenes.
-  static il2cpp::Array<WaveDefenseObjectViewerWidget*>* FindActiveViewers()
-  {
-    auto* type = Class::TypeObject();
-    return type ? UnityObject::Class::Call<"FindObjectsOfType", il2cpp::Array<WaveDefenseObjectViewerWidget*>*>(type)
-                : nullptr;
-  }
-
   GenericButtonWidget* primaryButton()
   { return Field<"_primaryButton", GenericButtonWidget*>(); }
 
@@ -154,9 +117,7 @@ struct WaveDefenseObjectViewerWidget : ObjectViewerBaseWidget {
     auto* context  = widget->Context();
     auto* listener = widget->SemaphoreListener();
     if (context && context->Interactable() && listener) {
-      if (auto* button = listener->TheButton()) {
-        button->Press();
-      }
+      listener->Press();
     }
   }
 };

@@ -2,11 +2,10 @@
 
 #include "file.h"
 #include "patches/shortcuts.h"
-#include "ship_name.h"
 #include "str_utils.h"
 #include "version.h"
 
-#include <prime/ui.h>
+#include "prime/ui.h"
 
 #include <spdlog/spdlog.h>
 #include <toml++/toml.h>
@@ -74,25 +73,25 @@ template <typename E> struct Choice {
 
 // The first name listed for a value is the one written back; later ones are accepted synonyms.
 constexpr Choice<MissionHudVisibility> kHudVisibility[] = {
-    {"auto", MissionHudVisibility::Auto},
-    {"always", MissionHudVisibility::Always},
-    {"never", MissionHudVisibility::Never},
-    {"", MissionHudVisibility::Auto},
+    {"auto", MissionHudVisibility::kAuto},
+    {"always", MissionHudVisibility::kAlways},
+    {"never", MissionHudVisibility::kNever},
+    {"", MissionHudVisibility::kAuto},
 };
 
 constexpr Choice<InstantWarpConfirmation> kInstantWarp[] = {
-    {"none", InstantWarpConfirmation::None},  {"warp", InstantWarpConfirmation::Warp},
-    {"jump", InstantWarpConfirmation::Jump},  {"left", InstantWarpConfirmation::Warp},
-    {"right", InstantWarpConfirmation::Jump}, {"", InstantWarpConfirmation::None},
+    {"none", InstantWarpConfirmation::kNone},  {"warp", InstantWarpConfirmation::kWarp},
+    {"jump", InstantWarpConfirmation::kJump},  {"left", InstantWarpConfirmation::kWarp},
+    {"right", InstantWarpConfirmation::kJump}, {"", InstantWarpConfirmation::kNone},
 };
 
 constexpr Choice<FleetLabelDetail> kFleetLabelDetail[] = {
-    {"native", FleetLabelDetail::Native},    {"expanded", FleetLabelDetail::Expanded},
-    {"compact", FleetLabelDetail::Compact},  {"threshold", FleetLabelDetail::Threshold},
-    {"always", FleetLabelDetail::Expanded},  {"never", FleetLabelDetail::Compact},
-    {"custom", FleetLabelDetail::Threshold}, {"auto", FleetLabelDetail::Native},
-    {"none", FleetLabelDetail::Native},      {"off", FleetLabelDetail::Native},
-    {"", FleetLabelDetail::Native},
+    {"native", FleetLabelDetail::kNative},    {"expanded", FleetLabelDetail::kExpanded},
+    {"compact", FleetLabelDetail::kCompact},  {"threshold", FleetLabelDetail::kThreshold},
+    {"always", FleetLabelDetail::kExpanded},  {"never", FleetLabelDetail::kCompact},
+    {"custom", FleetLabelDetail::kThreshold}, {"auto", FleetLabelDetail::kNative},
+    {"none", FleetLabelDetail::kNative},      {"off", FleetLabelDetail::kNative},
+    {"", FleetLabelDetail::kNative},
 };
 
 std::string MaskToken(const std::string& token)
@@ -189,7 +188,7 @@ private:
 
 // Sync options renamed since; their old names are still read, per target as well.
 constexpr std::pair<SyncConfig::Type, std::string_view> kRenamedSyncOptions[] = {
-    {SyncConfig::Type::Officer, "officer"}};
+    {SyncConfig::Type::kOfficer, "officer"}};
 
 std::string_view OldName(const SyncConfig::Option& option)
 {
@@ -257,7 +256,7 @@ std::vector<int> ReadBannerTypes(Reader& reader, std::string_view key)
   for (const auto& [name, state] : kBannerTypes) {
     if (!all && std::erase(wanted, AsciiStrToUpper(name)) == 0)
       continue;
-    types.push_back(state);
+    types.push_back(static_cast<int>(state));
     names += names.empty() ? "" : ", ";
     names += name;
   }
@@ -463,7 +462,7 @@ void Config::ReloadIfChanged()
 MissionHudVisibility Config::Ui::MissionHudButtonVisibility(std::string_view button) const
 {
   const auto it = mission_hud_buttons.find(button);
-  return it == mission_hud_buttons.end() ? MissionHudVisibility::Auto : it->second;
+  return it == mission_hud_buttons.end() ? MissionHudVisibility::kAuto : it->second;
 }
 
 void Config::Load(const SettingsFile& file, bool first)

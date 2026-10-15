@@ -1,20 +1,17 @@
 // Battle logs: the game only sends battle headers, so each new battle's journal is fetched from the game server
 // with the participants' player and alliance names resolved, then uploaded.
 
-#include "patches/parts/sync/sync.h"
-
 #include "file.h"
+#include "patches/parts/sync/sync.h"
 #include "version.h"
 
 #include <Digit.PrimeServer.Models.pb.h>
 #include <cpr/cpr.h>
 #include <curl/curl.h>
-
-#include <EASTL/algorithm.h>
-#include <EASTL/bonus/ring_buffer.h>
 #include <spdlog/fmt/fmt.h>
 
 #include <chrono>
+#include <deque>
 #include <fstream>
 #include <memory>
 #include <optional>
@@ -99,8 +96,16 @@ namespace
   auto& alliances = *new NameCache<int64_t, Alliance>;
   auto& battles   = *new BoundedQueue<uint64_t>{"battle log", kSentBattlesKept};
 
-  // Loaded before the threads start, then only touched by the processing thread.
-  eastl::ring_buffer<uint64_t> sent_battles;
+  // The newest kSentBattlesKept battles sent, oldest first. Loaded before the threads start, then only touched by
+  // the processing thread.
+  std::deque<uint64_t> sent_battles;
+
+  void RememberSent(uint64_t id)
+  {
+    sent_battles.push_back(id);
+    if (sent_battles.size() > kSentBattlesKept)
+      sent_battles.pop_front();
+  }
 
   // The game's Unity build, sent as the game client sends it.
   const std::string kUnityVersion = "6000.0.59f2-deadlock-fix-test";
@@ -349,9 +354,9 @@ namespace
 
     auto& journal = battle["journal"];
     auto  names   = ResolveNames(journal);
-    Queue(SyncConfig::Type::Battles,
+    Queue(SyncConfig::Type::kBattles,
           json::array(
-              {{{"type", SyncConfig::Type::Battles}, {"names", std::move(names)}, {"journal", std::move(journal)}}}));
+              {{{"type", SyncConfig::Type::kBattles}, {"names", std::move(names)}, {"journal", std::move(journal)}}}));
   }
 
   void RunBattleLogs()
@@ -370,8 +375,6 @@ namespace
 
   void LoadSentBattles()
   {
-    sent_battles.set_capacity(kSentBattlesKept);
-
     std::ifstream file(File::Path(File::Battles()), std::ios::binary);
     if (!file) {
       spdlog::warn("Failed to open battles file (not found or not readable); starting with empty cache");
@@ -384,7 +387,7 @@ namespace
     }
     for (const auto& id : ids)
       if (id.is_number_unsigned())
-        sent_battles.push_back(id.get<uint64_t>());
+        RememberSent(id.get<uint64_t>());
     spdlog::debug("Loaded {} previously sent battle logs", sent_battles.size());
   }
 
@@ -404,11 +407,11 @@ namespace
 
 void QueueNewBattles(const std::vector<uint64_t>& battle_ids)
 {
-  // Oldest first, so the ring buffer drops the oldest when it fills.
+  // Oldest first, so the oldest are forgotten first.
   std::vector<uint64_t> fresh;
   for (const auto id : battle_ids | std::views::reverse) {
-    if (eastl::find(sent_battles.begin(), sent_battles.end(), id) == sent_battles.end()) {
-      sent_battles.push_back(id);
+    if (std::ranges::find(sent_battles, id) == sent_battles.end()) {
+      RememberSent(id);
       fresh.push_back(id);
     }
   }
@@ -449,6 +452,7 @@ void StartBattleLogs()
   LoadSentBattles();
   std::thread(RunBattleLogs).detach();
 }
+
 void SetGameServer(std::string url, std::string session_id)
 {
   std::scoped_lock lock(session.mutex);

@@ -622,6 +622,9 @@ int main()
   for (auto* item : *second)
     items += item != nullptr;
   Require(items == 3 && (*first)[0] == &list_a.header, "list iteration");
+  Require(first->Method<int32_t()>("get_Count").Pointer() == reinterpret_cast<void*>(&ListA_get_Count),
+          "runtime collection method schema");
+  Require(!first->Method<int32_t(int32_t)>("get_Item"), "runtime collection schema rejects a value result");
 
   // Fully shared generic code is marshalled by the runtime.
   Require(base->Call<"Shared", int32_t>() == 41 && boxed_invocations == 1, "shared generic fallback");
@@ -638,6 +641,40 @@ int main()
   Require(Base::Class::Method("Select", {"System.Boolean"}).Pointer() == reinterpret_cast<void*>(&Base_Select_Bool),
           "hook lookup by parameter types");
   Require(!Base::Class::Method("Absent", 0) && ErrorsMentioning("missing method Game.Base.Absent"), "missing hook");
+  Require(Base::Class::Method("OnEvent").Name() == "Game.Base.OnEvent", "method name for diagnostics");
+
+  Require(Base::Class::Method<void(bool)>("Select").Pointer() == reinterpret_cast<void*>(&Base_Select_Bool),
+          "typed hook lookup selects the complete instance signature");
+  Require(!Base::Class::Method<int32_t(bool)>("Select"), "typed hook lookup rejects a changed return type");
+  Require(!Base::Class::Method<int32_t(int32_t)>("Twice"), "instance hook lookup rejects a static method");
+  Require(!Base::Class::Method<int32_t()>("Shared"), "typed hook lookup rejects fully shared generic code");
+  Require(Base::Class::HasField<"_count", int32_t>(), "instance field schema accepts the declared type");
+  Require(!Base::Class::HasField<"_count", Other*>(), "instance field schema rejects an incompatible type");
+  Require(!Base::Class::HasField<"s_flag", int32_t>(), "instance field schema rejects a static field");
+
+  // Managed strings convert to UTF-8, and compare with ASCII without converting.
+  const auto utf16 = [](std::u16string_view text) {
+    auto* str   = static_cast<Il2CppString*>(std::calloc(1, sizeof(Il2CppString) + text.size() * sizeof(Il2CppChar)));
+    str->length = static_cast<int32_t>(text.size());
+    std::copy(text.begin(), text.end(), str->chars);
+    return str;
+  };
+  auto* mixed = utf16(u"K\u00E9rk \u2192 \U0001F596");
+  Require(il2cpp::ToUtf8(mixed) == "K\xC3\xA9rk \xE2\x86\x92 \xF0\x9F\x96\x96",
+          "UTF-16 to UTF-8 with a surrogate pair");
+  auto* lone = utf16(std::u16string_view(u"a\xD800"
+                                         "b",
+                                         3));
+  Require(il2cpp::ToUtf8(lone)
+              == "a\xEF\xBF\xBD"
+                 "b",
+          "a lone surrogate becomes U+FFFD");
+  Require(il2cpp::ToUtf8(nullptr).empty(), "null string");
+  auto* ascii = utf16(u"Galaxy");
+  Require(il2cpp::Equals(ascii, "Galaxy") && !il2cpp::Equals(ascii, "Galax") && !il2cpp::Equals(nullptr, ""),
+          "ASCII comparison");
+  for (auto* str : {mixed, lone, ascii})
+    std::free(str);
 
   // TryCall tells a failed call apart from a result that reads as zero.
   Require(!base->TryCall<"Explode", int32_t()>() && ErrorsMentioning("Game.Base.Explode threw") == 1,

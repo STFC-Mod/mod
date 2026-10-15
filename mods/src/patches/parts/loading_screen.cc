@@ -5,12 +5,13 @@
 #include "patches/patches.h"
 #include "version.h"
 
-#include <prime/ui.h>
-#include <prime/unity.h>
+#include "prime/loading.h"
+#include "prime/ui.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
+#include <unity/ui.h>
 
 #include <array>
 #include <cstring>
@@ -28,140 +29,36 @@
 
 namespace
 {
-struct Rect {
-  float x, y, width, height;
-};
-
-struct Texture2D : il2cpp::Object {
-  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Texture2D">;
-
-  int32_t width()
-  { return Get<"width", int32_t>(); }
-  int32_t height()
-  { return Get<"height", int32_t>(); }
-};
-
-struct LoginSequence : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Login", "LoginSequence">;
-
-  Component* mainCanvas()
-  { return Field<"_mainCanvas", Component*>(); }
-};
-
-struct LoadingTipViewController : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Prime.LoadingScreen", "LoadingTipViewController">;
-
-  TMP_Text* textMeshPro()
-  { return Field<"_textMeshPro", TMP_Text*>(); }
-};
-
-struct TransitionViewController : Component {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.LoadingScreen", "TransitionViewController">;
-
-  Image* staticOverride()
-  { return Field<"_staticOverride", Image*>(); }
-  // The canvas Animator; Behaviour is enough to toggle it.
-  Behaviour* animator()
-  { return Field<"_animator", Behaviour*>(); }
-};
-
-struct SlideShowViewController : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.SlideShow", "SlideShowViewController">;
-
-  Image* image()
-  { return Field<"_image", Image*>(); }
-};
-
-using ImageConversion = il2cpp::Class<"UnityEngine.ImageConversionModule", "UnityEngine", "ImageConversion">;
-using Screen          = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Screen">;
-using Byte            = il2cpp::Class<"mscorlib", "System", "Byte">;
-// The non-generic MonoSingleton base; its static PrepareAllForReload runs before a reload.
-using MonoSingletonBase = il2cpp::Class<"Assembly-CSharp", "", "MonoSingleton">;
-
-void ShowSprite(Image* image, Sprite* sprite, bool preserve_aspect)
+void ShowSprite(unity::Image* image, unity::Sprite* sprite, bool preserve_aspect)
 {
   image->SetSprite(sprite);
   image->SetColor({1.0f, 1.0f, 1.0f, 1.0f});
-  image->SetType(Image::Type::Simple);
+  image->SetType(unity::Image::Type::Simple);
   image->SetPreserveAspect(preserve_aspect);
   image->SetRaycastTarget(false);
 }
 
-void HideImage(Image* image)
+void HideImage(unity::Image* image)
 {
   if (image)
     image->SetColor({0.0f, 0.0f, 0.0f, 0.0f});
 }
 
-Texture2D* LoadTexture(const uint8_t* data, size_t size)
+// Decodes `data` into `asset` unless it is still loaded; warns once per failed decode.
+unity::ImageAsset* Load(unity::ImageAsset& asset, const uint8_t* data, size_t size, const char* name)
 {
-  auto* bytes = data && size ? il2cpp::Array<uint8_t>::New(Byte::Raw(), size) : nullptr;
-  if (!bytes)
-    return nullptr;
-  std::memcpy(bytes->data(), data, size);
-  // Texture2D(width, height, TextureFormat.RGBA32, mipChain); LoadImage resizes it.
-  auto* texture = il2cpp::New<Texture2D>(int32_t{2}, int32_t{2}, int32_t{4}, false);
-  return texture && ImageConversion::Call<"LoadImage", bool>(texture, bytes, false) ? texture : nullptr;
+  if (asset.Load(data, size))
+    return &asset;
+  spdlog::warn("[LS] failed to load {} texture", name);
+  return nullptr;
 }
 
-// One image the mod shows, decoded once and kept while Unity keeps it: a reload unloads it, and the next use
-// decodes it again.
-class ImageAsset
-{
-public:
-  bool Load(const uint8_t* data, size_t size, const char* name)
-  {
-    if (Texture())
-      return true;
-    name_ = name;
-    sprite_.Reset();
-    texture_ = il2cpp::GcHandle::Strong(LoadTexture(data, size));
-    if (!Texture())
-      spdlog::warn("[LS] failed to load {} texture", name);
-    return Texture() != nullptr;
-  }
-
-  Texture2D* Texture() const
-  {
-    auto* texture = texture_.Get<Texture2D>();
-    return UnityObject::Alive(texture) ? texture : nullptr;
-  }
-
-  ::Sprite* Sprite()
-  {
-    if (auto* sprite = sprite_.Get<::Sprite>(); UnityObject::Alive(sprite))
-      return sprite;
-    auto* texture = Texture();
-    if (!texture)
-      return nullptr;
-    const Rect rect{0.0f, 0.0f, static_cast<float>(texture->width()), static_cast<float>(texture->height())};
-    auto*      sprite = ::Sprite::Class::Call<"Create", ::Sprite*>(texture, rect, Vector2{0.5f, 0.5f});
-    if (!sprite) {
-      spdlog::warn("[LS] failed to create {} sprite", name_);
-      return nullptr;
-    }
-    sprite_ = il2cpp::GcHandle::Strong(sprite);
-    return sprite;
-  }
-
-  float AspectRatio() const
-  {
-    auto* texture = Texture();
-    return texture && texture->width() > 0 ? static_cast<float>(texture->height()) / texture->width() : 1.0f;
-  }
-
-private:
-  il2cpp::GcHandle texture_;
-  il2cpp::GcHandle sprite_;
-  const char*      name_ = "loading asset";
-};
-
 struct Assets {
-  ImageAsset background, logo, community_logo;
+  unity::ImageAsset background, logo, community_logo;
 
   // The configured loader_image, or the embedded one when it is unset or unreadable. Called from hooks, so it
   // never throws.
-  ImageAsset* Background()
+  unity::ImageAsset* Background()
   {
     if (background.Texture())
       return &background;
@@ -170,50 +67,38 @@ struct Assets {
     if (!path.empty() && std::filesystem::exists(path, error)) {
       std::ifstream        file(path, std::ios::binary);
       std::vector<uint8_t> data(std::istreambuf_iterator<char>(file), {});
-      if (!data.empty() && background.Load(data.data(), data.size(), "custom loading background"))
+      if (!data.empty() && Load(background, data.data(), data.size(), "custom loading background"))
         return &background;
     }
-    return background.Load(g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE, "embedded loading background")
-               ? &background
-               : nullptr;
+    return Load(background, g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE, "embedded loading background");
   }
 
-  ImageAsset* Logo()
-  { return logo.Load(g_embeddedLogoImage, g_embeddedLogoImage_SIZE, "mod logo") ? &logo : nullptr; }
+  unity::ImageAsset* Logo()
+  { return Load(logo, g_embeddedLogoImage, g_embeddedLogoImage_SIZE, "mod logo"); }
 
-  ImageAsset* CommunityLogo()
-  {
-    return community_logo.Load(g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo") ? &community_logo
-                                                                                                    : nullptr;
-  }
+  unity::ImageAsset* CommunityLogo()
+  { return Load(community_logo, g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo"); }
 };
 // Never destroyed: its GC handles must not be freed by static destructors after the runtime is gone.
 Assets& assets = *new Assets;
 
-// Overlays attach to the nearest ancestor with a Canvas so they cover the whole screen.
-Transform* RootCanvas(Transform* transform)
-{
-  for (auto* current = transform; current; current = current->parent())
-    if (auto* object = current->gameObject(); object && object->GetComponent<Canvas>())
-      return current;
-  return transform;
-}
-
-GameObject* CreateOverlay(const char* name, ImageAsset& asset, Transform* parent, Vector2 anchor_min,
-                          Vector2 anchor_max, bool preserve_aspect, bool behind_siblings)
+unity::GameObject* CreateOverlay(const char* name, unity::ImageAsset& asset, unity::Transform* parent,
+                                 unity::Vector2 anchor_min, unity::Vector2 anchor_max, bool preserve_aspect,
+                                 bool behind_siblings)
 {
   auto* sprite    = parent ? asset.Sprite() : nullptr;
-  auto* object    = sprite ? il2cpp::New<GameObject>(il2cpp_string_new(name)) : nullptr;
-  auto* transform = object ? object->GetComponent<Transform>() : nullptr;
+  auto* object    = sprite ? unity::GameObject::Create(name) : nullptr;
+  auto* transform = object ? object->GetComponent<unity::Transform>() : nullptr;
   if (!transform)
     return nullptr;
-  transform->SetParent(RootCanvas(parent), false);
+  // Attached to the canvas root, so the overlay covers the whole screen.
+  transform->SetParent(unity::CanvasRoot(parent), false);
   if (behind_siblings)
     transform->SetAsFirstSibling();
 
   // Adding a Graphic turns the plain Transform into a RectTransform.
-  auto* image = object->AddComponent<Image>();
-  auto* rect  = image ? object->GetComponent<RectTransform>() : nullptr;
+  auto* image = object->AddComponent<unity::Image>();
+  auto* rect  = image ? object->GetComponent<unity::RectTransform>() : nullptr;
   if (!rect)
     return nullptr;
   rect->Place(anchor_min, anchor_max, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
@@ -224,13 +109,13 @@ GameObject* CreateOverlay(const char* name, ImageAsset& asset, Transform* parent
 enum class Corner { kBottomLeft, kBottomRight };
 
 // A logo in a bottom corner, sized relative to a 1920-wide screen and scaled by loader_logo_scale.
-bool CreateLogo(const char* name, ImageAsset* asset, Transform* parent, Corner corner)
+bool CreateLogo(const char* name, unity::ImageAsset* asset, unity::Transform* parent, Corner corner)
 {
   if (!asset || !parent)
     return false;
 
-  float width  = static_cast<float>(Screen::Get<"width", int32_t>());
-  float height = static_cast<float>(Screen::Get<"height", int32_t>());
+  float width  = static_cast<float>(unity::Screen::width());
+  float height = static_cast<float>(unity::Screen::height());
   if (width <= 0.0f)
     width = 1334.0f;
   if (height <= 0.0f)
@@ -253,7 +138,7 @@ struct Logos {
   bool community_logo = false;
 
   // Creates whichever is still missing.
-  void Create(Transform* parent)
+  void Create(unity::Transform* parent)
   {
     logo           = logo || CreateLogo("STFCModLogo", assets.Logo(), parent, Corner::kBottomRight);
     community_logo = community_logo || CreateLogo("STFCCCLogo", assets.CommunityLogo(), parent, Corner::kBottomLeft);
@@ -264,7 +149,7 @@ struct Logos {
 
 // The login screen's background image: the first child Image with a known background name, or else the first
 // Image found at all, searching four levels deep.
-Image* FindLoginBackground(Transform* transform, int depth, Image*& first)
+unity::Image* FindLoginBackground(unity::Transform* transform, int depth, unity::Image*& first)
 {
   static constexpr std::string_view kNames[] = {"Background", "BG",       "bg_image", "LoadingBackground",
                                                 "LoginBG",    "SplashBG", "Image"};
@@ -275,7 +160,7 @@ Image* FindLoginBackground(Transform* transform, int depth, Image*& first)
     auto* object = child ? child->gameObject() : nullptr;
     if (!object)
       continue;
-    if (auto* image = object->GetComponent<Image>()) {
+    if (auto* image = object->GetComponent<unity::Image>()) {
       if (!first)
         first = image;
       if (std::ranges::find(kNames, object->Name()) != std::end(kNames))
@@ -299,8 +184,8 @@ void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
   if (!root)
     return;
 
-  Image* first = nullptr;
-  auto*  image = FindLoginBackground(root, 0, first);
+  unity::Image* first = nullptr;
+  auto*         image = FindLoginBackground(root, 0, first);
   if (!image)
     image = first;
   if (!image)
@@ -377,7 +262,7 @@ void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, Load
     return;
   auto* label = _this->textMeshPro();
   if (const char* tip = tips.Next(); tip && label)
-    label->SetText(il2cpp_string_new(tip));
+    label->SetText(tip);
 }
 
 // --- Transition screen ---
@@ -392,7 +277,7 @@ struct Transition {
 
 // The transition background: _staticOverride, or the Image on BGContainer's first child (whose transform is
 // returned in `box` so it can be stretched).
-Image* FindTransitionBackground(TransitionViewController* controller, Transform*& box)
+unity::Image* FindTransitionBackground(TransitionViewController* controller, unity::Transform*& box)
 {
   if (auto* image = controller->staticOverride())
     return image;
@@ -404,7 +289,7 @@ Image* FindTransitionBackground(TransitionViewController* controller, Transform*
       continue;
     box          = child->childCount() > 0 ? child->GetChild(0) : nullptr;
     auto* inside = box ? box->gameObject() : nullptr;
-    return inside ? inside->GetComponent<Image>() : nullptr;
+    return inside ? inside->GetComponent<unity::Image>() : nullptr;
   }
   return nullptr;
 }
@@ -419,7 +304,7 @@ void ArrangeTransitionLayout(TransitionViewController* controller)
     if (!object)
       continue;
     const auto name = object->Name();
-    auto*      rect = object->GetComponent<RectTransform>();
+    auto*      rect = object->GetComponent<unity::RectTransform>();
     if (rect && name == "LogoContainer")
       rect->Place({1.0f, 1.0f}, {1.0f, 1.0f}, {1.0f, 1.0f}, {586.0f, 248.0f}, {-20.0f, -20.0f});
     else if (rect && name == "LoadingTipsContainer")
@@ -430,8 +315,8 @@ void ArrangeTransitionLayout(TransitionViewController* controller)
 // Runs from Awake and again from AboutToShow until it succeeds.
 void CustomizeTransition(TransitionViewController* controller)
 {
-  Transform* box        = nullptr;
-  auto*      background = FindTransitionBackground(controller, box);
+  unity::Transform* box        = nullptr;
+  auto*             background = FindTransitionBackground(controller, box);
   if (!background)
     return;
   auto* parent = box ? box : background->transform();
@@ -453,7 +338,7 @@ void CustomizeTransition(TransitionViewController* controller)
     }
     HideImage(background);
     if (box) {
-      box->As<RectTransform>()->Place({0.0f, 0.0f}, {1.0f, 1.0f}, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
+      box->As<unity::RectTransform>()->Place({0.0f, 0.0f}, {1.0f, 1.0f}, {0.5f, 0.5f}, {0.0f, 0.0f}, {0.0f, 0.0f});
       box->SetLocalEulerAngles({0, 0, 0});
       box->SetLocalScale({1, 1, 1});
     }
@@ -512,34 +397,33 @@ void InstallReloadReset()
   static bool installed = false;
   if (std::exchange(installed, true))
     return;
-  if (auto m = MonoSingletonBase::Method("PrepareAllForReload"))
-    SPUD_STATIC_DETOUR(m.Pointer(), MonoSingleton_PrepareAllForReload_Hook);
+  IL2CPP_HOOK(MonoSingletonBase::Method("PrepareAllForReload"), MonoSingleton_PrepareAllForReload_Hook);
+}
+
+void InstallLoginScreen()
+{
+  InstallReloadReset();
+  IL2CPP_HOOK(LoginSequence::Class::Method("Awake"), LoginSequence_Awake_Hook);
+}
+
+void InstallTransitionScreen()
+{
+  InstallReloadReset();
+  IL2CPP_HOOK(TransitionViewController::Class::Method("Awake"), TransitionViewController_Awake_Hook);
+  IL2CPP_HOOK(TransitionViewController::Class::Method("AboutToShow"), TransitionViewController_AboutToShow_Hook);
+  IL2CPP_HOOK(TransitionViewController::Class::Method("AboutToHide"), TransitionViewController_AboutToHide_Hook);
+  IL2CPP_HOOK(SlideShowViewController::Class::Method("ShowCurrentSlide"),
+              SlideShowViewController_ShowCurrentSlide_Hook);
+}
+
+void InstallLoadingTips()
+{
+  InstallReloadReset();
+  IL2CPP_HOOK(LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"),
+              LoadingTipViewController_SetRandomTipLocalisedText_Hook);
 }
 } // namespace
 
-void InstallLoadingScreenHooks()
-{
-  InstallReloadReset();
-  if (auto m = LoginSequence::Class::Method("Awake"))
-    SPUD_STATIC_DETOUR(m.Pointer(), LoginSequence_Awake_Hook);
-}
-
-void InstallLoadingTipHooks()
-{
-  InstallReloadReset();
-  if (auto m = LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"))
-    SPUD_STATIC_DETOUR(m.Pointer(), LoadingTipViewController_SetRandomTipLocalisedText_Hook);
-}
-
-void InstallTransitionScreenHooks()
-{
-  InstallReloadReset();
-  if (auto m = TransitionViewController::Class::Method("Awake"))
-    SPUD_STATIC_DETOUR(m.Pointer(), TransitionViewController_Awake_Hook);
-  if (auto m = TransitionViewController::Class::Method("AboutToShow"))
-    SPUD_STATIC_DETOUR(m.Pointer(), TransitionViewController_AboutToShow_Hook);
-  if (auto m = TransitionViewController::Class::Method("AboutToHide"))
-    SPUD_STATIC_DETOUR(m.Pointer(), TransitionViewController_AboutToHide_Hook);
-  if (auto m = SlideShowViewController::Class::Method("ShowCurrentSlide"))
-    SPUD_STATIC_DETOUR(m.Pointer(), SlideShowViewController_ShowCurrentSlide_Hook);
-}
+const Feature kLoginScreen{"LoginScreen", &Config::Patches::loadingscreenhooks, InstallLoginScreen};
+const Feature kTransitionScreen{"TransitionScreen", &Config::Patches::transitionscreenhooks, InstallTransitionScreen};
+const Feature kLoadingTips{"LoadingTips", &Config::Patches::loadingtiphooks, InstallLoadingTips};

@@ -1,18 +1,17 @@
-#include "patches/object_tracker.h"
 #include "config.h"
 #include "file.h"
-#include "patches/input.h"
-#include "ship_name.h"
+#include "patches/patches.h"
+
+#include "str_utils.h"
 
 #include "pinned_ship_click.h"
 #include "prime/fleet.h"
 #include "prime/ui.h"
-#include "prime/fleet.h"
-#include "prime/fleet.h"
 #include "ship_tile_click.h"
 
-#include <il2cpp/il2cpp-functions.h>
 #include <il2cpp/il2cpp.h>
+#include <unity/input.h>
+#include <unity/tracker.h>
 
 #include <spdlog/spdlog.h>
 #include <toml++/toml.h>
@@ -24,21 +23,24 @@
 #include <string>
 #include <vector>
 
-namespace {
+namespace
+{
 
 bool IsShiftHeld()
-{ return Key::Pressed(KeyCode::LeftShift) || Key::Pressed(KeyCode::RightShift); }
+{ return unity::Key::Pressed(unity::KeyCode::LeftShift) || unity::Key::Pressed(unity::KeyCode::RightShift); }
 
 // Presence of a visible ShipManagementViewController instead of a SectionID
 // check: the dock is hosted under more than one game section, and this keeps
 // the gate in lockstep with the screen the pinned sort hook drives.
 bool IsShipManagementScreenVisible()
 {
-  for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
-    if (!controller || !controller->isActiveAndEnabled()) continue;
+  for (auto* controller : unity::Instances<ShipManagementViewController>()) {
+    if (!controller || !controller->isActiveAndEnabled())
+      continue;
 
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (canvas && canvas->Visible()) return true;
+    auto canvas = CanvasController::Of(controller);
+    if (canvas && canvas->Visible())
+      return true;
   }
   return false;
 }
@@ -47,7 +49,8 @@ std::string JoinNames(const std::vector<std::vector<std::string>>& names)
 {
   std::string joined;
   for (size_t i = 0; i < names.size(); ++i) {
-    if (i != 0) joined += ", ";
+    if (i != 0)
+      joined += ", ";
     joined += fmt::format("{}", fmt::join(names[i], " "));
   }
   return joined;
@@ -83,52 +86,34 @@ void PersistPinnedShips(const std::vector<std::vector<std::string>>& names)
     spdlog::warn("[PinnedShipClick] could not persist pinned ships to '{}'", File::Config());
 }
 
-const MethodInfo* FindMethodInHierarchy(Il2CppClass* cls, const char* name, int argc)
-{
-  for (; cls; cls = il2cpp_class_get_parent(cls)) {
-    auto* m = il2cpp_class_get_method_from_name(cls, name, argc);
-    if (m) return m;
-  }
-  return nullptr;
-}
-
 // Re-runs the pinned sort and rebuilds the dock's tile list through the
 // game's own SelectableListBase.ClearAndGenerateContents(IDataContextProvider,
 // IList): the controller implements IDataContextProvider and the list binds
 // the reordered SortedIdleShips directly.
 void RefreshPinnedShipSortNow()
 {
-  for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
-    if (!controller || !controller->isActiveAndEnabled()) continue;
+  for (auto* controller : unity::Instances<ShipManagementViewController>()) {
+    if (!controller || !controller->isActiveAndEnabled())
+      continue;
 
-    auto canvas = GetCanvasControllerFromComponent(controller);
-    if (!canvas || !canvas->Visible()) continue;
+    auto canvas = CanvasController::Of(controller);
+    if (!canvas || !canvas->Visible())
+      continue;
 
     auto* context = controller->Context();
-    if (!context) continue;
+    if (!context)
+      continue;
     context->Sort();
 
-    for (auto* widget : ObjectFinder<AssignShipsWidget>::GetAll()) {
-      if (!widget || !widget->isActiveAndEnabled()) continue;
+    for (auto* widget : unity::Instances<AssignShipsWidget>()) {
+      if (!widget || !widget->isActiveAndEnabled())
+        continue;
 
       auto* list = widget->selectableList();
-      if (!list) continue;
+      if (!list)
+        continue;
 
-      auto* list_cls = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(list));
-      auto* get_data = FindMethodInHierarchy(list_cls, "get_Data", 0);
-      auto* rebuild  = FindMethodInHierarchy(list_cls, "ClearAndGenerateContents", 2);
-      if (!get_data || !rebuild) continue;
-
-      Il2CppException* exc  = nullptr;
-      auto*            data = il2cpp_runtime_invoke(get_data, list, nullptr, &exc);
-      if (exc || !data) continue;
-
-      void* args[2] = {controller, data};
-      exc           = nullptr;
-      il2cpp_runtime_invoke(rebuild, list, args, &exc);
-      if (exc) {
-        spdlog::warn("[PinnedShipClick] ClearAndGenerateContents raised an exception");
-      }
+      list->Rebuild(controller);
     }
   }
 }
@@ -138,13 +123,18 @@ void RefreshPinnedShipSortNow()
 void PinShipClickOnTileClicked(FleetPlayerData* ship)
 {
   auto& cfg = Config::Get();
-  if (!cfg.patches.pinnedshipclicktoggle) return;
-  if (!IsShiftHeld()) return;
-  if (!IsShipManagementScreenVisible()) return;
-  if (!ship) return;
+  if (!cfg.patches.pinnedshipclicktoggle)
+    return;
+  if (!IsShiftHeld())
+    return;
+  if (!IsShipManagementScreenVisible())
+    return;
+  if (!ship)
+    return;
 
   const auto key = ShipNameWords(ship->DisplayName());
-  if (key.empty()) return; // placeholder tiles (e.g. "build ship") have no name
+  if (key.empty())
+    return; // placeholder tiles (e.g. "build ship") have no name
 
   auto& names = cfg.ui.pinned_ships;
 
@@ -162,6 +152,8 @@ void PinShipClickOnTileClicked(FleetPlayerData* ship)
   RefreshPinnedShipSortNow();
 }
 
+namespace
+{
 void InstallPinnedShipClickHooks()
 {
   // The HandleOnClick detour is owned by the shared ship-tile click
@@ -172,3 +164,6 @@ void InstallPinnedShipClickHooks()
     spdlog::info("Pinned ship click: hooks installed");
   }
 }
+} // namespace
+
+const Feature kPinnedShipClick{"PinnedShipClick", &Config::Patches::pinnedshipclicktoggle, InstallPinnedShipClickHooks};

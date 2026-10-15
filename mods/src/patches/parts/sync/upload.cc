@@ -1,7 +1,6 @@
 // Uploads to sync targets: one worker thread, HTTP session and bounded queue per target.
 
 #include "patches/parts/sync/sync.h"
-
 #include "version.h"
 
 #include <cpr/cpr.h>
@@ -152,7 +151,7 @@ namespace
 void Queue(SyncConfig::Type type, const nlohmann::json& records, bool first_sync)
 {
   // Another category's first sync: the targets get a full fleet snapshot with it.
-  if (first_sync && type != SyncConfig::Type::Fleets)
+  if (first_sync && type != SyncConfig::Type::kFleets)
     RequestFleetSnapshot();
   std::string body;
   for (const auto& [name, config] : Config::Get().sync.targets) {

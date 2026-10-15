@@ -2,6 +2,7 @@
 
 #include <il2cpp/il2cpp.h>
 
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <mutex>
@@ -10,27 +11,19 @@
 
 namespace il2cpp
 {
+std::string ClassName(Il2CppClass* klass)
+{
+  if (!klass)
+    return "<null>";
+  if (auto* outer = il2cpp_class_get_declaring_type(klass))
+    return ClassName(outer) + "/" + il2cpp_class_get_name(klass);
+  std::string name = il2cpp_class_get_namespace(klass);
+  return name.empty() ? il2cpp_class_get_name(klass) : name + "." + il2cpp_class_get_name(klass);
+}
+
 namespace
 {
   std::atomic<void (*)(std::string_view)> error_handler = nullptr;
-
-  void Report(const std::string& message)
-  {
-    if (auto* handler = error_handler.load())
-      handler(message);
-    else
-      std::fprintf(stderr, "%s\n", message.c_str());
-  }
-
-  std::string ClassName(Il2CppClass* klass)
-  {
-    if (!klass)
-      return "<null>";
-    if (auto* outer = il2cpp_class_get_declaring_type(klass))
-      return ClassName(outer) + "/" + il2cpp_class_get_name(klass);
-    std::string name = il2cpp_class_get_namespace(klass);
-    return name.empty() ? il2cpp_class_get_name(klass) : name + "." + il2cpp_class_get_name(klass);
-  }
 
   std::string TypeName(const Il2CppType* type)
   {
@@ -158,6 +151,56 @@ namespace
 void SetErrorHandler(void (*handler)(std::string_view message))
 { error_handler = handler; }
 
+void Report(std::string_view message)
+{
+  if (auto* handler = error_handler.load())
+    handler(message);
+  else
+    std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()), message.data());
+}
+
+std::string Method::Name() const
+{ return info_ ? ClassName(info_->klass) + "." + info_->name : "<missing method>"; }
+
+Il2CppClass* ObjectClass()
+{
+  static auto* klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", "Object");
+  return klass;
+}
+
+std::string ToUtf8(const Il2CppString* str)
+{
+  std::string result;
+  if (!str)
+    return result;
+  result.reserve(static_cast<size_t>(str->length));
+  const auto* chars = str->chars;
+  for (int32_t i = 0; i < str->length; ++i) {
+    uint32_t c = chars[i];
+    // A surrogate pair is one code point; a lone surrogate becomes U+FFFD.
+    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str->length && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF)
+      c = 0x10000 + ((c - 0xD800) << 10) + (chars[++i] - 0xDC00);
+    else if (c >= 0xD800 && c <= 0xDFFF)
+      c = 0xFFFD;
+    if (c < 0x80) {
+      result += static_cast<char>(c);
+    } else if (c < 0x800) {
+      result += static_cast<char>(0xC0 | (c >> 6));
+      result += static_cast<char>(0x80 | (c & 0x3F));
+    } else if (c < 0x10000) {
+      result += static_cast<char>(0xE0 | (c >> 12));
+      result += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+      result += static_cast<char>(0x80 | (c & 0x3F));
+    } else {
+      result += static_cast<char>(0xF0 | (c >> 18));
+      result += static_cast<char>(0x80 | ((c >> 12) & 0x3F));
+      result += static_cast<char>(0x80 | ((c >> 6) & 0x3F));
+      result += static_cast<char>(0x80 | (c & 0x3F));
+    }
+  }
+  return result;
+}
+
 namespace detail
 {
   void ReportMissingICall(const char* name)
@@ -174,6 +217,34 @@ namespace detail
     static auto* klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", "Type");
     return klass;
   }
+
+  Il2CppClass* PrimitiveClass(Il2CppTypeEnum type)
+  {
+    static constexpr std::pair<Il2CppTypeEnum, const char*> kNames[] = {
+        {IL2CPP_TYPE_BOOLEAN, "Boolean"}, {IL2CPP_TYPE_CHAR, "Char"}, {IL2CPP_TYPE_I1, "SByte"},
+        {IL2CPP_TYPE_U1, "Byte"},         {IL2CPP_TYPE_I2, "Int16"},  {IL2CPP_TYPE_U2, "UInt16"},
+        {IL2CPP_TYPE_I4, "Int32"},        {IL2CPP_TYPE_U4, "UInt32"}, {IL2CPP_TYPE_I8, "Int64"},
+        {IL2CPP_TYPE_U8, "UInt64"},       {IL2CPP_TYPE_R4, "Single"}, {IL2CPP_TYPE_R8, "Double"},
+    };
+    static std::array<std::atomic<Il2CppClass*>, std::size(kNames)> classes{};
+    for (size_t i = 0; i < std::size(kNames); ++i) {
+      if (kNames[i].first != type)
+        continue;
+      auto* klass = classes[i].load();
+      if (!klass) {
+        klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", kNames[i].second);
+        classes[i].store(klass);
+      }
+      return klass;
+    }
+    return nullptr;
+  }
+
+  void ReportFault(const char* what)
+  { Report(std::string("[IL2CPP] access violation while reading ") + what); }
+
+  void ReportDetourFailure(std::string_view target, const char* error)
+  { Report("[IL2CPP] could not detour " + std::string(target) + ": " + error); }
 
   Il2CppClass* FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name)
   {

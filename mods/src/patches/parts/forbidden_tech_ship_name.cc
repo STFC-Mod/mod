@@ -1,12 +1,18 @@
+// forbidden_tech_ship_name: shows the ship a forbidden tech is equipped on below the header of the large selected-item
+// panel, including ships without a dock. Inventory tiles keep their native dock badges.
+
 #include "config.h"
+#include "patches/patches.h"
 
-#include <prime/fleet.h>
-#include <prime/ui.h>
-#include <prime/unity.h>
+#include "prime/fleet.h"
+#include "prime/inventory.h"
+#include "prime/ui.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
+#include <unity/core.h>
+#include <unity/ui.h>
 
 #include <algorithm>
 #include <iterator>
@@ -18,94 +24,16 @@ namespace
 {
 constexpr float RowHeight = 30.0f;
 
-struct ForbiddenTech : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ForbiddenTech">;
-
-  int64_t Id()
-  { return Get<"Id", int64_t>(); }
-};
-
-struct ForbiddenTechInventoryItem : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem">;
-
-  ForbiddenTech* forbiddenTech()
-  { return Get<"ForbiddenTech", ForbiddenTech*>(); }
-};
-
-struct ForbiddenTechSlotParams : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ForbiddenTechSlotParams">;
-
-  int64_t OwnerId()
-  { return Get<"OwnerId", int64_t>(); }
-};
-
-struct ForbiddenTechEntitySlot : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
-
-  ForbiddenTechSlotParams* forbiddenTechSlotParams()
-  { return Get<"ForbiddenTechSlotParams", ForbiddenTechSlotParams*>(); }
-};
-
-// GetShip returns an IShipModel, read on its runtime class.
-struct ForbiddenTechFleetService : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Services", "FleetService">;
-
-  il2cpp::Object* GetShip(int64_t ship_id)
-  { return Call<"GetShip", il2cpp::Object*>(ship_id); }
-};
-
-struct ForbiddenTechManager : MonoSingleton<ForbiddenTechManager> {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager">;
-
-  bool TryGetEntitySlotFromForbiddenTech(int64_t tech_id, ForbiddenTechEntitySlot*& slot)
-  { return Call<"TryGetEntitySlotFromForbiddenTech", bool>(tech_id, std::ref(slot)); }
-
-  // _fleetServiceCache is a CachedService<FleetService> struct whose Service getter resolves the
-  // service lazily. The getter runs on a copy, so the manager's own cache is left as it was; the
-  // runtime takes the struct receiver unboxed.
-  ForbiddenTechFleetService* fleetService()
-  {
-    struct CachedService {
-      ForbiddenTechFleetService* service;
-    };
-    auto cache = Field<"_fleetServiceCache", CachedService>();
-    if (cache.service)
-      return cache.service;
-    static FieldInfo* const field =
-        Class::Raw() ? il2cpp_class_get_field_from_name(Class::Raw(), "_fleetServiceCache") : nullptr;
-    static const MethodInfo* const getter =
-        field ? il2cpp_class_get_method_from_name(il2cpp_class_from_type(il2cpp_field_get_type(field)), "get_Service",
-                                                  0)
-              : nullptr;
-    if (!getter)
-      return nullptr;
-    return reinterpret_cast<ForbiddenTechFleetService*>(il2cpp::detail::InvokeBoxed(getter, &cache, nullptr));
-  }
-};
-
-struct ForbiddenTechInventoryItemWidget : Widget<ForbiddenTechInventoryItem> {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechInventoryItemWidget">;
-
-  // ForbiddenTechInventoryItemWidget.WidgetType; 1 is the large selected-item panel.
-  int32_t widgetType()
-  { return Field<"_widgetType", int32_t>(); }
-  // SmartScroller
-  Component* buffListScroller()
-  { return Field<"_buffListScroller", Component*>(); }
-  TextLocalizer* name()
-  { return Field<"_name", TextLocalizer*>(); }
-};
-
-RectTransform* RectOf(il2cpp::Object* component)
+unity::RectTransform* RectOf(il2cpp::Object* component)
 {
-  auto* as_component = component ? component->As<Component>() : nullptr;
+  auto* as_component = component ? component->As<unity::Component>() : nullptr;
   auto* transform    = as_component ? as_component->transform() : nullptr;
-  return transform ? transform->As<RectTransform>() : nullptr;
+  return transform ? transform->As<unity::RectTransform>() : nullptr;
 }
 
 void SetActive(il2cpp::Object* component, bool active)
 {
-  auto* as_component = component->As<Component>();
+  auto* as_component = component->As<unity::Component>();
   auto* object       = as_component ? as_component->gameObject() : nullptr;
   if (!object)
     throw std::runtime_error("Forbidden Tech label object unavailable");
@@ -125,7 +53,7 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
 
   // The fleet-index API returns -1 for a ship in the hangar. Resolve the slot's
   // OwnerId instead; it identifies the actual ship regardless of dock assignment.
-  ForbiddenTechEntitySlot* slot = nullptr;
+  EntitySlot* slot = nullptr;
   if (!manager->TryGetEntitySlotFromForbiddenTech(id, slot) || !slot)
     return {};
   auto* params = slot->forbiddenTechSlotParams();
@@ -137,7 +65,7 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
   if (!service)
     return {};
   auto* ship = service->GetShip(owner);
-  auto* hull = ship ? ship->Get<"Hull", HullSpec*>() : nullptr;
+  auto* hull = ship ? ship->Hull() : nullptr;
   if (!hull)
     return {};
   // Hull IDs and localisation IDs differ on many ships. Mirror FleetPlayerData.GetLocaId.
@@ -149,19 +77,19 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
 struct Row {
   il2cpp::GcHandle scroller;
   il2cpp::GcHandle label;
-  Vector2          original_top{};
+  unity::Vector2   original_top{};
   bool             visible = false;
 
-  RectTransform* Scroller() const
-  { return scroller.Get<RectTransform>(); }
+  unity::RectTransform* Scroller() const
+  { return scroller.Get<unity::RectTransform>(); }
   TextLocalizer* Label() const
   { return label.Get<TextLocalizer>(); }
 
   void Hide()
   {
-    if (UnityObject::Alive(Label()))
+    if (unity::Alive(Label()))
       SetActive(Label(), false);
-    if (visible && UnityObject::Alive(Scroller()))
+    if (visible && unity::Alive(Scroller()))
       Scroller()->SetOffsetMax(original_top);
     visible = false;
   }
@@ -171,7 +99,7 @@ std::vector<Row> rows;
 void HideWidgetRow(ForbiddenTechInventoryItemWidget* widget)
 {
   auto* scroller = widget->buffListScroller();
-  if (!UnityObject::Alive(scroller))
+  if (!unity::Alive(scroller))
     return;
   auto* rect = RectOf(scroller);
   for (auto& row : rows) {
@@ -180,31 +108,20 @@ void HideWidgetRow(ForbiddenTechInventoryItemWidget* widget)
   }
 }
 
-TextLocalizer* CloneLabel(TextLocalizer* source, Transform* parent)
-{
-  // This client exposes the two-argument overload only as Instantiate<T>.
-  // Use the non-generic three-argument overload so no generic inflation is required.
-  auto* clone = UnityObject::Class::Call<"Instantiate", il2cpp::Object*(il2cpp::Object*, Transform*, bool)>(
-      source, parent, false);
-  if (!UnityObject::Alive(clone))
-    throw std::runtime_error("Forbidden Tech ship label could not be created");
-  return static_cast<TextLocalizer*>(clone);
-}
-
 void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
 {
   // Only the large selected-item panel: inventory tiles retain their native dock badges.
-  if (widget->widgetType() != 1)
+  if (widget->widgetType() != ForbiddenTechInventoryItemWidget::Type::LargeShowcase)
     return;
 
   auto* scroller = widget->buffListScroller();
-  if (!UnityObject::Alive(scroller))
+  if (!unity::Alive(scroller))
     return;
   auto* rect = RectOf(scroller);
   if (!rect)
     throw std::runtime_error("Forbidden Tech buff layout unavailable");
 
-  std::erase_if(rows, [](const Row& row) { return !UnityObject::Alive(row.Scroller()); });
+  std::erase_if(rows, [](const Row& row) { return !unity::Alive(row.Scroller()); });
   auto found = std::find_if(rows.begin(), rows.end(), [rect](const Row& row) { return row.Scroller() == rect; });
   if (found == rows.end()) {
     Row row;
@@ -228,11 +145,13 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
 
   try {
     auto* label = row.Label();
-    if (!UnityObject::Alive(label)) {
+    if (!unity::Alive(label)) {
       auto* source = widget->name();
-      if (!UnityObject::Alive(source))
+      if (!unity::Alive(source))
         return;
-      label = CloneLabel(source, rect->parent());
+      label = unity::Instantiate(source, rect->parent());
+      if (!unity::Alive(label))
+        throw std::runtime_error("Forbidden Tech ship label could not be created");
       SetActive(label, false);
       row.label = il2cpp::GcHandle::Weak(label);
       if (!row.label)
@@ -254,18 +173,18 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
 
     // Target resolves the graphic lazily, even when the source label was inactive at clone time.
     auto* target = label->Target();
-    auto* text   = target ? target->As<TMP_Text>() : nullptr;
+    auto* text   = target ? target->As<unity::TMP_Text>() : nullptr;
     if (!text)
       throw std::runtime_error("Forbidden Tech ship label text unavailable");
-    text->SetAlignment(513); // TMP TextAlignmentOptions.Left (left, vertically centred).
+    text->SetAlignment(unity::TMP_Text::Alignment::Left); // Left, vertically centred.
     text->SetRaycastTarget(false);
     text->SetRichText(false); // Ship names are plain text, never markup.
     text->SetEnableWordWrapping(false);
-    text->SetOverflowMode(1); // TMP TextOverflowModes.Ellipsis; long names stay within this row.
+    text->SetOverflowMode(unity::TMP_Text::Overflow::Ellipsis); // Long names stay within this row.
     text->SetEnableAutoSizing(false);
     text->SetFontSize(20.0f);
     text->SetColor({1.0f, 1.0f, 1.0f, 1.0f});
-    label->OverrideLocalizedText(il2cpp_string_new(("Equipped on: " + name).c_str()));
+    label->OverrideLocalizedText(il2cpp::NewString("Equipped on: " + name));
     // Keep the panel's outer size, reserving one row from the scrollable buff area.
     rect->SetOffsetMax({max.x, max.y - RowHeight});
     row.visible = true;
@@ -307,9 +226,8 @@ void ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook(auto original, Forbid
   }
   original(_this);
 }
-} // namespace
 
-void InstallForbiddenTechShipNameHooks()
+void InstallForbiddenTechShipName()
 {
   auto method = ForbiddenTechInventoryItemWidget::Class::Method("SetWidgetData", 0);
   auto clear  = ForbiddenTechInventoryItemWidget::Class::Method("ClearWidgetData", 0);
@@ -323,11 +241,14 @@ void InstallForbiddenTechShipNameHooks()
     return;
   }
   // Install cleanup first; failure leaves the native panel entirely untouched.
-  if (!SPUD_STATIC_DETOUR(clear.Pointer(), ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook)) {
+  if (!IL2CPP_HOOK(clear, ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook)) {
     spdlog::warn("[ForbiddenTechShipName] widget cleanup hook unavailable; native display retained");
     return;
   }
-  const bool installed =
-      SPUD_STATIC_DETOUR(method.Pointer(), ForbiddenTechInventoryItemWidget_SetWidgetData_Hook) != nullptr;
+  const bool installed = IL2CPP_HOOK(method, ForbiddenTechInventoryItemWidget_SetWidgetData_Hook) != nullptr;
   spdlog::info("[ForbiddenTechShipName] widget refresh hook {}", installed ? "installed" : "unavailable");
 }
+} // namespace
+
+const Feature kForbiddenTechShipName{"ForbiddenTechShipName", &Config::Patches::forbiddentechshipnamehooks,
+                                     InstallForbiddenTechShipName};
