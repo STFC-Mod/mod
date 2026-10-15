@@ -459,12 +459,6 @@ void Config::ReloadIfChanged()
   Reload();
 }
 
-MissionHudVisibility Config::Ui::MissionHudButtonVisibility(std::string_view button) const
-{
-  const auto it = mission_hud_buttons.find(button);
-  return it == mission_hud_buttons.end() ? MissionHudVisibility::kAuto : it->second;
-}
-
 void Config::Load(const SettingsFile& file, bool first)
 {
   const auto& config = file.table;
@@ -670,8 +664,10 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "cargo_significant_decimals", u.cargo_significant_decimals);
   r.Read("ui", "always_skip_reveal_sequence", u.always_skip_reveal_sequence);
   r.ReadRenamed("ui", "disable_exchange_all", "hide_artifact_exchange_all", u.disable_exchange_all);
-  for (const char* button : {"q_trials", "field_training", "outposts", "daily_goals", "missions"})
-    r.Choose("ui", std::string("hud_") + button, u.mission_hud_buttons[button], kHudVisibility);
+  r.Choose("ui", "hud_q_trials", u.hud_q_trials, kHudVisibility);
+  r.Choose("ui", "hud_field_training", u.hud_field_training, kHudVisibility);
+  r.Choose("ui", "hud_outposts", u.hud_outposts, kHudVisibility);
+  r.Choose("ui", "hud_missions", u.hud_missions, kHudVisibility);
   u.disabled_banner_types = ReadBannerTypes(r, "disabled_banner_types");
   u.notify_banner_types   = ReadBannerTypes(r, "notify_banner_types");
 

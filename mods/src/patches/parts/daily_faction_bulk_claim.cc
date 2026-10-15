@@ -27,30 +27,59 @@ template <il2cpp::Name Field> unity::Component* HudButton(MissionsHudViewControl
 { return controller->ButtonField<Field>(); }
 
 struct ButtonSetting {
-  const char*  name; // the hud_<name> setting
-  ButtonGetter button;
+  MissionHudVisibility Config::Ui::* visibility;
+  ButtonGetter                       button;
 };
 
 constexpr ButtonSetting kButtons[] = {
-    {"q_trials", HudButton<"_challengesButton">}, {"field_training", HudButton<"_achievementsButton">},
-    {"outposts", HudButton<"_outpostsButton">},   {"daily_goals", HudButton<"_dailyGoalsButton">},
-    {"missions", HudButton<"_missionsButton">},
+    {&Config::Ui::hud_q_trials, HudButton<"_challengesButton">},
+    {&Config::Ui::hud_field_training, HudButton<"_achievementsButton">},
+    {&Config::Ui::hud_outposts, HudButton<"_outpostsButton">},
+    {&Config::Ui::hud_missions, HudButton<"_missionsButton">},
 };
 
 // The game decides visibility here; the hud_* settings are applied on top every time it does.
-int32_t MissionsHudViewController_UpdateButtons_Hook(auto original, MissionsHudViewController* _this)
+bool hud_ready = false;
+
+void ApplyHudVisibility(MissionsHudViewController* _this)
 {
-  const auto  result = original(_this);
-  const auto& ui     = Config::Get().ui;
+  if (!hud_ready)
+    return;
+  const auto& ui = Config::Get().ui;
   for (const auto& button : kButtons) {
-    const auto visibility = ui.MissionHudButtonVisibility(button.name);
+    const auto visibility = ui.*button.visibility;
     if (visibility == MissionHudVisibility::kAuto)
       continue;
     auto* component = button.button(_this);
     if (auto* object = component ? component->gameObject() : nullptr)
       object->SetActive(visibility == MissionHudVisibility::kAlways);
   }
-  return result;
+}
+
+void MissionsHudViewController_OnEnable_Hook(auto original, MissionsHudViewController* _this)
+{
+  original(_this);
+  ApplyHudVisibility(_this);
+}
+void MissionsHudViewController_SetupAchievementsButton_Hook(auto original, MissionsHudViewController* _this)
+{
+  original(_this);
+  ApplyHudVisibility(_this);
+}
+void MissionsHudViewController_SetupChallengesButton_Hook(auto original, MissionsHudViewController* _this, bool value)
+{
+  original(_this, value);
+  ApplyHudVisibility(_this);
+}
+void MissionsHudViewController_SetupOutpostsButton_Hook(auto original, MissionsHudViewController* _this, bool value)
+{
+  original(_this, value);
+  ApplyHudVisibility(_this);
+}
+void MissionsHudViewController_HandleOutpostsAndChallengesHUD_Hook(auto original, MissionsHudViewController* _this)
+{
+  original(_this);
+  ApplyHudVisibility(_this);
 }
 
 // --- Daily faction claims ---
@@ -74,18 +103,6 @@ bool Claimed(std::string_view faction)
   return factions.empty() || std::ranges::find(factions, faction) != factions.end();
 }
 
-unity::Transform* FindChild(unity::Transform* root, std::string_view name)
-{
-  if (!root)
-    return nullptr;
-  if (auto* object = root->gameObject(); object && object->Name() == name)
-    return root;
-  for (int32_t i = 0; i < root->childCount(); ++i)
-    if (auto* found = FindChild(root->GetChild(i), name))
-      return found;
-  return nullptr;
-}
-
 void ShowClaimedFactionIcons(MissionViewController* controller)
 {
   auto* toggle = controller->claimAllToggle();
@@ -93,7 +110,7 @@ void ShowClaimedFactionIcons(MissionViewController* controller)
   if (!parent)
     return;
   for (const auto& faction : kFactions) {
-    auto* icon   = FindChild(parent, faction.icon);
+    auto* icon   = parent->FindNamed(faction.icon);
     auto* object = icon ? icon->gameObject() : nullptr;
     if (object)
       object->SetActive(Claimed(faction.name));
@@ -179,8 +196,27 @@ void MissionsUpdate()
 
 void InstallMissionHud()
 {
-  IL2CPP_HOOK(MissionsHudViewController::Class::Method("UpdateButtons", 0),
-              MissionsHudViewController_UpdateButtons_Hook);
+  using Controller = MissionsHudViewController::Class;
+  const std::array methods{
+      Controller::Method<void()>("OnEnable"), Controller::Method<void()>("SetupAchievementsButton"),
+      Controller::Method<void(bool)>("SetupChallengesButton"), Controller::Method<void(bool)>("SetupOutpostsButton"),
+      Controller::Method<void()>("HandleOutpostsAndChallengesHUD")};
+  // The lifecycle paths must all be distinct and available before any preference is applied.
+  for (size_t i = 0; i < methods.size(); ++i) {
+    if (!methods[i])
+      return;
+    for (size_t j = 0; j < i; ++j)
+      if (methods[i].Pointer() == methods[j].Pointer()) {
+        spdlog::error("Mission HUD refresh paths share a native target; overrides disabled");
+        return;
+      }
+  }
+  const bool enabled      = IL2CPP_HOOK(methods[0], MissionsHudViewController_OnEnable_Hook);
+  const bool achievements = IL2CPP_HOOK(methods[1], MissionsHudViewController_SetupAchievementsButton_Hook);
+  const bool challenges   = IL2CPP_HOOK(methods[2], MissionsHudViewController_SetupChallengesButton_Hook);
+  const bool outposts     = IL2CPP_HOOK(methods[3], MissionsHudViewController_SetupOutpostsButton_Hook);
+  const bool combined     = IL2CPP_HOOK(methods[4], MissionsHudViewController_HandleOutpostsAndChallengesHUD_Hook);
+  hud_ready               = enabled && achievements && challenges && outposts && combined;
 }
 
 void InstallDailyClaimFilter()

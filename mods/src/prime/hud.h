@@ -9,7 +9,7 @@
 
 #include <cstdint>
 
-// The Q-Trials, field training, outposts, daily goals and missions buttons.
+// The Q-Trials, field training, outposts and missions buttons.
 struct MissionsHudViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.HUD", "MissionsHudViewController">;
 
