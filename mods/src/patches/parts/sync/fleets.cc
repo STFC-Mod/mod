@@ -182,7 +182,7 @@ namespace
   void Append(json records, bool snapshot)
   {
     static uint64_t sequence = 0;
-    Publish(Stream::kFleets, {{json::array({++sequence, snapshot}), std::move(records)}}, Session().generation);
+    Publish(Stream::kFleets, {{json::array({++sequence, snapshot}), std::move(records)}}, SessionGeneration());
   }
 
   // A snapshot is the complete list of occupied slots, so it is sent as a first sync.
@@ -257,7 +257,7 @@ namespace
 
 void InstallFleetSync()
 {
-  if (!Config::Get().sync.options.fleets)
+  if (!Config::Sync::Get()->options.fleets)
     return;
   if (!fleet_watch::Subscribe({.on_transition = OnTransition, .on_baseline = OnBaseline})) {
     spdlog::warn("Sync: fleet state subscriber could not be installed; fleet sync disabled");

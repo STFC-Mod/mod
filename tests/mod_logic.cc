@@ -277,8 +277,7 @@ void ExampleSettings()
             && config->ui.hud_outposts == MissionHudVisibility::kAuto
             && config->ui.hud_missions == MissionHudVisibility::kAuto,
         "example HUD settings use native visibility");
-  Check(effective["sync"]["fleets"].value<bool>() == false && !config->sync.options.fleets,
-        "the example documents fleet sync, off by default");
+  Check(effective["sync"]["fleets"].value<bool>() == false, "the example documents fleet sync, off by default");
 }
 
 void NotificationAudio()

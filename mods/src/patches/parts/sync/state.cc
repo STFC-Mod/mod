@@ -8,39 +8,39 @@ namespace
 {
   using json = nlohmann::json;
   struct Spec {
-    SyncConfig::Type category;
-    const char*      type;
-    const char*      removed      = nullptr;
-    const char*      id           = nullptr;
-    bool             initial_full = false, always_full = false;
+    bool SyncConfig::* enabled;
+    const char*        type;
+    const char*        removed      = nullptr;
+    const char*        id           = nullptr;
+    bool               initial_full = false, always_full = false;
     // Recent entries kept for a journal: every entry is delivered on its own and never merged with a later one.
     size_t journal = 0;
   };
   constexpr std::array kStreams{
-      Spec{SyncConfig::Type::kAwayAssignments, "away_assignment", "collected_away_assignment", "aid", true},
-      Spec{SyncConfig::Type::kBattles, "battlelog", nullptr, nullptr, false, false, kRecentBattles},
-      Spec{SyncConfig::Type::kBuffs, "buff", "expired_buff", "bid", true},
-      Spec{SyncConfig::Type::kBuildings, "module"},
-      Spec{SyncConfig::Type::kEmeraldChain, "emerald_chain"},
-      Spec{SyncConfig::Type::kFleets, "fleet", nullptr, nullptr, false, false, kRecentFleetChanges},
-      Spec{SyncConfig::Type::kFleets, "fleet"},
-      Spec{SyncConfig::Type::kHaven, "haven", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kHaven, "haven_pieces", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kHaven, "haven_prosperity"},
-      Spec{SyncConfig::Type::kInventory, "inventory", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kJobs, "job", "completed_job", "uuid", true},
-      Spec{SyncConfig::Type::kMissions, "active_mission"},
-      Spec{SyncConfig::Type::kMissions, "mission"},
-      Spec{SyncConfig::Type::kOfficer, "officer"},
-      Spec{SyncConfig::Type::kProfile, "profile", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kResearch, "research"},
-      Spec{SyncConfig::Type::kResources, "resource", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kResources, "alliance_resource", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kShips, "ship", nullptr, nullptr, true},
-      Spec{SyncConfig::Type::kSlots, "slot"},
-      Spec{SyncConfig::Type::kStoreOffers, "store_offer"},
-      Spec{SyncConfig::Type::kTech, "ft"},
-      Spec{SyncConfig::Type::kTraits, "trait"},
+      Spec{&SyncConfig::away_assignments, "away_assignment", "collected_away_assignment", "aid", true},
+      Spec{&SyncConfig::battlelogs, "battlelog", nullptr, nullptr, false, false, kRecentBattles},
+      Spec{&SyncConfig::buffs, "buff", "expired_buff", "bid", true},
+      Spec{&SyncConfig::buildings, "module"},
+      Spec{&SyncConfig::buffs, "emerald_chain"},
+      Spec{&SyncConfig::fleets, "fleet", nullptr, nullptr, false, false, kRecentFleetChanges},
+      Spec{&SyncConfig::fleets, "fleet"},
+      Spec{&SyncConfig::haven, "haven", nullptr, nullptr, true},
+      Spec{&SyncConfig::haven, "haven_pieces", nullptr, nullptr, true},
+      Spec{&SyncConfig::haven, "haven_prosperity"},
+      Spec{&SyncConfig::inventory, "inventory", nullptr, nullptr, true},
+      Spec{&SyncConfig::jobs, "job", "completed_job", "uuid", true},
+      Spec{&SyncConfig::missions, "active_mission"},
+      Spec{&SyncConfig::missions, "mission"},
+      Spec{&SyncConfig::officers, "officer"},
+      Spec{&SyncConfig::profile, "profile", nullptr, nullptr, true},
+      Spec{&SyncConfig::research, "research"},
+      Spec{&SyncConfig::resources, "resource", nullptr, nullptr, true},
+      Spec{&SyncConfig::resources, "alliance_resource", nullptr, nullptr, true},
+      Spec{&SyncConfig::ships, "ship", nullptr, nullptr, true},
+      Spec{&SyncConfig::slots, "slot"},
+      Spec{&SyncConfig::store_offers, "store_offer"},
+      Spec{&SyncConfig::tech, "ft"},
+      Spec{&SyncConfig::traits, "trait"},
   };
   static_assert(kStreams.size() == static_cast<size_t>(Stream::kCount));
 } // namespace
@@ -149,7 +149,7 @@ std::optional<Upload> Delivery::Next(const RecordStore& store, Clock::time_point
     const auto&  collection = store.streams_[i];
     auto&        cursor     = cursors_[i];
     const auto&  spec       = kStreams[i];
-    if (!collection || !config_.enabled(spec.category) || now < cursor.retry_at)
+    if (!collection || !(config_.*spec.enabled) || now < cursor.retry_at)
       continue;
     const auto& current   = collection->records;
     const bool  journal   = spec.journal != 0;

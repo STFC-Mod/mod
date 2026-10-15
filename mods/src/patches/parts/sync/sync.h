@@ -29,24 +29,32 @@ namespace data_sync
 // only formatted when it will be logged.
 namespace logging
 {
+  inline bool Enabled(spdlog::level::level_enum level)
+  {
+    if (!spdlog::should_log(level))
+      return false;
+    const auto config = Config::Sync::Get();
+    return config->logging && (level == spdlog::level::err || config->debug);
+  }
+
   template <typename... Args>
   void error(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging)
+    if (Enabled(spdlog::level::err))
       spdlog::error("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 
   template <typename... Args>
   void debug(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging && Config::Get().sync.debug)
+    if (Enabled(spdlog::level::debug))
       spdlog::debug("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 
   template <typename... Args>
   void trace(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging && Config::Get().sync.debug)
+    if (Enabled(spdlog::level::trace))
       spdlog::trace("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 } // namespace logging
@@ -216,13 +224,15 @@ struct Input {
   int32_t level = 0;
 };
 using Processor = void (*)(const Input&);
-Processor   ProcessorFor(EntityGroup::Kind kind);
-void        ProcessRealtimeSlot(const Input& input);
-void        ProcessStoreOffers(const Input& input);
+Processor ProcessorFor(EntityGroup::Kind kind);
+void      ProcessRealtimeSlot(const Input& input);
+void      ProcessStoreOffers(const Input& input);
+void      Publish(Stream stream, RecordSet records, uint64_t generation, Update mode = Update::kMerge);
+void      FollowSettings();
 // The local player's own record from a UserProfiles response; needs user_id and level.
-void        ProcessOwnProfile(const Input& input);
-void        Publish(Stream stream, RecordSet records, uint64_t generation, Update mode = Update::kMerge);
-void        FollowSettings();
+void ProcessOwnProfile(const Input& input);
+// Jobs only need the generation; Session() also copies the request headers.
+uint64_t    SessionGeneration();
 GameSession Session();
 void        SetGameServer(std::string url, std::string session_id);
 void        SetGameVersion(std::string version);

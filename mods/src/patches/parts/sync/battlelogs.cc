@@ -61,7 +61,7 @@ namespace
 
     void Store(const Key& key, Value value, uint64_t generation)
     {
-      const auto       expires_at = Clock::now() + std::chrono::seconds(Config::Get().sync.resolver_cache_ttl);
+      const auto       expires_at = Clock::now() + std::chrono::seconds(Config::Sync::Get()->resolver_cache_ttl);
       std::scoped_lock lock(mutex_);
       if (generation < generation_)
         return;
@@ -158,7 +158,8 @@ namespace
       bool                          verify_ssl = true;
     };
     static auto& session = *new Session; // never destroyed, see sync.h
-    const auto&  options = Config::Get().sync.options;
+    const auto   config  = Config::Sync::Get();
+    const auto&  options = config->options;
     if (session.http && options.proxy == session.proxy && options.verify_ssl == session.verify_ssl)
       return *session.http;
 
@@ -207,7 +208,7 @@ namespace
     http.SetBody(body);
 
     const auto response = http.Post();
-    if (session.generation != Session().generation)
+    if (session.generation != SessionGeneration())
       return {};
     if (response.status_code == 0) {
       logging::error("DOWNLOAD", path, "Failed to send request: {}", response.error.message);
@@ -359,7 +360,7 @@ namespace
             session.generation);
     std::scoped_lock lock(battle_mutex);
     pending.erase({session.generation, journal_id});
-    return session.generation == Session().generation;
+    return session.generation == SessionGeneration();
   }
 
   void RunBattleLogs()
@@ -367,13 +368,13 @@ namespace
     for (;;) {
       const auto work    = battles.Pop();
       bool       fetched = false;
-      if (work.session.generation == Session().generation && Config::Get().sync.options.battlelogs) {
+      if (work.session.generation == SessionGeneration() && Config::Sync::Get()->options.battlelogs) {
         try {
           fetched = UploadBattle(work);
         } catch (const std::exception& e) {
           spdlog::error("Error processing combat log {}: {}", work.id, e.what());
         }
-        if (!fetched && work.session.generation == Session().generation) {
+        if (!fetched && work.session.generation == SessionGeneration()) {
           // Retry at the back so one unavailable journal cannot starve all the others.
           std::this_thread::sleep_for(std::chrono::seconds(1));
           std::scoped_lock lock(battle_mutex);

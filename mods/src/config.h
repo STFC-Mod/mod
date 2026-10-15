@@ -3,7 +3,7 @@
 // User settings from the settings TOML. Each struct is a TOML section and each member is named after its key,
 // with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale. They are read at
 // startup and again whenever the file changes; a few are also toggled at runtime by hotkeys. Everything runs on
-// the game thread except sync, which only reads.
+// the game thread except sync, whose workers retain immutable snapshots.
 
 #include "patches/parts/notification_audio.h"
 #include "patches/shortcuts.h"
@@ -19,32 +19,10 @@
 
 // Which categories of game data are uploaded, globally ([sync]) or for one target ([sync.targets.<name>]).
 struct SyncConfig {
-  enum class Type {
-    kAwayAssignments,
-    kBattles,
-    kBuffs,
-    kBuildings,
-    kEmeraldChain,
-    kFleets,
-    kHaven,
-    kInventory,
-    kJobs,
-    kMissions,
-    kOfficer,
-    kProfile,
-    kResearch,
-    kResources,
-    kShips,
-    kSlots,
-    kStoreOffers,
-    kTech,
-    kTraits
-  };
-
   struct Option {
-    Type             type;
     std::string_view option_str; // used in TOML file
     bool SyncConfig::* option;
+    std::string_view   old_name = {};
   };
 
   std::string proxy;
@@ -68,30 +46,28 @@ struct SyncConfig {
   bool        tech             = false;
   bool        traits           = false;
 
-  [[nodiscard]] bool enabled(Type type) const;
-  bool               operator==(const SyncConfig&) const = default;
+  bool operator==(const SyncConfig&) const = default;
 };
 
 constexpr std::array SyncOptions{
-    SyncConfig::Option{SyncConfig::Type::kAwayAssignments, "away_assignments", &SyncConfig::away_assignments},
-    SyncConfig::Option{SyncConfig::Type::kBattles, "battlelogs", &SyncConfig::battlelogs},
-    SyncConfig::Option{SyncConfig::Type::kBuffs, "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kBuildings, "buildings", &SyncConfig::buildings},
-    SyncConfig::Option{SyncConfig::Type::kEmeraldChain, "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kFleets, "fleets", &SyncConfig::fleets},
-    SyncConfig::Option{SyncConfig::Type::kHaven, "haven", &SyncConfig::haven},
-    SyncConfig::Option{SyncConfig::Type::kInventory, "inventory", &SyncConfig::inventory},
-    SyncConfig::Option{SyncConfig::Type::kJobs, "jobs", &SyncConfig::jobs},
-    SyncConfig::Option{SyncConfig::Type::kMissions, "missions", &SyncConfig::missions},
-    SyncConfig::Option{SyncConfig::Type::kOfficer, "officers", &SyncConfig::officers},
-    SyncConfig::Option{SyncConfig::Type::kProfile, "profile", &SyncConfig::profile},
-    SyncConfig::Option{SyncConfig::Type::kResearch, "research", &SyncConfig::research},
-    SyncConfig::Option{SyncConfig::Type::kResources, "resources", &SyncConfig::resources},
-    SyncConfig::Option{SyncConfig::Type::kShips, "ships", &SyncConfig::ships},
-    SyncConfig::Option{SyncConfig::Type::kSlots, "slots", &SyncConfig::slots},
-    SyncConfig::Option{SyncConfig::Type::kStoreOffers, "store_offers", &SyncConfig::store_offers},
-    SyncConfig::Option{SyncConfig::Type::kTech, "tech", &SyncConfig::tech},
-    SyncConfig::Option{SyncConfig::Type::kTraits, "traits", &SyncConfig::traits},
+    SyncConfig::Option{"away_assignments", &SyncConfig::away_assignments},
+    SyncConfig::Option{"battlelogs", &SyncConfig::battlelogs},
+    SyncConfig::Option{"buffs", &SyncConfig::buffs},
+    SyncConfig::Option{"buildings", &SyncConfig::buildings},
+    SyncConfig::Option{"fleets", &SyncConfig::fleets},
+    SyncConfig::Option{"haven", &SyncConfig::haven},
+    SyncConfig::Option{"inventory", &SyncConfig::inventory},
+    SyncConfig::Option{"jobs", &SyncConfig::jobs},
+    SyncConfig::Option{"missions", &SyncConfig::missions},
+    SyncConfig::Option{"officers", &SyncConfig::officers, "officer"},
+    SyncConfig::Option{"profile", &SyncConfig::profile},
+    SyncConfig::Option{"research", &SyncConfig::research},
+    SyncConfig::Option{"resources", &SyncConfig::resources},
+    SyncConfig::Option{"ships", &SyncConfig::ships},
+    SyncConfig::Option{"slots", &SyncConfig::slots},
+    SyncConfig::Option{"store_offers", &SyncConfig::store_offers},
+    SyncConfig::Option{"tech", &SyncConfig::tech},
+    SyncConfig::Option{"traits", &SyncConfig::traits},
 };
 
 struct SyncTargetConfig : SyncConfig {
@@ -133,7 +109,7 @@ struct ShipFilter {
 class Config final
 {
 public:
-  // The current settings. Call it again rather than keeping the reference: a reload replaces them.
+  // Game thread only. Call it again rather than keeping the reference: a reload replaces the settings.
   [[nodiscard]] static Config& Get();
   // Re-reads the settings file and makes it current, rebinding shortcuts. A file that does not parse keeps the
   // current settings. [patches] decides which hooks are installed, so its changes wait for a restart. Game thread.
@@ -329,6 +305,9 @@ public:
   } ui;
 
   struct Sync {
+    // Workers keep this snapshot alive while reading; reloads publish a separate immutable copy.
+    [[nodiscard]] static std::shared_ptr<const Sync> Get();
+
     bool debug   = false;
     bool logging = false;
     // Seconds that resolved player and alliance names stay cached.
@@ -336,7 +315,7 @@ public:
     // The categories any target wants, so the game hooks can skip the rest.
     SyncConfig                              options;
     std::map<std::string, SyncTargetConfig> targets;
-  } sync;
+  };
 
   // [config]: overrides for the game's own server settings.
   struct Game {
@@ -350,7 +329,8 @@ public:
   static std::unique_ptr<Config> Parse(const toml::table& file, toml::table& effective, bool log_values);
 
 private:
-  Shortcut::Bindings shortcuts_;
+  Shortcut::Bindings          shortcuts_;
+  std::shared_ptr<const Sync> sync_;
   Config() = default;
   void Read(const toml::table& file, toml::table& effective, bool log_values);
 };

@@ -37,7 +37,7 @@ namespace
     for (;;) {
       auto job = pending.Pop();
       try {
-        if (job.input.generation == Session().generation)
+        if (job.input.generation == SessionGeneration())
           job.process(job.input);
       } catch (const std::exception& e) {
         spdlog::error("Exception while processing sync data: {}", e.what());
@@ -67,10 +67,10 @@ namespace
     const auto type    = entity_group->Type();
     auto       process = ProcessorFor(type);
     // UserProfiles also carries the local player's own record, read only while a target syncs the profile.
-    const bool own_profile = type == EntityGroup::Kind::UserProfiles && Config::Get().sync.options.profile;
+    const bool own_profile = type == EntityGroup::Kind::UserProfiles && Config::Sync::Get()->options.profile;
     if (!process && !own_profile)
       return;
-    Input input{Session().generation,
+    Input input{SessionGeneration(),
                 length ? std::string(reinterpret_cast<const char*>(bytes->data()), static_cast<size_t>(length))
                        : std::string{}};
     if (type == EntityGroup::Kind::PlanetaryMapResponse || own_profile) {
@@ -102,7 +102,7 @@ namespace
       auto*      bytes  = group ? group->bytes() : nullptr;
       if (length > 0 && bytes && static_cast<size_t>(length) <= bytes->size())
         pending.Push({ProcessStoreOffers,
-                      {Session().generation,
+                      {SessionGeneration(),
                        std::string(reinterpret_cast<const char*>(bytes->data()), static_cast<size_t>(length))}});
     }
   }
@@ -116,7 +116,7 @@ namespace
       // may throw.
       const auto* type = realtimeDataPayload->DataType();
       if (type->length == 1 && type->chars[0] == u'0')
-        pending.Push({ProcessRealtimeSlot, {Session().generation, il2cpp::ToUtf8(realtimeDataPayload->Data())}});
+        pending.Push({ProcessRealtimeSlot, {SessionGeneration(), il2cpp::ToUtf8(realtimeDataPayload->Data())}});
     }
     return original(_this, centrifugoInfo, realtimeDataPayload, finalPayload);
   }
@@ -129,7 +129,7 @@ namespace
             service_response && service_response->Is<ServiceResponse>() ? service_response->EntityGroups() : nullptr)
       for (auto* group : *groups)
         HandleEntityGroup(group);
-    else if (auto* platform = service_response && Config::Get().sync.options.store_offers
+    else if (auto* platform = service_response && Config::Sync::Get()->options.store_offers
                                   ? service_response->As<PlatformServiceResponse>()
                                   : nullptr)
       HandlePlatformResponse(platform);

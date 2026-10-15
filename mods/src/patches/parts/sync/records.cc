@@ -250,7 +250,7 @@ namespace
       // Part of fleet sync: jobs-only targets see nothing new. The repair changes the fleet's state later, so the
       // fleet is re-read then.
       case pb::JOBTYPE_REPAIRFLEET:
-        if (!Config::Get().sync.options.fleets)
+        if (!Config::Sync::Get()->options.fleets)
           return std::nullopt;
         RereadFleet(job.repairfleetparams().fleetid());
         record["fid"] = job.repairfleetparams().fleetid();
@@ -464,7 +464,8 @@ namespace
 
   void ProcessJson(const Input& input)
   {
-    const auto& options = Config::Get().sync.options;
+    const auto  config  = Config::Sync::Get();
+    const auto& options = config->options;
     const auto  result  = json::parse(input.bytes, nullptr, false);
     if (!result.is_object()) {
       spdlog::error("Failed to parse sync JSON");
@@ -839,7 +840,8 @@ void ProcessOwnProfile(const Input& input)
 
 Processor ProcessorFor(EntityGroup::Kind kind)
 {
-  const auto& options = Config::Get().sync.options;
+  const auto  config  = Config::Sync::Get();
+  const auto& options = config->options;
   for (const auto& route : kRoutes)
     if (route.type == kind)
       return !route.battle || options.battlelogs ? route.process : nullptr;

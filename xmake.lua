@@ -81,3 +81,17 @@ target("sync-logic-tests")
     add_packages("protobuf", "spdlog", "toml++", "nlohmann_json")
     add_rules("protobuf.cpp")
     add_files("mods/src/prime/proto/*.proto")
+
+target("config-reload-tests")
+    set_kind("binary")
+    set_default(false)
+    set_exceptions("cxx")
+    add_files("tests/config_reload.cc", "mods/src/patches/shortcuts.cc", "mods/src/config.cc", "mods/src/patches/parts/notification_audio.cc")
+    add_includedirs("mods/src", "libs/il2cpp/include", "third_party/libil2cpp", "libs/unity/include")
+    add_packages("spdlog", "toml++")
+    if is_plat("macosx") then
+        add_frameworks("Cocoa")
+        add_files("mods/src/patches/parts/notification_audio_mac.mm")
+    elseif is_plat("windows") then
+        add_syslinks("shell32", "winmm")
+    end

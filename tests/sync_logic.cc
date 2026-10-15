@@ -5,13 +5,24 @@
 #include <stdexcept>
 #include <stfc.sync.pb.h>
 
+struct CountedLogValue {
+  int* formats;
+};
+template <> struct fmt::formatter<CountedLogValue> : fmt::formatter<std::string_view> {
+  auto format(const CountedLogValue& value, fmt::format_context& context) const
+  {
+    ++*value.formats;
+    return fmt::formatter<std::string_view>::format("record", context);
+  }
+};
+
 using nlohmann::json;
 namespace game = Digit::PrimeServer::Models;
 namespace
 {
 using namespace data_sync;
 RecordStore           store;
-Config&               settings = Config::Get();
+auto                  settings = std::make_shared<Config::Sync>();
 std::vector<uint64_t> rereads;
 Clock::time_point     now{};
 SyncTargetConfig      Options()
@@ -436,6 +447,38 @@ void ConfigurationAndSession()
   upload = Take(target);
   Check(upload.first_sync && upload.Records()[0]["amount"] == 200, "new session starts with its own baseline");
 }
+void SyncLogging()
+{
+  const auto previous_level   = spdlog::get_level();
+  const auto previous_logging = settings->logging, previous_debug = settings->debug;
+  int        formats = 0;
+  settings->logging = settings->debug = true;
+  spdlog::set_level(spdlog::level::off);
+  logging::error("TEST", "target", "{}", CountedLogValue{&formats});
+  logging::debug("TEST", "target", "{}", CountedLogValue{&formats});
+  logging::trace("TEST", "target", "{}", CountedLogValue{&formats});
+  const bool skipped = formats == 0;
+  formats            = 0;
+  spdlog::set_level(spdlog::level::trace);
+  settings->logging = false;
+  logging::error("TEST", "target", "{}", CountedLogValue{&formats});
+  settings->logging = true;
+  settings->debug   = false;
+  logging::debug("TEST", "target", "{}", CountedLogValue{&formats});
+  logging::trace("TEST", "target", "{}", CountedLogValue{&formats});
+  const bool gated = formats == 0;
+  formats          = 0;
+  logging::error("TEST", "target", "{}", CountedLogValue{&formats});
+  settings->debug = true;
+  logging::debug("TEST", "target", "{}", CountedLogValue{&formats});
+  logging::trace("TEST", "target", "{}", CountedLogValue{&formats});
+  spdlog::set_level(previous_level);
+  settings->logging = previous_logging;
+  settings->debug   = previous_debug;
+  Check(skipped, "globally disabled sync logs do not format their arguments");
+  Check(gated, "sync logging and debug flags still suppress formatting");
+  Check(formats == 3, "enabled sync messages format once");
+}
 void BattlesAndFairness()
 {
   auto target = Target();
@@ -545,9 +588,9 @@ void RepairJobs()
   job->mutable_repairfleetparams()->set_fleetid(5);
   job->mutable_starttime()->set_seconds(100);
   job->set_duration(30);
-  settings.sync.options.fleets = false;
+  settings->options.fleets = false;
   Process(EntityGroup::Kind::Jobs, jobs);
-  settings.sync.options.fleets = true;
+  settings->options.fleets = true;
   Check(Send(target).empty() && rereads.empty(), "repair jobs are left out without fleet sync");
   Process(EntityGroup::Kind::Jobs, jobs);
   Check(
@@ -558,18 +601,9 @@ void RepairJobs()
   Check(rereads == std::vector<uint64_t>{5}, "a repair job re-reads its fleet");
 }
 } // namespace
-Config& Config::Get()
-{
-  static Config config;
-  return config;
-}
-bool SyncConfig::enabled(Type type) const
-{
-  for (const auto& option : SyncOptions)
-    if (option.type == type)
-      return this->*option.option;
-  return false;
-}
+std::shared_ptr<const Config::Sync> Config::Sync::Get()
+{ return settings; }
+
 namespace data_sync
 {
 void Publish(Stream stream, RecordSet records, uint64_t generation, Update mode)
@@ -586,7 +620,7 @@ void RereadFleet(uint64_t fleet_id)
 int main()
 {
   for (const auto& option : SyncOptions)
-    settings.sync.options.*option.option = true;
+    settings->options.*option.option = true;
   int        failures = 0;
   const auto run      = [&](const char* name, void (*test)()) {
     store.Reset();
@@ -618,6 +652,7 @@ int main()
   run("fleet transitions", FleetTransitions);
   run("deployed fleets", DeployedFleets);
   run("repair jobs", RepairJobs);
+  run("logging", SyncLogging);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;
