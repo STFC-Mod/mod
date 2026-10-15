@@ -62,14 +62,8 @@ struct NavigationPan : il2cpp::Object {
 
   float farMagRadiusRatioSystemNormal()
   { return Field<"_farMagRadiusRatioSystemNormal", float>(); }
-  void SetFarMagRadiusRatioSystemNormal(float value)
-  { SetField<"_farMagRadiusRatioSystemNormal">(value); }
-  float farMagRadiusRatioSystemExtended()
-  { return Field<"_farMagRadiusRatioSystemExtended", float>(); }
   void SetFarMagRadiusRatioSystemExtended(float value)
   { SetField<"_farMagRadiusRatioSystemExtended">(value); }
-  float nearMagRadiusRatioSystem()
-  { return Field<"_nearMagRadiusRatioSystemNormal", float>(); }
 };
 
 enum class NodeDepth : int32_t {
@@ -103,40 +97,18 @@ struct NavigationZoom : il2cpp::Object {
   Camera* sceneCamera()
   { return Field<"_sceneCamera", Camera*>(); }
 
-  float storedZoomDistanceSystem()
-  { return Field<"_storedZoomDistanceSystem", float>(); }
-  void SetStoredZoomDistanceSystem(float value)
-  { SetField<"_storedZoomDistanceSystem">(value); }
-  float systemDefaultZoomRatio()
-  { return Field<"_systemDefaultZoomRatio", float>(); }
-  void SetSystemDefaultZoomRatio(float value)
-  { SetField<"_systemDefaultZoomRatio">(value); }
-  float actualDistance()
-  { return Field<"_actualDistance", float>(); }
-  void SetActualDistance(float value)
-  { SetField<"_actualDistance">(value); }
-  float zoomtotal()
-  { return Field<"_zoomtotal", float>(); }
   void SetZoomtotal(float value)
   { SetField<"_zoomtotal">(value); }
   float minimum()
   { return Field<"_minimum", float>(); }
-  void SetMinimum(float value)
-  { SetField<"_minimum">(value); }
   float maximum()
   { return Field<"_maximum", float>(); }
   void SetMaximum(float value)
   { SetField<"_maximum">(value); }
-  float zoomDelta()
-  { return Field<"_zoomDelta", float>(); }
   void SetZoomDelta(float value)
   { SetField<"_zoomDelta">(value); }
   float viewRadius()
   { return Field<"_viewRadius", float>(); }
-  void SetViewRadius(float value)
-  { SetField<"_viewRadius">(value); }
-  float lastZoomDelta()
-  { return Field<"_lastZoomDelta", float>(); }
   void SetLastZoomDelta(float value)
   { SetField<"_lastZoomDelta">(value); }
   vec2 zoomLocation()
@@ -147,12 +119,8 @@ struct NavigationZoom : il2cpp::Object {
   { return Field<"_worldPoint", vec3>(); }
   void SetWorldPoint(vec3 value)
   { SetField<"_worldPoint">(value); }
-  float farRatioSystemNormal()
-  { return Field<"_farRatioSystemNormal", float>(); }
   void SetFarRatioSystemNormal(float value)
   { SetField<"_farRatioSystemNormal">(value); }
-  float farRatioSystemExtended()
-  { return Field<"_farRatioSystemExtended", float>(); }
   void SetFarRatioSystemExtended(float value)
   { SetField<"_farRatioSystemExtended">(value); }
 };
@@ -248,26 +216,12 @@ struct OrbitFrameProvider : il2cpp::Object {
   { SetField<"_rotationAngleDelta">(value); }
 };
 
-struct PopulatedSystemData : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "PopulatedSystemData">;
-
-  void* backdrop()
-  { return Field<"_backdrop", void*>(); }
-  int64_t systemId()
-  { return Field<"_systemId", int64_t>(); }
-};
-
 struct PlanetViewUtils : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "PlanetViewUtils">;
 
   // Managed FlatRenderable. Calling this also runs any detour on get_FlatRenderable.
   void* GetFlatRenderable()
   { return Get<"FlatRenderable", void*>(); }
-
-  PopulatedSystemData* popData()
-  { return Field<"_popData", PopulatedSystemData*>(); }
-  Transform* activeSystemParent()
-  { return Field<"_activeSystemParent", Transform*>(); }
 };
 
 struct CoordinateSearchContext : il2cpp::Object {
@@ -317,10 +271,6 @@ struct CoursePromptPopupDataContext : il2cpp::Object {
 struct CoursePromptPopupWidget : Widget<CoursePromptPopupDataContext> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "CoursePromptPopupWidget">;
 
-  GenericButtonWidget* LeftButton()
-  { return Field<"_leftButton", GenericButtonWidget*>(); }
-  GenericButtonWidget* RightButton()
-  { return Field<"_rightButton", GenericButtonWidget*>(); }
   void InitiateRegularWarp()
   { Call<"InitiateRegularWarp">(); }
   void OnInstantWarpButtonClick()

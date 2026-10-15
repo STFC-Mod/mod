@@ -29,9 +29,6 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 
-struct UnityObject {
-  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
-};
 struct UnityResources {
   using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Resources">;
 };
@@ -241,10 +238,6 @@ bool StoreFieldsResolve()
   return ok;
 }
 
-// Unity's bool(Object): false for null and for destroyed native objects.
-bool Alive(il2cpp::Object* object)
-{ return object && UnityObject::Class::Call<"op_Implicit", bool>(object); }
-
 bool IsStore(il2cpp::Object* object)
 { return object && object->Is<AllianceGamesStoreScrollerViewController>(); }
 
@@ -297,10 +290,10 @@ TooltipTrigger* PlainComponent(InventoryTooltipTriggerWidget* widget, il2cpp::Gc
 // A loaded tooltip widget that carries native research actions, whose locale settings the store cards borrow.
 InventoryTooltipTriggerWidget* Template(il2cpp::GcRoots& roots)
 {
-  auto* type  = roots.Keep(InventoryTooltipTriggerWidget::Class::TypeObject());
-  auto* found = type ? roots.Keep(UnityResources::Class::Call<"FindObjectsOfTypeAll", il2cpp::Array<il2cpp::Object*>*>(
-                           type))
-                     : nullptr;
+  auto* type = roots.Keep(InventoryTooltipTriggerWidget::Class::TypeObject());
+  auto* found =
+      type ? roots.Keep(UnityResources::Class::Call<"FindObjectsOfTypeAll", il2cpp::Array<il2cpp::Object*>*>(type))
+           : nullptr;
   if (!found)
     return nullptr;
   for (auto* object : *found) {
@@ -326,7 +319,7 @@ struct AllianceStoreWork {
 enum class ResearchUpdate { Unchanged, Upgraded, Restored, Unavailable, Failed };
 
 bool SameStoreItem(InventoryTooltipTriggerWidget* tooltip, il2cpp::Object* item)
-{ return Alive(tooltip) && tooltip->Context() == item; }
+{ return UnityObject::Alive(tooltip) && tooltip->Context() == item; }
 
 // Weak component identity survives pooled reuse without retaining a scene. Only
 // the original serialized assets stay rooted while our replacement is bound.
@@ -373,7 +366,7 @@ bool RestoreStoreTooltip(OwnedStoreTooltip& entry)
   auto*           action = roots.Keep(entry.action.Get<TooltipActionTrigger>());
   if (!roots.healthy() || !widget || !plain || !action)
     return false;
-  if (!Alive(widget)) {
+  if (!UnityObject::Alive(widget)) {
     ReleaseStoreAssets(entry);
     return true;
   }
@@ -407,11 +400,11 @@ ResearchUpdate ReconcileStoreTooltip(InventoryTooltipTriggerWidget* tooltip, Inv
     return ResearchUpdate::Unavailable;
   const auto epoch     = alliance_store_work.epoch;
   auto*      store     = roots.Keep(alliance_store_work.source.Get<AllianceGamesStoreScrollerViewController>());
-  auto*      item      = Alive(tooltip) ? roots.Keep(tooltip->Context()) : nullptr;
+  auto*      item      = UnityObject::Alive(tooltip) ? roots.Keep(tooltip->Context()) : nullptr;
   auto       same_item = [&] {
     if (!store || alliance_store_work.epoch != epoch || alliance_store_work.source.Get() != store)
       return false;
-    return Alive(store) && SameStoreItem(tooltip, item) && alliance_store_work.epoch == epoch
+    return UnityObject::Alive(store) && SameStoreItem(tooltip, item) && alliance_store_work.epoch == epoch
            && alliance_store_work.source.Get() == store;
   };
   auto* plain = item ? PlainComponent(tooltip, roots) : nullptr;
@@ -648,13 +641,13 @@ void AllianceGamesStoreUpdate()
   auto& work = alliance_store_work;
   if (!work.pending || Clock::now() < work.due)
     return;
-  const bool currency = std::exchange(work.currency, false);
-  const bool layout   = std::exchange(work.layout, false);
-  work.pending        = false;
+  const bool currency   = std::exchange(work.currency, false);
+  const bool layout     = std::exchange(work.layout, false);
+  work.pending          = false;
   const auto      epoch = work.epoch;
   il2cpp::GcRoots roots;
   auto*           source  = roots.Keep(work.source.Get<AllianceGamesStoreScrollerViewController>());
-  auto*           context = source && Alive(source) ? roots.Keep(source->AllianceGamesContext()) : nullptr;
+  auto*           context = source && UnityObject::Alive(source) ? roots.Keep(source->AllianceGamesContext()) : nullptr;
   if (!context || !context->IsShopViewActive())
     return;
   if (work.epoch != epoch || work.source.Get() != source)
@@ -671,7 +664,7 @@ void AllianceGamesStoreUpdate()
   bool position_notified = false;
   if (layout && smart) {
     const auto position = smart->NormalizedPosition();
-    if (position && Alive(smart) && work.epoch == epoch && work.source.Get() == source
+    if (position && UnityObject::Alive(smart) && work.epoch == epoch && work.source.Get() == source
         && source->smartScroller() == smart) {
       position_notified = smart->OnValueChangedCallback(*position);
     }
@@ -692,11 +685,11 @@ void AllianceGamesStoreUpdate()
       return;
     il2cpp::GcRoots card_roots;
     auto*           rect = card_roots.Keep((*pool)[index]);
-    if (!rect || !Alive(rect))
+    if (!rect || !UnityObject::Alive(rect))
       continue;
-    auto* tooltip =
-        card_roots.Keep(rect->Call<"GetComponentInChildren", InventoryTooltipTriggerWidget*(Il2CppReflectionType*, bool)>(
-            tooltip_type, true));
+    auto* tooltip = card_roots.Keep(
+        rect->Call<"GetComponentInChildren", InventoryTooltipTriggerWidget*(Il2CppReflectionType*, bool)>(tooltip_type,
+                                                                                                          true));
     switch (tooltip ? ReconcileStoreTooltip(tooltip, donor, roots) : ResearchUpdate::Unchanged) {
       case ResearchUpdate::Upgraded:
         ++upgraded;
@@ -728,7 +721,7 @@ void AllianceGamesStoreUpdate()
       { value = false; }
     } reset{work.refreshing_currency};
     currency_before = CurrencyCount(context, roots);
-    if (source->AllianceGamesContext() == context && Alive(source) && work.epoch == epoch
+    if (source->AllianceGamesContext() == context && UnityObject::Alive(source) && work.epoch == epoch
         && work.source.Get() == source) {
       refreshed      = context->UpdateStoreCurrency();
       currency_after = CurrencyCount(context, roots);

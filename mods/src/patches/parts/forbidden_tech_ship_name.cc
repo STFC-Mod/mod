@@ -19,8 +19,6 @@ namespace
 {
 constexpr float RowHeight = 30.0f;
 
-using UnityObject = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
-
 struct ForbiddenTech : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ForbiddenTech">;
 
@@ -99,33 +97,6 @@ struct ForbiddenTechInventoryItemWidget : Widget<ForbiddenTechInventoryItem> {
   { return Field<"_name", TextLocalizer*>(); }
 };
 
-struct TMP_Text : il2cpp::Object {
-  using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_Text">;
-
-  // TextAlignmentOptions
-  void SetAlignment(int32_t value)
-  { Set<"alignment">(value); }
-  void SetRaycastTarget(bool value)
-  { Set<"raycastTarget">(value); }
-  void SetRichText(bool value)
-  { Set<"richText">(value); }
-  void SetEnableWordWrapping(bool value)
-  { Set<"enableWordWrapping">(value); }
-  // TextOverflowModes
-  void SetOverflowMode(int32_t value)
-  { Set<"overflowMode">(value); }
-  void SetEnableAutoSizing(bool value)
-  { Set<"enableAutoSizing">(value); }
-  void SetFontSize(float value)
-  { Set<"fontSize">(value); }
-  void SetColor(color value)
-  { Set<"color">(value); }
-};
-
-// Unity's `bool(UnityEngine.Object)`: false for null and for destroyed native objects.
-bool Alive(il2cpp::Object* object)
-{ return object && UnityObject::Call<"op_Implicit", bool>(object); }
-
 RectTransform* RectOf(il2cpp::Object* component)
 {
   auto* as_component = component ? component->As<Component>() : nullptr;
@@ -189,9 +160,9 @@ struct Row {
 
   void Hide()
   {
-    if (Alive(Label()))
+    if (UnityObject::Alive(Label()))
       SetActive(Label(), false);
-    if (visible && Alive(Scroller()))
+    if (visible && UnityObject::Alive(Scroller()))
       Scroller()->SetOffsetMax(original_top);
     visible = false;
   }
@@ -201,7 +172,7 @@ std::vector<Row> rows;
 void HideWidgetRow(ForbiddenTechInventoryItemWidget* widget)
 {
   auto* scroller = widget->buffListScroller();
-  if (!Alive(scroller))
+  if (!UnityObject::Alive(scroller))
     return;
   auto* rect = RectOf(scroller);
   for (auto& row : rows) {
@@ -214,9 +185,9 @@ TextLocalizer* CloneLabel(TextLocalizer* source, Transform* parent)
 {
   // This client exposes the two-argument overload only as Instantiate<T>.
   // Use the non-generic three-argument overload so no generic inflation is required.
-  auto* clone =
-      UnityObject::Call<"Instantiate", il2cpp::Object*(il2cpp::Object*, Transform*, bool)>(source, parent, false);
-  if (!Alive(clone))
+  auto* clone = UnityObject::Class::Call<"Instantiate", il2cpp::Object*(il2cpp::Object*, Transform*, bool)>(
+      source, parent, false);
+  if (!UnityObject::Alive(clone))
     throw std::runtime_error("Forbidden Tech ship label could not be created");
   return static_cast<TextLocalizer*>(clone);
 }
@@ -228,13 +199,13 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
     return;
 
   auto* scroller = widget->buffListScroller();
-  if (!Alive(scroller))
+  if (!UnityObject::Alive(scroller))
     return;
   auto* rect = RectOf(scroller);
   if (!rect)
     throw std::runtime_error("Forbidden Tech buff layout unavailable");
 
-  std::erase_if(rows, [](const Row& row) { return !Alive(row.Scroller()); });
+  std::erase_if(rows, [](const Row& row) { return !UnityObject::Alive(row.Scroller()); });
   auto found = std::find_if(rows.begin(), rows.end(), [rect](const Row& row) { return row.Scroller() == rect; });
   if (found == rows.end()) {
     Row row;
@@ -258,9 +229,9 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
 
   try {
     auto* label = row.Label();
-    if (!Alive(label)) {
+    if (!UnityObject::Alive(label)) {
       auto* source = widget->name();
-      if (!Alive(source))
+      if (!UnityObject::Alive(source))
         return;
       label = CloneLabel(source, rect->parent());
       SetActive(label, false);

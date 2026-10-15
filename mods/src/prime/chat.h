@@ -69,8 +69,6 @@ struct ChatPreviewController : il2cpp::Object {
   { return Field<"_panelIndicators", il2cpp::Array<il2cpp::Object*>*>(); }
   SwipeScroller* swipeScroller()
   { return Field<"_swipeScroller", SwipeScroller*>(); }
-  ChatChannelCategory focusedPanel()
-  { return Field<"_focusedPanel", ChatChannelCategory>(); }
   void SetFocusedPanel(ChatChannelCategory value)
   { SetField<"_focusedPanel">(value); }
   // Set by the game after its visibility refresh for a section change.

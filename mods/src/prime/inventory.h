@@ -18,8 +18,6 @@ struct InventoryForPopup : il2cpp::Object {
   { Set<"MaxItemsToUse">(value); }
   bool IsDonationUse()
   { return Get<"IsDonationUse", bool>(); }
-  void SetIsDonationUse(bool value)
-  { Set<"IsDonationUse">(value); }
   bool IsChestPurchase()
   { return Get<"IsChestPurchase", bool>(); }
 };
@@ -33,8 +31,6 @@ struct InventoryListViewController : il2cpp::Object {
 
   InputFieldWidget* inputField()
   { return Field<"_inputField", InputFieldWidget*>(); }
-  SectionID targetSection()
-  { return Field<"_targetSection", SectionID>(); }
   bool isActiveAndEnabled()
   { return Get<"isActiveAndEnabled", bool>(); }
   CanvasController* canvasController()
@@ -86,12 +82,4 @@ struct BundleDataWidget : Widget<Bundle> {
 
   void AuxViewButtonPressedHandler()
   { Call<"AuxViewButtonPressedHandler">(); }
-};
-
-struct ShopSummaryDirector : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSummaryDirector">;
-
-  // SectionID[] declared on SectionDirectorBase; elements are the SectionID enum (Hub.h).
-  il2cpp::Array<int32_t>* backLogicSkipSectionIds()
-  { return Field<"_backLogicSkipSectionIds", il2cpp::Array<int32_t>*>(); }
 };

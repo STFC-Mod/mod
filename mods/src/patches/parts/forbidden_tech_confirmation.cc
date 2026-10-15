@@ -1,4 +1,7 @@
+// auto_confirm_ft_upgrade: answers the forbidden tech upgrade confirmation with Confirm instead of showing it.
+
 #include "config.h"
+#include "patches/patches.h"
 
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
@@ -8,8 +11,8 @@
 
 namespace
 {
-constexpr int32_t ConfirmButtonResult = 1;
-constexpr int32_t YesButtonResult     = 3;
+constexpr int32_t kConfirm = 1;
+constexpr int32_t kYes     = 3;
 
 using MessageBox = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageBox">;
 
@@ -30,8 +33,8 @@ bool IsForbiddenTechConfirmation(const Il2CppDelegate* callback)
   const auto* target_class = callback->target->klass;
   const auto* owner_class  = target_class == nullptr ? nullptr : target_class->declaringType;
 
-  return owner_class != nullptr && strcmp(owner_class->name, "ForbiddenTechManager") == 0 &&
-         strcmp(callback->method->name, "<RequestAction>b__0") == 0;
+  return owner_class != nullptr && strcmp(owner_class->name, "ForbiddenTechManager") == 0
+         && strcmp(callback->method->name, "<RequestAction>b__0") == 0;
 }
 
 bool IsAllianceContributionMaxLevelWarning(const Il2CppDelegate* callback)
@@ -59,8 +62,7 @@ bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
   if (callback->method->parameters_count != 1)
     return false;
   try {
-    reinterpret_cast<Closure>(callback->method->methodPointer)(callback->target, ConfirmButtonResult,
-                                                               callback->method);
+    reinterpret_cast<Closure>(callback->method->methodPointer)(callback->target, kConfirm, callback->method);
   } catch (...) {
     spdlog::warn("ForbiddenTechConfirmation: confirmation callback threw; showing the dialog");
     return false;
@@ -74,7 +76,7 @@ bool ConfirmAllianceContribution(Il2CppDelegate* callback)
     return false;
   }
 
-  int32_t          result    = YesButtonResult;
+  int32_t          result    = kYes;
   void*            args[]    = {&result};
   Il2CppException* exception = nullptr;
   il2cpp_runtime_invoke(callback->method, callback->target, args, &exception);

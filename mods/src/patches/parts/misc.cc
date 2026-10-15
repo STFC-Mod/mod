@@ -25,8 +25,8 @@
 
 namespace
 {
+// The most the game's chest purchase popup handles; extend_chest_purchase_max is clamped to it.
 constexpr int64_t kMaximumChestPurchaseMax = 160;
-}
 
 #if _WIN32
 void InventoryForPopup_set_MaxItemsToUse(auto original, InventoryForPopup* a1, int64_t a2)
@@ -68,9 +68,12 @@ void InventoryUseRowWidget_SetWidgetData(auto original, InventoryUseRowWidget* w
 }
 
 #if __APPLE__
+// On macOS the donation cap is raised on the slider instead of InventoryForPopup. Any slider whose maximum is the
+// game's donation cap (50 or 100) is raised with it.
 void UnitySlider_set_maxValue(auto original, void* a1, float a2)
 {
-  if ((a2 == 50.0f || a2 == 100.0f) && Config::Get().ui.extend_donation_slider && Config::Get().ui.extend_donation_max > 0) {
+  if ((a2 == 50.0f || a2 == 100.0f) && Config::Get().ui.extend_donation_slider
+      && Config::Get().ui.extend_donation_max > 0) {
     a2 = (float)Config::Get().ui.extend_donation_max;
   }
   original(a1, a2);
@@ -85,6 +88,7 @@ void BundleDataWidget_OnActionButtonPressedCallback(auto original, BundleDataWid
     original(_this);
   }
 }
+} // namespace
 
 void InstallMiscPatches()
 {
@@ -108,7 +112,9 @@ void InstallMiscPatches()
     SPUD_STATIC_DETOUR(m.Pointer(), BundleDataWidget_OnActionButtonPressedCallback);
 }
 
-// List<IBuffData> in and out.
+namespace
+{
+// List<IBuffData> in and out. A list with a null buff crashes the game, so it is answered with no buffs instead.
 il2cpp::List<il2cpp::Object*>* ExtractBuffsOfType_Hook(auto original, ClientModifierType modifier,
                                                        il2cpp::List<il2cpp::Object*>* list)
 {
@@ -130,6 +136,7 @@ bool ShouldShowRevealHook(auto original, void* _this, bool ignore)
   }
   return result;
 }
+} // namespace
 
 
 std::atomic_bool popup_shown{false};
@@ -175,6 +182,8 @@ void InstallTempCrashFixes()
 
 // --- "test" patches: cursor, settings URL overrides, and the action queue toggle ---
 
+namespace
+{
 struct AppConfig : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "AppConfig">;
 
@@ -237,6 +246,7 @@ bool IsQueueEnabled(auto original, void* _this)
 
   return false;
 }
+} // namespace
 
 void InstallTestPatches()
 {

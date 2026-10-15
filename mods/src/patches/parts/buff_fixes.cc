@@ -1,24 +1,25 @@
-#include "config.h"
+// use_out_of_dock_power: the ship power shown in the dock leaves out buffs that only apply while docked at the
+// station, so it matches the power out in space.
 
-#include <il2cpp/il2cpp.h>
+#include "config.h"
+#include "patches/patches.h"
+
 #include <prime/server.h>
 
+#include <il2cpp/il2cpp.h>
 #include <spud/detour.h>
 
-static bool BuffService_IsBuffConditionMet(auto original, void* _this, BuffCondition currentCondition,
-                                           IBuffComparer *buffComparer, IBuffData *buffToCompare,
-                                           bool excludeFactionBuffs, bool isAllianceLoyalty)
+namespace
 {
-  switch (currentCondition) {
-    case BuffCondition::CondSelfAtStation:
-      return false;
-
-    default:
-      break;
-  }
-
+bool BuffService_IsBuffConditionMet(auto original, void* _this, BuffCondition currentCondition,
+                                    IBuffComparer* buffComparer, IBuffData* buffToCompare, bool excludeFactionBuffs,
+                                    bool isAllianceLoyalty)
+{
+  if (currentCondition == BuffCondition::CondSelfAtStation)
+    return false;
   return original(_this, currentCondition, buffComparer, buffToCompare, excludeFactionBuffs, isAllianceLoyalty);
 }
+} // namespace
 
 void InstallBuffFixHooks()
 {

@@ -21,16 +21,6 @@ struct ActionRequirement : il2cpp::Object {
   { return Call<"CheckIsMet", bool>(); }
 };
 
-struct RecallRequirement : ActionRequirement {
-  using Class =
-      il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetPlayerData/RecallRequirement">;
-};
-
-struct CanRepairRequirement : ActionRequirement {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models",
-                              "FleetPlayerData/CanRepairRequirement">;
-};
-
 enum class HullType : int32_t {
   Any          = -1,
   Destroyer    = 0,
@@ -362,9 +352,7 @@ enum ActionBehaviour {
   RequestConfirmation = 32,
 };
 
-struct ShipBarItemLocalViewController : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "ShipBarItemLocalViewController">;
-};
+
 
 struct AbilityTimeSpan { int64_t ticks; };
 
@@ -393,8 +381,6 @@ struct FleetLocalViewController : il2cpp::Object {
   { return Field<"_shipActionPanelLocalViewController", ShipActionPanelLocalViewController*>(); }
   FleetPlayerData* fleet()
   { return Get<"fleet", FleetPlayerData*>(); }
-  ShipBarItemLocalViewController* shipBarItemLocalViewController()
-  { return Field<"_shipBarItemLocalViewController", ShipBarItemLocalViewController*>(); }
 
   void CancelButtonClicked()
   { Call<"CancelButtonClicked">(); }
@@ -436,24 +422,6 @@ struct FleetBarViewController : ViewController<FleetBarContext> {
 };
 
 struct FleetsManager : MonoSingleton<FleetsManager> {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.FleetManagement", "FleetsManager">;
-
-  void RequestViewFleet(FleetPlayerData* fleetData, bool showSystemInfo = false)
-  { Call<"RequestViewFleet">(fleetData, showSystemInfo); }
-
-  // The int overload takes a fleet slot; the long overload takes a fleet id.
-  FleetPlayerData* GetFleetPlayerData(int32_t idx)
-  { return Call<"GetFleetPlayerData", FleetPlayerData*>(idx); }
-
-  FleetPlayerData* GetSelectedFleetData()
-  { return Call<"GetSelectedFleetData", FleetPlayerData*>(); }
-
-  FleetDeployedData* targetFleetData()
-  { return Field<"_targetFleetData", FleetDeployedData*>(); }
-
-  // _fleetServiceCache is a CachedService<FleetService> struct whose HasService getter resolves and
-  // stores the service lazily. It has to run on the field in place, not on a boxed copy, so this
-  // stays on the raw runtime API.
   bool HasFleetService()
   {
     static FieldInfo* const field = Class::Raw() ? il2cpp_class_get_field_from_name(Class::Raw(), "_fleetServiceCache")
@@ -475,6 +443,16 @@ struct FleetsManager : MonoSingleton<FleetsManager> {
     auto*            result    = il2cpp_runtime_invoke(has_service, cache, nullptr, &exception);
     return !exception && result && *static_cast<bool*>(il2cpp_object_unbox(result));
   }
+  FleetPlayerData* GetFleetPlayerData(int32_t index)
+  { return Call<"GetFleetPlayerData", FleetPlayerData*>(index); }
+
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.FleetManagement", "FleetsManager">;
+
+  void RequestViewFleet(FleetPlayerData* fleetData, bool showSystemInfo = false)
+  { Call<"RequestViewFleet">(fleetData, showSystemInfo); }
+
+  FleetPlayerData* GetSelectedFleetData()
+  { return Call<"GetSelectedFleetData", FleetPlayerData*>(); }
 };
 
 struct DeploymentService : il2cpp::Object {
@@ -530,12 +508,6 @@ struct ActionQueueManager : MonoSingleton<ActionQueueManager> {
   { return Call<"IsFleetInQueue", bool>(playerData); }
   bool IsQueueUnlocked()
   { return Call<"IsQueueUnlocked", bool>(); }
-
-  bool CanAddToQueue(FleetPlayerData* playerData)
-  { return IsQueueUnlocked() && !IsQueueFull(playerData); }
-
-  void AddToQueue(int64_t targetId)
-  { Call<"AddActionToQueue">(targetId); }
 };
 
 struct FleetMeshSelector : il2cpp::Object {

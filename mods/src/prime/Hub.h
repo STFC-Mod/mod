@@ -152,13 +152,6 @@ struct SectionStorage : il2cpp::Object {
   { return Call<"GetState", void*>(section); }
 };
 
-struct SectionNavHistory : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Sections", "SectionNavHistory">;
-
-  bool Contains(SectionID section)
-  { return Call<"ContainsSectionID", bool>(section); }
-};
-
 struct SectionManager : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Sections", "SectionManager">;
 
@@ -166,20 +159,13 @@ struct SectionManager : il2cpp::Object {
   { return Get<"CurrentSection", SectionID>(); }
   SectionStorage* sectionStorage()
   { return Field<"_sectionStorage", SectionStorage*>(); }
-  SectionNavHistory* history()
-  { return Field<"_history", SectionNavHistory*>(); }
 
   // The (SectionData) overload is not used here; args is any managed object or null.
   bool TriggerSectionChange(SectionID nextSectionID, void* args, bool forcedSectionChange = false,
                             bool isGoBackStep = false, bool allowSameSection = false)
   {
-    return Call<"TriggerSectionChange", bool>(nextSectionID, args, forcedSectionChange, isGoBackStep,
-                                              allowSameSection);
+    return Call<"TriggerSectionChange", bool>(nextSectionID, args, forcedSectionChange, isGoBackStep, allowSameSection);
   }
-};
-
-struct GSServiceRegistry : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.Networking.Core", "GSServiceRegistry">;
 };
 
 // Digit.Client.Core.CustomReloadArgs and Nullable<CustomReloadArgs>, laid out as the runtime does.
@@ -199,8 +185,6 @@ struct PrimeApp : il2cpp::Object {
   { Call<"Quit">(); }
   void Reload()
   { Call<"Reload">(false, NullableCustomReloadArgs{}, false); }
-  GSServiceRegistry* get_Services()
-  { return Get<"Services", GSServiceRegistry*>(); }
 };
 
 // Digit.Client.Core.Hub is a static class.
