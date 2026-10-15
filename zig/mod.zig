@@ -2,6 +2,7 @@
 const std = @import("std");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
+const Options = @import("ctx.zig").Options;
 const globFiles = @import("ctx.zig").globFiles;
 const deps = @import("deps.zig");
 
@@ -184,4 +185,43 @@ fn addLoader(ctx: *const Ctx, flags: []const []const u8) void {
     });
     module.linkFramework("Foundation", .{});
     b.installArtifact(ctx.executable("stfc-community-mod-loader", module));
+}
+
+/// `macos-universal`: run this build for both macOS architectures and lipo the dylib and loader together.
+/// Each architecture is a child `zig build` because one graph resolves a single -Dtarget.
+pub fn addUniversal(b: *std.Build, optimize: std.builtin.OptimizeMode, options: Options) void {
+    const lipo = b.addExecutable(.{
+        .name = "lipo",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("zig/tools/lipo.zig"),
+            .target = b.graph.host,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const step = b.step("macos-universal", "Build and merge ARM64 and Intel macOS dylib and loader");
+    var prefixes: [2]std.Build.LazyPath = undefined;
+    inline for (.{ "aarch64", "x86_64" }, 0..) |arch, i| {
+        const child = b.addSystemCommand(&.{
+            b.graph.zig_exe,
+            "build",
+            "-Dtarget=" ++ arch ++ "-macos.14.6",
+            b.fmt("-Doptimize={s}", .{@tagName(optimize)}),
+            b.fmt("-Dlto={}", .{options.lto orelse false}),
+            b.fmt("-Dmoddbg={}", .{options.moddbg}),
+            b.fmt("-Duse_original_bg={}", .{options.use_original_bg}),
+            b.fmt("-Dbg_image={s}", .{options.bg_image}),
+        });
+        child.setCwd(b.path(""));
+        child.has_side_effects = true;
+        if (options.macos_sdk) |sdk| child.addArg(b.fmt("-Dmacos-sdk={s}", .{sdk}));
+        child.addArg("--prefix");
+        prefixes[i] = child.addOutputDirectoryArg(arch);
+    }
+    inline for (.{ "lib/libstfc-community-mod.dylib", "bin/stfc-community-mod-loader" }) |binary| {
+        const merge = b.addRunArtifact(lipo);
+        merge.addFileArg(prefixes[0].path(b, binary));
+        merge.addFileArg(prefixes[1].path(b, binary));
+        const merged = merge.addOutputFileArg(std.fs.path.basename(binary));
+        step.dependOn(&b.addInstallFile(merged, binary).step);
+    }
 }

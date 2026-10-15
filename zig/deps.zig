@@ -242,3 +242,51 @@ pub fn cpr(ctx: *const Ctx, curl_lib: Lib) Lib {
         .include_dirs = ctx.dirs(&.{ src.path(b, "include"), generated }),
     };
 }
+
+// --- Launcher --------------------------------------------------------------------------------------------------
+
+/// librsync, for the launcher's delta updates. The macOS config.h also serves the Linux fixtures.
+pub fn rsync(ctx: *const Ctx) Lib {
+    const b = ctx.b;
+    const src = b.dependency("librsync", .{}).path("");
+    const config = b.addWriteFiles().addCopyFile(b.path("zig/deps/librsync/macos.h"), "config.h");
+    const module = ctx.createModule(false);
+    module.addIncludePath(config.dirname());
+    module.addIncludePath(src.path(b, "src"));
+    module.addIncludePath(src.path(b, "src/blake2"));
+    module.addCSourceFiles(.{
+        .root = src,
+        .files = &.{
+            "src/prototab.c",
+            "src/base64.c",
+            "src/buf.c",
+            "src/checksum.c",
+            "src/command.c",
+            "src/delta.c",
+            "src/emit.c",
+            "src/fileutil.c",
+            "src/hashtable.c",
+            "src/hex.c",
+            "src/job.c",
+            "src/mdfour.c",
+            "src/mksum.c",
+            "src/msg.c",
+            "src/netint.c",
+            "src/patch.c",
+            "src/readsums.c",
+            "src/rollsum.c",
+            "src/rabinkarp.c",
+            "src/scoop.c",
+            "src/stats.c",
+            "src/sumset.c",
+            "src/trace.c",
+            "src/tube.c",
+            "src/util.c",
+            "src/version.c",
+            "src/whole.c",
+            "src/blake2/blake2b-ref.c",
+        },
+        .flags = &.{"-std=c99"},
+    });
+    return .{ .artifact = ctx.staticLib("rsync", module), .include_dirs = ctx.dirs(&.{src.path(b, "src")}) };
+}

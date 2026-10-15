@@ -1,5 +1,6 @@
 //! Native test fixtures. They link the same libraries as the shipped mod, and run without the game.
 const std = @import("std");
+const builtin = @import("builtin");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const deps = @import("deps.zig");
@@ -22,6 +23,7 @@ pub fn add(ctx: *const Ctx, libs: Libs) void {
         .il2cpp = b.step("test-il2cpp", "Build and run the IL2CPP boundary tests (native targets only)"),
         .mod = b.step("test-mod", "Build and run the settings and shortcut tests (native targets only)"),
         .sync = b.step("test-sync", "Run sync record and delivery regression tests without the game"),
+        .launcher = b.step("test-launcher", "Run launcher delta and archive tests (Linux/macOS targets)"),
         .spud = b.step("test-spud", "Run the x64 trampoline relocation test (native x86_64 targets only)"),
     };
     const flags = ctx.cxxFlags("c++23", &.{});
@@ -127,6 +129,29 @@ pub fn add(ctx: *const Ctx, libs: Libs) void {
         addFixture(ctx, steps.build, steps.sync, "sync-logic-tests", module);
     }
 
+    // Launcher deltas in C++, plus the Swift archive code when the host can run swiftc.
+    if (ctx.target.result.os.tag == .linux or ctx.isMacos()) {
+        const module = ctx.createModule(true);
+        deps.rsync(ctx).linkInto(module);
+        module.addCSourceFiles(.{
+            .files = &.{ "tests/launcher_rsync.cc", "src/launcher/macos/rsync.cc" },
+            .flags = flags,
+        });
+        addFixture(ctx, steps.build, steps.launcher, "launcher-rsync-tests", module);
+        if (builtin.os.tag == .macos and ctx.isMacos()) {
+            const compile = b.addSystemCommand(&.{ "xcrun", "swiftc", "-parse-as-library", "-o" });
+            const exe = compile.addOutputFileArg("launcher-archive-tests");
+            compile.addFileArg(b.path("src/launcher/macos/UpdaterFileOperations.swift"));
+            compile.addFileArg(b.path("tests/launcher_archive.swift"));
+            const run = std.Build.Step.Run.create(b, "launcher-archive-tests");
+            run.addFileArg(exe);
+            run.addDirectoryArg(b.path("tests/fixtures/launcher"));
+            steps.launcher.dependOn(&run.step);
+        }
+    } else {
+        steps.launcher.dependOn(&b.addFail("The launcher rsync tests require a Linux or macOS target").step);
+    }
+
     // A prologue where two RIP-relative instructions expand ahead of a relative call, detoured and run. ARM64
     // relocates differently and has nothing to check here.
     if (ctx.target.result.cpu.arch == .x86_64) {
@@ -158,6 +183,7 @@ const Steps = struct {
     il2cpp: *std.Build.Step,
     mod: *std.Build.Step,
     sync: *std.Build.Step,
+    launcher: *std.Build.Step,
     spud: *std.Build.Step,
 };
 

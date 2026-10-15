@@ -361,12 +361,8 @@ struct XsollaUpdater {
           let toPath = extractAction.to.replacingOccurrences(of: "$temp_path", with: tempGamePath)
           logger.info(
             "Extracting update archive from=\(fromPath, privacy: .private) to=\(toPath, privacy: .private)")
-          let archivePath = try Path(fromPath)
-          let archivePathInStream = try InStream(path: archivePath)
-          let decoder = try Decoder(stream: archivePathInStream, fileType: .sevenZ)
-          let _ = try decoder.open()
           delegate?.updateProgress(progress: XsollaUpdateProgress.Extracting(currentFile: fromPath))
-          let _ = try decoder.extract(to: Path(toPath))
+          try extractUpdateArchive(from: fromPath, to: toPath)
           delegate?.updateProgress(
             progress: XsollaUpdateProgress.ExtractComplete(currentFile: fromPath))
           logger.info("Extracted update archive to=\(toPath, privacy: .private)")
