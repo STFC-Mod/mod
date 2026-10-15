@@ -34,9 +34,19 @@ pub fn spdlog(ctx: *const Ctx) Lib {
     };
 }
 
-/// toml++, header-only.
+/// toml++ compiled once from zig/deps/tomlplusplus.cc. Consumers see only declarations.
 pub fn tomlplusplus(ctx: *const Ctx) Lib {
-    return .{ .include_dirs = ctx.dirs(&.{ctx.b.dependency("tomlplusplus", .{}).path("include")}) };
+    const b = ctx.b;
+    const include = b.dependency("tomlplusplus", .{}).path("include");
+    const module = ctx.createModule(true);
+    module.addIncludePath(include);
+    module.addCMacro("TOML_HEADER_ONLY", "0");
+    module.addCSourceFile(.{ .file = b.path("zig/deps/tomlplusplus.cc"), .flags = ctx.cxxFlags("c++17", &.{}) });
+    return .{
+        .artifact = ctx.staticLib("tomlplusplus", module),
+        .include_dirs = ctx.dirs(&.{include}),
+        .defines = &.{.{ "TOML_HEADER_ONLY", "0" }},
+    };
 }
 
 /// nlohmann/json, header-only.

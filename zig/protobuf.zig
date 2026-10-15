@@ -6,10 +6,10 @@ const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const globFiles = @import("ctx.zig").globFiles;
 
-const abseil_sources: [141][]const u8 = @import("deps/abseil_sources.zon");
+const abseil_sources: [101][]const u8 = @import("deps/abseil_sources.zon");
 const protobuf_sources: [26][]const u8 = @import("deps/protobuf_sources.zon");
 
-/// The Abseil sources listed in zig/deps/abseil_sources.zon.
+/// The Abseil sources protobuf-lite reaches, not the whole library.
 pub fn abseil(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("abseil", .{}).path("");

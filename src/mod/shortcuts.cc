@@ -3,6 +3,7 @@
 #include "text.h"
 
 #include <spdlog/spdlog.h>
+#include <toml++/toml.h>
 #include <unity/input.h>
 
 #include <algorithm>

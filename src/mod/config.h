@@ -8,7 +8,7 @@
 #include "features/notification_audio.h"
 #include "shortcuts.h"
 
-#include <toml++/toml.h>
+#include <toml++/impl/forward_declarations.hpp>
 
 #include <array>
 #include <map>
