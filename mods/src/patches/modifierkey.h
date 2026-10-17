@@ -21,6 +21,7 @@ public:
   bool IsPressed() const;
   bool IsDown() const;
   bool HasModifiers() const;
+  bool operator==(const ModifierKey& other) const;
 
   std::string GetParsedValues() const;
 

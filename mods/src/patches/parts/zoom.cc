@@ -1,5 +1,7 @@
 #include "config.h"
 #include "errormsg.h"
+#include "patches/native_hook_extent.h"
+#include "settings/upstream_settings.h"
 
 #include <patches/mapkey.h>
 
@@ -16,12 +18,74 @@
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
-std::unordered_map<NavigationLOD *, NavigationFleetWidget *> fleet_label_widgets;
+struct FleetLabelWidget {
+  Il2CppGCHandle lod{}, widget{};
+  bool           overridden = false;
+};
+std::unordered_map<NavigationLOD *, FleetLabelWidget> fleet_label_widgets;
+using FleetLabelAliveFn             = bool (*)(void *);
+FleetLabelAliveFn fleet_label_alive = nullptr;
+bool              FleetLabelAlive(void *object)
+{ return object && fleet_label_alive && fleet_label_alive(object); }
+struct FleetLabelRoot {
+  Il2CppGCHandle handle{};
+  explicit FleetLabelRoot(void *object)
+      : handle(object ? il2cpp_gchandle_new(static_cast<Il2CppObject *>(object), false) : nullptr)
+  {
+  }
+  ~FleetLabelRoot()
+  {
+    if (handle)
+      il2cpp_gchandle_free(handle);
+  }
+  FleetLabelRoot(const FleetLabelRoot &) = delete;
+};
+void FreeFleetLabelWidget(FleetLabelWidget &entry)
+{
+  if (entry.lod)
+    il2cpp_gchandle_free(entry.lod);
+  if (entry.widget)
+    il2cpp_gchandle_free(entry.widget);
+  entry = {};
+}
+bool ForgetFleetLabelWidget(NavigationLOD *lod, NavigationFleetWidget *widget)
+{
+  const auto found = fleet_label_widgets.find(lod);
+  if (found == fleet_label_widgets.end()
+      || il2cpp_gchandle_get_target(found->second.widget) != reinterpret_cast<Il2CppObject *>(widget))
+    return false;
+  const bool overridden = found->second.overridden;
+  FreeFleetLabelWidget(found->second);
+  fleet_label_widgets.erase(found);
+  return overridden;
+}
+void TrackFleetLabelWidget(NavigationLOD *lod, NavigationFleetWidget *widget)
+{
+  if (!FleetLabelAlive(lod) || !FleetLabelAlive(widget) || !widget->Context)
+    return;
+  const auto found = fleet_label_widgets.find(lod);
+  if (found != fleet_label_widgets.end()
+      && il2cpp_gchandle_get_target(found->second.lod) == reinterpret_cast<Il2CppObject *>(lod)
+      && il2cpp_gchandle_get_target(found->second.widget) == reinterpret_cast<Il2CppObject *>(widget))
+    return;
+  FleetLabelWidget entry{il2cpp_gchandle_new_weakref(reinterpret_cast<Il2CppObject *>(lod), false),
+                         il2cpp_gchandle_new_weakref(reinterpret_cast<Il2CppObject *>(widget), false)};
+  if (!entry.lod || !entry.widget) {
+    FreeFleetLabelWidget(entry);
+    return;
+  }
+  if (found != fleet_label_widgets.end())
+    FreeFleetLabelWidget(found->second);
+  fleet_label_widgets.insert_or_assign(lod, entry);
+}
 bool                                                         fleet_label_hooks_installed         = false;
 uintptr_t                                                    active_system_zoom_id               = 0;
 bool                                                         system_zoom_state_valid             = false;
@@ -47,15 +111,21 @@ bool FleetLabelThresholdEnabled()
 
 const FleetLabelProfile *FleetLabelProfileFor(NavigationFleetWidget *widget)
 {
-  if (widget == nullptr) {
+  if (!FleetLabelAlive(widget)) {
     return nullptr;
   }
+  FleetLabelRoot widget_root(widget);
+  if (!widget_root.handle)
+    return nullptr;
 
   const auto &config  = Config::Get();
   auto       *context = widget->Context;
   if (context == nullptr) {
     return &config.zoom_label_non_player;
   }
+  FleetLabelRoot context_root(context);
+  if (!context_root.handle)
+    return nullptr;
 
   DeployedFleetType fleet_type;
   if (!context->TryGetFleetType(fleet_type)) {
@@ -79,11 +149,13 @@ const FleetLabelProfile *FleetLabelProfileFor(NavigationFleetWidget *widget)
 
 const FleetLabelProfile *FleetLabelProfileFor(NavigationLOD *lod)
 {
-  const auto widget = fleet_label_widgets.find(lod);
-  if (widget == fleet_label_widgets.end() || widget->second == nullptr || widget->second->Context == nullptr) {
+  const auto entry = fleet_label_widgets.find(lod);
+  if (entry == fleet_label_widgets.end()
+      || il2cpp_gchandle_get_target(entry->second.lod) != reinterpret_cast<Il2CppObject *>(lod)
+      || !FleetLabelAlive(lod))
     return nullptr;
-  }
-  return FleetLabelProfileFor(widget->second);
+  auto *widget = reinterpret_cast<NavigationFleetWidget *>(il2cpp_gchandle_get_target(entry->second.widget));
+  return FleetLabelAlive(widget) && widget->Context ? FleetLabelProfileFor(widget) : nullptr;
 }
 
 ZoomLevels ExpandedFleetLabelZoomLevel(ZoomLevels native_level)
@@ -120,32 +192,57 @@ ZoomLevels FleetLabelZoomLevel(ZoomLevels native_level, const FleetLabelProfile 
   }
 }
 
+void RestoreNativeFleetLabelDetail(NavigationLOD *lod)
+{
+  if (!FleetLabelAlive(lod) || !system_zoom_state_valid)
+    return;
+  FleetLabelRoot root(lod);
+  if (!root.handle)
+    return;
+  lod->SetTargetLevel(system_zoom_level);
+  lod->UpdateLOD(system_zoom_level);
+  if (FleetLabelAlive(lod))
+    lod->SetTargetLevel(system_zoom_level);
+}
+
 void ApplyFleetLabelDetail(NavigationLOD *lod, ZoomLevels native_level)
 {
-  if (lod == nullptr || !system_zoom_state_valid || FleetLabelProfileFor(lod) == nullptr) {
+  if (!system_zoom_state_valid)
+    return;
+  const auto *profile = FleetLabelProfileFor(lod);
+  if (!profile)
+    return;
+  if (profile->detail == FleetLabelDetail::Native) {
+    const auto found = fleet_label_widgets.find(lod);
+    if (found != fleet_label_widgets.end() && found->second.overridden) {
+      found->second.overridden = false;
+      RestoreNativeFleetLabelDetail(lod);
+    }
     return;
   }
-
-  lod->UpdateLOD(native_level);
+  FleetLabelRoot root(lod);
+  if (root.handle)
+    lod->UpdateLOD(native_level);
 }
 
 void ApplyAllFleetLabelDetails()
 {
-  for (const auto &[lod, widget] : fleet_label_widgets) {
-    (void)widget;
+  // Native LOD callbacks can release/rebind other widgets. Snapshot identities,
+  // then re-resolve weak roots before each call; never iterate across callbacks.
+  std::vector<NavigationLOD *> labels;
+  labels.reserve(fleet_label_widgets.size());
+  for (auto entry = fleet_label_widgets.begin(); entry != fleet_label_widgets.end();) {
+    if (il2cpp_gchandle_get_target(entry->second.lod) != reinterpret_cast<Il2CppObject *>(entry->first)
+        || !FleetLabelAlive(entry->first) || !FleetLabelAlive(il2cpp_gchandle_get_target(entry->second.widget))) {
+      FreeFleetLabelWidget(entry->second);
+      entry = fleet_label_widgets.erase(entry);
+    } else {
+      labels.push_back(entry->first);
+      ++entry;
+    }
+  }
+  for (auto *lod : labels)
     ApplyFleetLabelDetail(lod, system_zoom_level);
-  }
-}
-
-void RestoreNativeFleetLabelDetail(NavigationLOD *lod)
-{
-  if (lod == nullptr || !system_zoom_state_valid) {
-    return;
-  }
-
-  lod->SetTargetLevel(system_zoom_level);
-  lod->UpdateLOD(system_zoom_level);
-  lod->SetTargetLevel(system_zoom_level);
 }
 
 void ResetFleetLabelSystemState()
@@ -197,6 +294,17 @@ void UpdateFleetLabelThreshold()
 }
 } // namespace
 
+bool FleetLabelControlsAvailable()
+{ return fleet_label_hooks_installed; }
+
+void RefreshFleetLabelControls()
+{
+  if (!fleet_label_hooks_installed)
+    return;
+  threshold_state_valid = false;
+  ApplyAllFleetLabelDetails();
+}
+
 vec3 GetMouseWorldPos(void *cam, vec3 *pos)
 {
   static auto class_helper = il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.Client.Core", "MathUtils");
@@ -219,11 +327,13 @@ vec3 GetMouseWorldPos(void *cam, vec3 *pos)
 
 auto do_default_zoom = false;
 
-inline void StoreZoom(std::string label, float &zoom, NavigationZoom *_this)
+inline void StoreZoom(std::string label, float &zoom, NavigationZoom *_this, const char *key = nullptr)
 {
   auto old_zoom = zoom;
   zoom          = (_this->Distance - _this->_minimum) / (_this->_maximum - _this->_minimum) * Config::Get().zoom;
   spdlog::info("Changing {} from {} to {}", label, old_zoom, zoom);
+  if (key)
+    mod_settings::PersistCurrentSetting("graphics", key);
 }
 
 static float s_expectedScale = 0;
@@ -344,17 +454,17 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
   if (!Key::IsInputFocused()) {
     if (camera_shortcuts_enabled) {
       if (MapKey::IsDown(GameFunction::SetZoomPreset1)) {
-        return StoreZoom("System Preset 1", config->system_zoom_preset_1, _this);
+        return StoreZoom("System Preset 1", config->system_zoom_preset_1, _this, "system_zoom_preset_1");
       } else if (MapKey::IsDown(GameFunction::SetZoomPreset2)) {
-        return StoreZoom("System Preset 2", config->system_zoom_preset_2, _this);
+        return StoreZoom("System Preset 2", config->system_zoom_preset_2, _this, "system_zoom_preset_2");
       } else if (MapKey::IsDown(GameFunction::SetZoomPreset3)) {
-        return StoreZoom("System Preset 3", config->system_zoom_preset_3, _this);
+        return StoreZoom("System Preset 3", config->system_zoom_preset_3, _this, "system_zoom_preset_3");
       } else if (MapKey::IsDown(GameFunction::SetZoomPreset4)) {
-        return StoreZoom("System Preset 4", config->system_zoom_preset_4, _this);
+        return StoreZoom("System Preset 4", config->system_zoom_preset_4, _this, "system_zoom_preset_4");
       } else if (MapKey::IsDown(GameFunction::SetZoomPreset5)) {
-        return StoreZoom("System Preset 5", config->system_zoom_preset_5, _this);
+        return StoreZoom("System Preset 5", config->system_zoom_preset_5, _this, "system_zoom_preset_5");
       } else if (MapKey::IsDown(GameFunction::SetZoomDefault)) {
-        return StoreZoom("System Default", config->default_system_zoom, _this);
+        return StoreZoom("System Default", config->default_system_zoom, _this, "default_system_zoom");
       }
 
       do_absolute_zoom = true;
@@ -451,21 +561,32 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom *_this)
 
 void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD *_this, ZoomLevels level)
 {
-  const auto *profile         = FleetLabelProfileFor(_this);
-  const auto  effective_level = profile != nullptr ? FleetLabelZoomLevel(level, *profile) : level;
-  if (profile != nullptr) {
-    _this->SetTargetLevel(effective_level);
+  if (!fleet_label_hooks_installed || !FleetLabelProfilesEnabled()) {
+    original(_this, level);
+    return;
   }
+  const auto *profile = fleet_label_hooks_installed ? FleetLabelProfileFor(_this) : nullptr;
+  if (!profile || profile->detail == FleetLabelDetail::Native) {
+    original(_this, level);
+    return;
+  }
+  FleetLabelRoot root(_this);
+  if (!root.handle) {
+    original(_this, level);
+    return;
+  }
+  const auto effective_level               = FleetLabelZoomLevel(level, *profile);
+  fleet_label_widgets.at(_this).overridden = true;
+  _this->SetTargetLevel(effective_level);
   original(_this, effective_level);
-  if (profile != nullptr) {
+  if (FleetLabelAlive(_this) && FleetLabelProfileFor(_this))
     _this->SetTargetLevel(effective_level);
-  }
 }
 
 void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_this)
 {
   original(_this);
-  if (!_this) {
+  if (!fleet_label_hooks_installed || !FleetLabelAlive(_this)) {
     return;
   }
 
@@ -477,7 +598,7 @@ void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_
 
   auto *lod = _this->_lod;
   if (lod) {
-    fleet_label_widgets.insert_or_assign(lod, _this);
+    TrackFleetLabelWidget(lod, _this);
     if (FleetLabelThresholdEnabled() && !system_zoom_state_valid) {
       threshold_state_valid = false;
     }
@@ -487,12 +608,10 @@ void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget *_
 
 void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget *_this)
 {
-  if (_this) {
+  if (fleet_label_hooks_installed && FleetLabelAlive(_this)) {
     auto *lod = _this->_lod;
-    fleet_label_widgets.erase(lod);
-    if (_this->Context != nullptr) {
+    if (ForgetFleetLabelWidget(lod, _this) && _this->Context)
       RestoreNativeFleetLabelDetail(lod);
-    }
   }
   original(_this);
 }
@@ -500,27 +619,23 @@ void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget *
 void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetWidget *_this)
 {
   original(_this);
-  if (_this == nullptr) {
+  if (!fleet_label_hooks_installed || !FleetLabelAlive(_this)) {
     return;
   }
 
   auto *lod = _this->_lod;
   if (lod != nullptr) {
-    fleet_label_widgets.insert_or_assign(lod, _this);
+    TrackFleetLabelWidget(lod, _this);
     ApplyFleetLabelDetail(lod, system_zoom_level);
   }
 }
 
 void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, NavigationFleetWidget *_this)
 {
-  if (_this != nullptr) {
+  if (fleet_label_hooks_installed && FleetLabelAlive(_this)) {
     auto *lod = _this->_lod;
-    if (lod != nullptr) {
-      fleet_label_widgets.erase(lod);
-      if (_this->Context != nullptr) {
-        RestoreNativeFleetLabelDetail(lod);
-      }
-    }
+    if (ForgetFleetLabelWidget(lod, _this) && _this->Context)
+      RestoreNativeFleetLabelDetail(lod);
   }
   original(_this);
 }
@@ -639,7 +754,10 @@ void *PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils *_t
 void InstallZoomHooks()
 {
   auto  navigation_zoom_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom");
-  auto  ptr_update = navigation_zoom_helper.isValidHelper() ? navigation_zoom_helper.GetMethod("Update") : nullptr;
+  const auto *update_method =
+      method_contract::Resolve(navigation_zoom_helper.get_cls(), "Update", false, "System.Void", {});
+  auto *ptr_update               = method_contract::Pointer(update_method);
+  bool  label_surface_ready      = false;
   auto *navigation_zoom_class    = navigation_zoom_helper.get_cls();
   auto *zoom_level_field         = navigation_zoom_class != nullptr
                                        ? il2cpp_class_get_field_from_name(navigation_zoom_class, "_zoomLevel")
@@ -647,19 +765,29 @@ void InstallZoomHooks()
   auto *normalized_zoom_property = navigation_zoom_class != nullptr
                                        ? il2cpp_class_get_property_from_name(navigation_zoom_class, "NormalizedZoom")
                                        : nullptr;
-  if (FleetLabelProfilesEnabled()) {
+  // Install independently of the selected profile so settings can switch from
+  // Native to an override later in the same session.
+  {
     auto lod_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationLOD");
     auto fleet_widget_helper =
         il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationFleetWidget");
     auto fleet_data_helper =
         il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData");
-    auto ptr_update_lod = lod_helper.isValidHelper() ? lod_helper.GetMethod("UpdateLOD") : nullptr;
-    auto ptr_on_enable  = fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnEnable") : nullptr;
-    auto ptr_on_disable = fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnDisable") : nullptr;
-    auto ptr_on_did_bind_context =
-        fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnDidBindContext") : nullptr;
-    auto ptr_on_about_to_release_context =
-        fleet_widget_helper.isValidHelper() ? fleet_widget_helper.GetMethod("OnAboutToReleaseContext") : nullptr;
+    const auto *update_lod = method_contract::Resolve(lod_helper.get_cls(), "UpdateLOD", false, "System.Void",
+                                                      {"Digit.Prime.Navigation.ZoomLevels"});
+    const auto *on_enable =
+        method_contract::Resolve(fleet_widget_helper.get_cls(), "OnEnable", false, "System.Void", {});
+    const auto *on_disable =
+        method_contract::Resolve(fleet_widget_helper.get_cls(), "OnDisable", false, "System.Void", {});
+    const auto *did_bind =
+        method_contract::Resolve(fleet_widget_helper.get_cls(), "OnDidBindContext", false, "System.Void", {});
+    const auto *release =
+        method_contract::Resolve(fleet_widget_helper.get_cls(), "OnAboutToReleaseContext", false, "System.Void", {});
+    auto *ptr_update_lod                  = method_contract::Pointer(update_lod);
+    auto *ptr_on_enable                   = method_contract::Pointer(on_enable);
+    auto *ptr_on_disable                  = method_contract::Pointer(on_disable);
+    auto *ptr_on_did_bind_context         = method_contract::Pointer(did_bind);
+    auto *ptr_on_about_to_release_context = method_contract::Pointer(release);
     auto *lod_class = lod_helper.get_cls();
     auto *target_level_field =
         lod_class != nullptr ? il2cpp_class_get_field_from_name(lod_class, "<TargetLevel>k__BackingField") : nullptr;
@@ -724,20 +852,82 @@ void InstallZoomHooks()
       }
     }
 
+    auto        object_helper = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Object");
+    const auto *alive         = method_contract::Resolve(object_helper.get_cls(), "op_Implicit", true, "System.Boolean",
+                                                         {"UnityEngine.Object"});
+    const auto *normalized =
+        method_contract::Resolve(navigation_zoom_class, "get_NormalizedZoom", false, "System.Single", {});
+    const auto *fleet_type = method_contract::Resolve(fleet_data_class, "get_FleetType", false,
+                                                      "Digit.PrimeServer.Models.DeployedFleetType", {});
+    const auto  fieldFits  = [](const FieldInfo *field, Il2CppClass *owner, std::size_t bytes) {
+      return field && field->type && !field->type->byref && owner
+             && !(il2cpp_field_get_flags(const_cast<FieldInfo *>(field)) & FIELD_ATTRIBUTE_STATIC)
+             && field->offset >= sizeof(Il2CppObject) && field->offset + bytes <= il2cpp_class_instance_size(owner);
+    };
+    const auto enumField = [&](const FieldInfo *field, Il2CppClass *owner) {
+      if (!fieldFits(field, owner, sizeof(ZoomLevels))
+          || !method_contract::Type(field->type, "Digit.Prime.Navigation.ZoomLevels"))
+        return false;
+      auto       *cls     = il2cpp_class_from_type(field->type);
+      const auto *storage = cls && il2cpp_class_is_enum(cls) ? il2cpp_class_enum_basetype(cls) : nullptr;
+      return storage && storage->type == IL2CPP_TYPE_I4;
+    };
+    const auto referenceField = [&](const FieldInfo *field, Il2CppClass *owner) {
+      return fieldFits(field, owner, sizeof(void *))
+             && (field->type->type == IL2CPP_TYPE_CLASS || field->type->type == IL2CPP_TYPE_GENERICINST
+                 || field->type->type == IL2CPP_TYPE_OBJECT || field->type->type == IL2CPP_TYPE_VAR);
+    };
+    const std::array methods{update_lod, on_enable, on_disable, did_bind, release, update_method};
+    bool             signatures_valid = alive && normalized && fleet_type;
+    for (std::size_t i = 0; i < methods.size(); ++i) {
+      if (!methods[i] || methods[i]->has_full_generic_sharing_signature) {
+        signatures_valid = false;
+        continue;
+      }
+      for (std::size_t j = 0; j < i; ++j)
+        if (methods[j] && methods[i]->methodPointer == methods[j]->methodPointer)
+          signatures_valid = false;
+    }
+    for (const auto *method : {alive, normalized, fleet_type})
+      if (method && method->has_full_generic_sharing_signature)
+        signatures_valid = false;
+#if defined(__APPLE__)
+    // Profiles can now be enabled after startup, so these five detours are
+    // installed even when the initial profile is Native. Check every entry
+    // before any of them is patched; unsupported Mac images retain native LOD.
+    for (const auto *method : {update_lod, on_enable, on_disable, did_bind, release})
+      if (method && !native_hooks::MacHookFits(reinterpret_cast<const void *>(method->methodPointer))) {
+        signatures_valid = false;
+        spdlog::warn("Fleet labels: {}.{} has no verified native hook extent; controls unavailable",
+                     method->klass->name, method->name);
+      }
+#endif
+    const auto fields_valid = enumField(target_level_field, lod_class)
+                              && enumField(zoom_level_field, navigation_zoom_class)
+                              && referenceField(lod_field, fleet_widget_class)
+                              && method_contract::Type(lod_field->type, "Digit.Prime.Navigation.NavigationLOD")
+                              && referenceField(context_field, fleet_widget_class);
     const auto fleet_label_dependencies_valid =
-        lod_helper.isValidHelper() && ptr_update_lod != nullptr && target_level_field != nullptr
-        && fleet_widget_helper.isValidHelper() && ptr_on_enable != nullptr && ptr_on_disable != nullptr
-        && ptr_on_did_bind_context != nullptr && ptr_on_about_to_release_context != nullptr && lod_field != nullptr
-        && context_field != nullptr && fleet_data_helper.isValidHelper() && fleet_type_property != nullptr
-        && fleet_type_getter != nullptr && navigation_zoom_helper.isValidHelper() && ptr_update != nullptr
-        && zoom_level_field != nullptr && normalized_zoom_property != nullptr;
+        signatures_valid && fields_valid && lod_helper.isValidHelper() && ptr_update_lod != nullptr
+        && target_level_field != nullptr && fleet_widget_helper.isValidHelper() && ptr_on_enable != nullptr
+        && ptr_on_disable != nullptr && ptr_on_did_bind_context != nullptr && ptr_on_about_to_release_context != nullptr
+        && lod_field != nullptr && context_field != nullptr && fleet_data_helper.isValidHelper()
+        && fleet_type_property != nullptr && fleet_type_getter != nullptr && navigation_zoom_helper.isValidHelper()
+        && ptr_update != nullptr && zoom_level_field != nullptr && normalized_zoom_property != nullptr;
     if (fleet_label_dependencies_valid) {
-      fleet_label_hooks_installed = true;
-      SPUD_STATIC_DETOUR(ptr_update_lod, NavigationLOD_UpdateLOD_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_enable, NavigationFleetWidget_OnEnable_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_disable, NavigationFleetWidget_OnDisable_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_did_bind_context, NavigationFleetWidget_OnDidBindContext_Hook);
-      SPUD_STATIC_DETOUR(ptr_on_about_to_release_context, NavigationFleetWidget_OnAboutToReleaseContext_Hook);
+      fleet_label_alive = reinterpret_cast<FleetLabelAliveFn>(method_contract::Pointer(alive));
+      // A partial installation stays on the original native paths. The final
+      // capability also requires the shared NavigationZoom.Update owner below.
+      const std::array installed{
+          bool(SPUD_STATIC_DETOUR(ptr_update_lod, NavigationLOD_UpdateLOD_Hook)),
+          bool(SPUD_STATIC_DETOUR(ptr_on_enable, NavigationFleetWidget_OnEnable_Hook)),
+          bool(SPUD_STATIC_DETOUR(ptr_on_disable, NavigationFleetWidget_OnDisable_Hook)),
+          bool(SPUD_STATIC_DETOUR(ptr_on_did_bind_context, NavigationFleetWidget_OnDidBindContext_Hook)),
+          bool(
+              SPUD_STATIC_DETOUR(ptr_on_about_to_release_context, NavigationFleetWidget_OnAboutToReleaseContext_Hook))};
+      label_surface_ready = std::ranges::all_of(installed, [](bool installed) { return installed; });
+      if (!label_surface_ready)
+        spdlog::error("Fleet label detail hook installation incomplete; using native fleet labels");
     } else {
       spdlog::error("Fleet label detail hooks were not installed; using native fleet labels");
     }
@@ -791,7 +981,8 @@ void InstallZoomHooks()
     if (ptr_update == nullptr) {
       ErrorMsg::MissingMethod("NavigationZoom", "Update");
     } else {
-      SPUD_STATIC_DETOUR(ptr_update, NavigationZoom_Update_Hook);
+      const bool zoom_installed   = SPUD_STATIC_DETOUR(ptr_update, NavigationZoom_Update_Hook);
+      fleet_label_hooks_installed = label_surface_ready && zoom_installed;
     }
 
 #if _WIN32

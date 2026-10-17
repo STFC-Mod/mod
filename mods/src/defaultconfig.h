@@ -84,6 +84,8 @@ namespace Patches
   constexpr bool freeresizehooks            = true;
   constexpr bool game_version               = true;
   constexpr bool hotkeyhooks                = true;
+  constexpr bool nativesettingshooks        = true;
+  constexpr bool runtimeconfighooks         = true;
   constexpr bool loadingscreenhooks         = true;
   constexpr bool transitionscreenhooks      = true;
   constexpr bool objecttracker              = true;

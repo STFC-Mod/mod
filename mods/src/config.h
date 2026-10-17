@@ -139,6 +139,12 @@ struct FleetLabelProfile {
 
 // Part of UI Scale
 void ApplyUiShipScaleToLoadedShips(float old_multiplier, float new_multiplier);
+// Shared startup/editor parsers. False reports invalid tokens; known tokens are
+// still returned so startup preserves its existing permissive interpretation.
+bool        ParseShipFilter(std::string_view value, std::vector<std::string>& names, bool& match_all);
+bool        ParseFactionFilter(std::string_view value, std::vector<std::string>& factions);
+bool        ParseBannerFilter(std::string_view value, std::vector<int>& types);
+std::string FormatBannerFilter(const std::vector<int>& types);
 
 class Config final
 {
@@ -153,7 +159,7 @@ public:
   [[nodiscard]] static HWND WindowHandle();
 #endif
 
-  static void Save(const toml::table& config, std::string_view filename, bool apply_warning = true);
+  static bool Save(const toml::table& config, std::string_view filename, bool apply_warning = true);
   void        Load();
   void        AdjustUiScale(bool scaleUp);
   void        AdjustUiShipScale(bool scaleUp);
@@ -284,6 +290,8 @@ public:
   bool installToastBannerHooks;
   bool installPanHooks;
   bool installHotkeyHooks;
+  bool installNativeSettings;
+  bool installRuntimeConfigHooks;
   bool installFreeResizeHooks;
   bool installTempCrashFixes;
   bool installTestPatches;

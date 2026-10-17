@@ -1,6 +1,7 @@
 #include "patches.h"
 #include "file.h"
 #include "log_history.h"
+#include "patches/runtime_config.h"
 #include "version.h"
 
 #include <il2cpp/il2cpp-functions.h>
@@ -59,6 +60,7 @@ void InstallActionQueueRecovery();
 void InstallThinQueueProtection();
 void InstallQueueAddressGuard();
 void InstallHavenHistoryHooks();
+void InstallNativeSettings();
 
 __int64 il2cpp_init_hook(auto original, const char* domain_name)
 {
@@ -144,6 +146,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
   spdlog::info("Initializing code hooks:");
   const PatchEntry patches[] = {
       {"UiScaleHooks", {InstallUiScaleHooks, &cfg.installUiScaleHooks}},
+      {"RuntimeConfig", {runtime_config::Install, &cfg.installRuntimeConfigHooks}},
       {"ZoomHooks", {InstallZoomHooks, &cfg.installZoomHooks}},
       {"HavenZoomHooks", {InstallHavenZoomHooks, &cfg.installHavenZoomHooks}},
       {"BuffFixHooks", {InstallBuffFixHooks, &cfg.installBuffFixHooks}},
@@ -182,6 +185,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
       {"QueueAddressGuard", {InstallQueueAddressGuard, &cfg.installQueueAddressGuardHooks}},
       {"ThinQueueProtection", {InstallThinQueueProtection, &cfg.installThinQueueProtectionHooks}},
       {"HavenHistory", {InstallHavenHistoryHooks, &cfg.installHavenHistoryHooks}},
+      {"ModSettings", {InstallNativeSettings, &cfg.installNativeSettings}},
   };
   printf("il2cpp_init_hook(%s)\n", domain_name);
 
