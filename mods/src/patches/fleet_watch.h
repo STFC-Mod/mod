@@ -18,10 +18,15 @@ struct Transition {
 
 using TransitionCallback = void (*)(const Transition& transition);
 using FastPollPredicate  = bool (*)(FleetState state);
+using BaselineCallback   = void (*)();
 
 struct Subscription {
   TransitionCallback on_transition   = nullptr;
   FastPollPredicate  needs_fast_poll = nullptr;
+  // Optional. Runs on the game thread each time a stable baseline is established while the fleet service is available
+  // (after login, and again after any fleet-slot topology change). Transitions are only dispatched after a baseline, so
+  // a consumer that needs the complete fleet list reads FleetsManager here.
+  BaselineCallback   on_baseline     = nullptr;
 };
 
 // Registers a process-lifetime fleet-state observer. The first subscription joins the shared screen-update dispatcher;

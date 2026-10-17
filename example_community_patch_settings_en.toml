@@ -916,6 +916,9 @@ buffs = true
 # Do you want to sync building data?
 buildings = true
 
+# Do you want to sync live fleet state (mining, docked, warping...)? Opt-in, off by default
+fleets = false
+
 # Do you want to sync inventory data?
 inventory = true
 

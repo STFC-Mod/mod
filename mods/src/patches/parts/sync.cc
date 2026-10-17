@@ -1,12 +1,15 @@
 #include "config.h"
 #include "errormsg.h"
 #include "file.h"
+#include "patches/fleet_watch.h"
+#include "patches/screen_update_hook.h"
 #include "str_utils.h"
 
 #include <Digit.PrimeServer.Models.pb.h>
 #include <il2cpp-api-types.h>
 #include <il2cpp/il2cpp_helper.h>
 #include <prime/EntityGroup.h>
+#include <prime/FleetsManager.h>
 #include <prime/RealtimeDataPayload.h>
 #include <prime/ServiceResponse.h>
 #include <prime/UserProfileManager.h>
@@ -885,6 +888,12 @@ static void save_previously_sent_logs()
 }
 } // namespace trackers
 
+namespace fleets
+{
+// Set from any thread when another category's first sync is queued; the game thread answers with a full fleet snapshot.
+static std::atomic_bool snapshot_requested{false};
+} // namespace fleets
+
 namespace workers
 {
 
@@ -909,6 +918,10 @@ static void queue_data(SyncConfig::Type type, const std::string& data, bool is_f
 
 static void queue_data(SyncConfig::Type type, const nlohmann::json& data, bool is_first_sync = false)
 {
+  if (is_first_sync && type != SyncConfig::Type::Fleets) {
+    fleets::snapshot_requested.store(true, std::memory_order_release);
+  }
+
   {
     std::scoped_lock lk(sync_data_mtx);
     sync_data_queue.emplace(type, data.dump(), is_first_sync);
@@ -2697,6 +2710,132 @@ static void HandleEntityGroup(EntityGroup* entity_group)
   }
 }
 
+namespace fleets
+{
+constexpr int kFleetSlotCount = 10;
+
+static const char* state_name(FleetState state)
+{
+  switch (state) {
+    case FleetState::IdleInSpace:
+      return "IdleInSpace";
+    case FleetState::Docked:
+      return "Docked";
+    case FleetState::Mining:
+      return "Mining";
+    case FleetState::Destroyed:
+      return "Destroyed";
+    case FleetState::TieringUp:
+      return "TieringUp";
+    case FleetState::Repairing:
+      return "Repairing";
+    case FleetState::Battling:
+      return "Battling";
+    case FleetState::WarpCharging:
+      return "WarpCharging";
+    case FleetState::Warping:
+      return "Warping";
+    case FleetState::Impulsing:
+      return "Impulsing";
+    case FleetState::Capturing:
+      return "Capturing";
+    case FleetState::AutoHunting:
+      return "AutoHunting";
+    case FleetState::Outposting:
+      return "Outposting";
+    default:
+      return "Unknown";
+  }
+}
+
+static int64_t unix_seconds()
+{
+  return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+// Game thread only: reads IL2CPP properties of a FleetPlayerData that is valid for the current frame.
+static nlohmann::json record(int slot, FleetPlayerData* fleet, FleetState state, FleetState previous)
+{
+  auto*         hull    = fleet->Hull;
+  // HullSpec::Id is read as a 32-bit long; hull ids run past 2^31 (e.g. Kumari 3005922948), so take
+  // the value as unsigned before widening or those come out negative in the record.
+  const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id)) : 0;
+
+  return {{"type", SyncConfig::Type::Fleets},
+          {"fid", fleet->Id},
+          {"slot", slot},
+          {"hull_id", hull_id},
+          {"level", fleet->Level},
+          {"state", static_cast<int>(state)},
+          {"state_name", state_name(state)},
+          {"prev_state", static_cast<int>(previous)},
+          {"t", unix_seconds()}};
+}
+
+// Game thread only. A snapshot is the complete list of occupied slots, so it is sent as a first sync.
+static void queue_snapshot(const char* reason)
+{
+  auto* manager = FleetsManager::Instance();
+  if (!manager || !manager->HasFleetService()) {
+    return;
+  }
+
+  auto fleet_array = nlohmann::json::array();
+  for (int slot = 0; slot < kFleetSlotCount; ++slot) {
+    if (auto* fleet = manager->GetFleetPlayerData(slot); fleet) {
+      fleet_array.push_back(record(slot, fleet, fleet->CurrentState, fleet->PreviousState));
+    }
+  }
+
+  if (!fleet_array.empty()) {
+    http::logging::debug("PROCESS", "fleets", STR_FORMAT("Fleet snapshot ({}): {} fleets", reason, fleet_array.size()));
+    workers::queue_data(SyncConfig::Type::Fleets, fleet_array, true);
+  }
+}
+
+static void on_transition(const fleet_watch::Transition& transition)
+{
+  if (!transition.fleet) {
+    return;
+  }
+
+  auto fleet_array = nlohmann::json::array();
+  fleet_array.push_back(
+      record(transition.after.slot, transition.fleet, transition.after.state, transition.before.state));
+  workers::queue_data(SyncConfig::Type::Fleets, fleet_array);
+}
+
+static void on_baseline()
+{
+  snapshot_requested.store(false, std::memory_order_relaxed);
+  queue_snapshot("baseline");
+}
+
+static void tick()
+{
+  if (!snapshot_requested.load(std::memory_order_relaxed)
+      || !snapshot_requested.exchange(false, std::memory_order_acq_rel)) {
+    return;
+  }
+  queue_snapshot("first sync");
+}
+
+static void install()
+{
+  if (!Config::Get().sync_options.fleets) {
+    return;
+  }
+
+  if (!fleet_watch::Subscribe({.on_transition = on_transition, .on_baseline = on_baseline})) {
+    spdlog::warn("Sync: fleet state subscriber could not be installed; fleet sync disabled");
+    return;
+  }
+
+  register_screen_manager_update_callback(tick);
+  spdlog::info("Sync: fleet state sync enabled");
+}
+} // namespace fleets
+
 namespace hooks
 {
 // IL2CPP value type: keep this parameter by value so following arguments retain their platform ABI positions.
@@ -2842,6 +2981,8 @@ void InstallSyncPatches()
         SPUD_STATIC_DETOUR(ptr, hooks::RtcParser_ParseFinalPayload);
       }
     }
+
+  fleets::install();
 
   std::thread(workers::ship_sync_data).detach();
   std::thread(workers::ship_combat_log_data).detach();

@@ -23,6 +23,7 @@ public:
     Buffs,
     Buildings,
     EmeraldChain,
+    Fleets,
     Haven,
     Inventory,
     Jobs,
@@ -50,6 +51,7 @@ public:
   bool battlelogs       = false;
   bool buffs            = false;
   bool buildings        = true;
+  bool fleets           = false;
   bool haven            = true;
   bool inventory        = false;
   bool jobs             = false;
@@ -72,6 +74,7 @@ constexpr std::array SyncOptions{
     SyncConfig::Option{SyncConfig::Type::Buffs, "buff", "buffs", &SyncConfig::buffs},
     SyncConfig::Option{SyncConfig::Type::Buildings, "module", "buildings", &SyncConfig::buildings},
     SyncConfig::Option{SyncConfig::Type::EmeraldChain, "emerald_chain", "buffs", &SyncConfig::buffs},
+    SyncConfig::Option{SyncConfig::Type::Fleets, "fleet", "fleets", &SyncConfig::fleets},
     SyncConfig::Option{SyncConfig::Type::Haven, "haven", "haven", &SyncConfig::haven},
     SyncConfig::Option{SyncConfig::Type::Inventory, "inventory", "inventory", &SyncConfig::inventory},
     SyncConfig::Option{SyncConfig::Type::Jobs, "job", "jobs", &SyncConfig::jobs},

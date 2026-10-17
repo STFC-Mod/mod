@@ -240,6 +240,7 @@ namespace Sync
   constexpr bool        battlelogs         = false;
   constexpr bool        buffs              = true;
   constexpr bool        buildings          = true;
+  constexpr bool        fleets             = false; // opt-in: live fleet state from fleet_watch
   constexpr bool        haven              = true;
   constexpr bool        inventory          = true;
   constexpr bool        jobs               = true;
