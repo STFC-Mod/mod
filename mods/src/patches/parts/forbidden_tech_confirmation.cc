@@ -10,6 +10,7 @@
 namespace
 {
 constexpr int32_t ConfirmButtonResult = 1;
+constexpr int32_t YesButtonResult     = 3;
 
 const FieldInfo* on_selection_field = nullptr;
 
@@ -24,6 +25,19 @@ bool IsForbiddenTechConfirmation(const Il2CppDelegate* callback)
 
   return owner_class != nullptr && strcmp(owner_class->name, "ForbiddenTechManager") == 0 &&
          strcmp(callback->method->name, "<RequestAction>b__0") == 0;
+}
+
+bool IsAllianceContributionMaxLevelWarning(const Il2CppDelegate* callback)
+{
+  if (callback == nullptr || callback->target == nullptr || callback->method == nullptr) {
+    return false;
+  }
+
+  const auto* target_class = callback->target->klass;
+  const auto* owner_class  = target_class == nullptr ? nullptr : target_class->declaringType;
+
+  return owner_class != nullptr && strcmp(owner_class->name, "AllianceContributionViewController") == 0
+         && strcmp(callback->method->name, "<RequestAction>b__0") == 0;
 }
 
 bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
@@ -45,6 +59,26 @@ bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
   return true;
 }
 
+bool ConfirmAllianceContribution(Il2CppDelegate* callback)
+{
+  if (!Config::Get().auto_confirm_alliance_contribution || !IsAllianceContributionMaxLevelWarning(callback)) {
+    return false;
+  }
+
+  int32_t          result    = YesButtonResult;
+  void*            args[]    = {&result};
+  Il2CppException* exception = nullptr;
+  il2cpp_runtime_invoke(callback->method, callback->target, args, &exception);
+
+  if (exception != nullptr) {
+    spdlog::warn("AllianceContributionConfirmation: failed to invoke the confirmation callback");
+    return false;
+  }
+
+  spdlog::debug("AllianceContributionConfirmation: auto-confirmed the max-level contribution warning");
+  return true;
+}
+
 Il2CppDelegate* GetSelectionCallback(void* context)
 {
   if (context == nullptr || on_selection_field == nullptr) {
@@ -63,7 +97,7 @@ void MessageBox_Show_Hook(auto original, void* context)
 
 void MessageBox_ShowWithCallback_Hook(auto original, void* context, Il2CppDelegate* callback)
 {
-  if (!ConfirmForbiddenTechUpgrade(callback)) {
+  if (!ConfirmForbiddenTechUpgrade(callback) && !ConfirmAllianceContribution(callback)) {
     original(context, callback);
   }
 }

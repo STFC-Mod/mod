@@ -739,6 +739,9 @@ reverse_haven_history = true
 # Confirm Forbidden Tech level and tier upgrades automatically
 auto_confirm_ft_upgrade = false
 
+# Automatically confirm the max-level warning shown when contributing to an alliance that has reached level 60
+auto_confirm_alliance_contribution = false
+
 # Instant-warp action to confirm automatically: none, warp, or jump
 #   "none" - Do not choose an action automatically; show the confirmation dialog
 #   "warp" - Automatically choose regular warp

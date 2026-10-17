@@ -268,6 +268,7 @@ namespace UI
   constexpr bool        auto_confirm_discovery             = true;
   constexpr bool        auto_confirm_ft_upgrade            = false;
   constexpr bool        auto_confirm_reveal_ability        = false;
+  constexpr bool        auto_confirm_alliance_contribution = false;
   constexpr bool        auto_open_bulk_claim_flyout        = false;
   constexpr const char* daily_bulk_claim_factions          = "";
   constexpr bool        daily_bulk_claim_toggle_default_on = false;

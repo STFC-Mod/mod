@@ -234,6 +234,7 @@ public:
   bool                     auto_open_bulk_claim_flyout;
   bool                     auto_confirm_ft_upgrade;
   bool                     auto_confirm_reveal_ability;
+  bool                     auto_confirm_alliance_contribution;
 
   std::vector<std::string> daily_bulk_claim_factions;
 

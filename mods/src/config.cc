@@ -1204,6 +1204,9 @@ void Config::Load()
   this->auto_confirm_reveal_ability =
       get_config_or_default(config, parsed, "ui", "auto_confirm_reveal_ability",
                                                         DCU::auto_confirm_reveal_ability, write_config);
+  this->auto_confirm_alliance_contribution =
+      get_config_or_default(config, parsed, "ui", "auto_confirm_alliance_contribution",
+                                                        DCU::auto_confirm_alliance_contribution, write_config);
 
   this->extend_chest_purchase_max = get_config_or_default(config, parsed, "ui", "extend_chest_purchase_max",
                                                           DCU::extend_chest_purchase_max, write_config);
