@@ -347,7 +347,8 @@ enum class KeyCode : int32_t {
 // UnityEngine.Input through its internal calls, which skip the managed wrappers. A call that a Unity upgrade
 // renamed is reported once and then reads as nothing pressed.
 struct Input {
-  // True when Unity lacks the call, so a caller that skips key checks on idle frames still checks.
+  // anyKey and anyKeyDown read true when Unity lacks the call, so a caller that skips key checks on idle frames
+  // still checks.
   static bool anyKey()
   {
     static const il2cpp::ICall<bool()> call{"UnityEngine.Input::get_anyKey()"};

@@ -64,13 +64,13 @@ struct Button : Behaviour {
 struct EventSystem : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem">;
 
-  static EventSystem* current()
-  { return Class::Get<"current", EventSystem*>(); }
-
   GameObject* currentSelectedGameObject()
   { return Get<"currentSelectedGameObject", GameObject*>(); }
   void SetSelectedGameObject(GameObject* object)
   { Call<"SetSelectedGameObject">(object); }
+
+  static EventSystem* current()
+  { return Class::Get<"current", EventSystem*>(); }
 };
 
 struct PointerEventData : il2cpp::Object {
@@ -105,7 +105,7 @@ struct TMP_Text : Behaviour {
     Ellipsis = 1,
   };
 
-  // TMP_FontAsset
+  // A TMP_FontAsset.
   il2cpp::Object* font()
   { return Get<"font", il2cpp::Object*>(); }
   void SetFont(il2cpp::Object* value)
@@ -196,8 +196,8 @@ public:
     auto* texture = Texture();
     if (!texture)
       return nullptr;
-    const Rect rect{0.0f, 0.0f, static_cast<float>(texture->width()), static_cast<float>(texture->height())};
-    auto*      sprite = unity::Sprite::Create(texture, rect, Vector2{0.5f, 0.5f});
+    const Rect whole{.width = static_cast<float>(texture->width()), .height = static_cast<float>(texture->height())};
+    auto*      sprite = unity::Sprite::Create(texture, whole, Vector2{.x = 0.5f, .y = 0.5f});
     sprite_           = il2cpp::GcHandle::Strong(sprite);
     return sprite;
   }

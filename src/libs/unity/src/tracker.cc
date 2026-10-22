@@ -6,15 +6,22 @@
 #include <spud/signature.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
 namespace unity::detail
 {
 namespace
 {
+  // While the GC marks, the low bit of an object's klass pointer is its mark bit.
+  Il2CppClass* ClassOf(Il2CppObject* object)
+  { return reinterpret_cast<Il2CppClass*>(reinterpret_cast<uintptr_t>(object->klass) & ~uintptr_t{1}); }
+
+  bool IsMarked(Il2CppObject* object)
+  { return (reinterpret_cast<uintptr_t>(object->klass) & 1) != 0; }
+
   // Borrowed pointers, keyed by class and every parent class, oldest first. The GC finalizer thread updates this,
   // so every access holds the mutex. Never destroyed: the finalizer thread can still run while static destructors
   // run at exit.
@@ -27,33 +34,26 @@ namespace
       const auto it = objects.find(klass);
       return it == objects.end() ? nullptr : &it->second;
     }
+
+    // Add and Remove need the mutex held. A base and a derived constructor can both be detoured and both run for
+    // one object, so adding twice is a no-op; a second entry would outlive Remove and hand out a freed object.
+    void Add(Il2CppObject* object)
+    {
+      if (std::ranges::contains(objects[object->klass], object))
+        return;
+      for (auto* klass = object->klass; klass; klass = klass->parent)
+        objects[klass].push_back(object);
+    }
+
+    // The object may still carry its mark bit when OnDestroy or its finalizer follows a liveness pass.
+    void Remove(Il2CppObject* object)
+    {
+      for (auto* klass = ClassOf(object); klass; klass = klass->parent)
+        if (auto* instances = Find(klass))
+          std::erase(*instances, object);
+    }
   };
   Registry& registry = *new Registry;
-
-  // While the GC marks, the low bit of an object's klass pointer is its mark bit.
-  Il2CppClass* ClassOf(Il2CppObject* object)
-  { return reinterpret_cast<Il2CppClass*>(reinterpret_cast<uintptr_t>(object->klass) & ~uintptr_t{1}); }
-
-  bool IsMarked(Il2CppObject* object)
-  { return (reinterpret_cast<uintptr_t>(object->klass) & 1) != 0; }
-
-  // Callers hold the registry lock. A base and a derived constructor can both be detoured and both run for one
-  // object, so tracking twice is a no-op; a second entry would outlive Untrack and hand out a freed object.
-  void Track(Il2CppObject* object)
-  {
-    auto& own = registry.objects[object->klass];
-    if (std::ranges::find(own, object) != own.end())
-      return;
-    for (auto* klass = object->klass; klass; klass = klass->parent)
-      registry.objects[klass].push_back(object);
-  }
-
-  void Untrack(Il2CppObject* object)
-  {
-    for (auto* klass = ClassOf(object); klass; klass = klass->parent)
-      if (auto* instances = registry.Find(klass))
-        std::erase(*instances, object);
-  }
 
   // Unity's Boehm fork takes a per-entry "finalize mark proc" as a sixth argument. GC_finalize calls it for every
   // unreachable finalized object, and the game's own registrations pass a no-op. Leaving the argument out puts
@@ -79,7 +79,7 @@ namespace
   {
     if (object) {
       std::scoped_lock lock(registry.mutex);
-      Untrack(static_cast<Il2CppObject*>(object));
+      registry.Remove(static_cast<Il2CppObject*>(object));
     }
     if (auto* chained = static_cast<ChainedFinalizer*>(data)) {
       const auto next = *chained;
@@ -113,7 +113,7 @@ namespace
     original(state);
 
     std::scoped_lock lock(registry.mutex);
-    // Filter each class list once, including inherited entries; untracking one object at a time rescans them.
+    // Filter each class list once, including inherited entries; removing one object at a time rescans them.
     for (auto& [klass, instances] : registry.objects)
       std::erase_if(instances, IsMarked);
   }
@@ -137,7 +137,6 @@ namespace
     }
     return reinterpret_cast<RegisterFinalizer>(matches.front().address());
   }
-
 } // namespace
 
 void Constructed(Il2CppObject* object)
@@ -146,7 +145,7 @@ void Constructed(Il2CppObject* object)
     return;
   WatchFinalizer(object);
   std::scoped_lock lock(registry.mutex);
-  Track(object);
+  registry.Add(object);
 }
 
 void Destroyed(Il2CppObject* object)
@@ -154,31 +153,32 @@ void Destroyed(Il2CppObject* object)
   if (!object)
     return;
   std::scoped_lock lock(registry.mutex);
-  Untrack(object);
+  registry.Remove(object);
 }
 
 void StartTracking()
 {
-  static bool started = false;
-  if (std::exchange(started, true))
-    return;
-  il2cpp::HookSet hooks("object tracking");
-  IL2CPP_STAGE_AT(hooks, il2cpp_unity_liveness_finalize, LivenessFinalize_Hook);
-  hooks.Commit();
-  register_finalizer = FindRegisterFinalizer();
+  [[maybe_unused]] static const bool started = [] {
+    il2cpp::HookSet hooks("object tracking");
+    IL2CPP_STAGE_AT(hooks, il2cpp_unity_liveness_finalize, LivenessFinalize_Hook);
+    hooks.Commit();
+    register_finalizer = FindRegisterFinalizer();
+    return true;
+  }();
 }
 
+// The registry never holds a null class, so a missing binding finds nothing.
 Il2CppObject* Newest(Il2CppClass* klass)
 {
   std::scoped_lock lock(registry.mutex);
-  auto*            objects = klass ? registry.Find(klass) : nullptr;
+  auto*            objects = registry.Find(klass);
   return objects && !objects->empty() ? objects->back() : nullptr;
 }
 
 std::vector<Il2CppObject*> Instances(Il2CppClass* klass)
 {
   std::scoped_lock lock(registry.mutex);
-  auto*            objects = klass ? registry.Find(klass) : nullptr;
+  auto*            objects = registry.Find(klass);
   return objects ? *objects : std::vector<Il2CppObject*>{};
 }
 } // namespace unity::detail

@@ -131,20 +131,6 @@ enum class FleetState : int32_t {
 // Cargo, mining slot and timers off FleetPlayerData, read for fleet sync. The interfaces are bound as such: their
 // getters dispatch to the runtime class, which also covers FleetMiningSlot's explicit IMiningSlot implementation.
 
-// System.DateTime: ticks in the low 62 bits, the Kind in the top two.
-struct DateTime {
-  uint64_t dateData;
-
-  // Unix seconds, or empty for DateTime.MinValue (unset).
-  std::optional<int64_t> UnixSeconds() const
-  {
-    const auto ticks = static_cast<int64_t>(dateData & 0x3FFFFFFFFFFFFFFFull);
-    if (ticks <= 0)
-      return std::nullopt;
-    return (ticks - 621355968000000000LL) / 10000000LL;
-  }
-};
-
 // Concrete: ProgressData, CargoProgressData.
 struct IProgressData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "IProgressData">;
@@ -181,8 +167,8 @@ struct IMiningSlot : il2cpp::Object {
   { return Get<"ResourceId", int64_t>(); }
   double AmountMined()
   { return Get<"AmountMined", double>(); }
-  DateTime OccupyTimeUtc()
-  { return Get<"OccupyTimeUtc", DateTime>(); }
+  unity::DateTime OccupyTimeUtc()
+  { return Get<"OccupyTimeUtc", unity::DateTime>(); }
   IMiningNodeParams* PointData()
   { return Get<"PointData", IMiningNodeParams*>(); }
 };
@@ -191,8 +177,8 @@ struct IMiningSlot : il2cpp::Object {
 struct ITimerData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ITimerData">;
 
-  DateTime DueTime()
-  { return Get<"DueTime", DateTime>(); }
+  unity::DateTime DueTime()
+  { return Get<"DueTime", unity::DateTime>(); }
 };
 
 // A ship name as the game shows it, in the player's language, for a hull's localisation id; empty for none.
