@@ -1,10 +1,11 @@
-//! Host-only toolchain sysroot provisioning; needs no external download/extraction tools.
+//! Downloads, verifies and extracts a pinned SDK archive into .cache/toolchain, with no external tools.
 const std = @import("std");
 const Io = std.Io;
 const Dir = Io.Dir;
 const Sha256 = std.crypto.hash.sha2.Sha256;
 
-/// Provision a verified SDK archive in the toolchain cache.
+/// Arguments, in the order zig/toolchains.zig passes them: cache dir, version, manifest URL, URL environment
+/// variable, expected SHA-256, local archive (may be empty), and `windows-msvc` or `macos-sdk`.
 pub fn main(init: std.process.Init) !void {
     const allocator = init.arena.allocator();
     const args = try init.minimal.args.toSlice(allocator);
@@ -25,17 +26,15 @@ pub fn main(init: std.process.Init) !void {
     try cwd.createDirPath(io, cache);
     const root = try std.fs.path.join(allocator, &.{ cache, kind, version });
     const stamp = try std.fs.path.join(allocator, &.{ root, ".complete" });
-    const archive = if (local_archive.len != 0) local_archive else try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.{s}", .{
-        cache,
-        kind,
-        version,
-        if (windows) "zip" else "tar.gz",
-    });
-    if (cwd.access(io, archive, .{})) |_| {} else |err| {
-        if (err != error.FileNotFound) return err;
-        if (local_archive.len != 0) return err;
+    const extension = if (windows) "zip" else "tar.gz";
+    const archive = if (local_archive.len != 0)
+        local_archive
+    else
+        try std.fmt.allocPrint(allocator, "{s}/{s}-{s}.{s}", .{ cache, kind, version, extension });
+    if (!try exists(io, cwd, archive)) {
+        if (local_archive.len != 0) return error.FileNotFound;
         if (url.len == 0) {
-            std.debug.print("Set {s} or fill in zig/toolchains.zon to download the Toolchain sysroot.\n", .{url_env});
+            std.debug.print("Set {s} or fill in zig/toolchains.zon to download the toolchain sysroot.\n", .{url_env});
             return error.MissingToolchainUrl;
         }
         try downloadArchive(init, url, archive);
@@ -47,8 +46,8 @@ pub fn main(init: std.process.Init) !void {
         return error.HashMismatch;
     }
     if (expected_hash.len == 0) std.debug.print("Toolchain archive SHA-256: {s}\n", .{hex});
-    // Include pin metadata and the actual archive digest: replacing an unpinned
-    // archive or changing the manifest invalidates the completed extraction.
+    // Include pin metadata and the actual archive digest: replacing an unpinned archive or changing the manifest
+    // invalidates the completed extraction. Bump the extractor version when the extracted layout changes.
     const identity = try std.fmt.allocPrint(allocator, "extractor-v5\n{s}\n{s}\n{s}\n{s}\n{s}\n", .{
         version,
         manifest_url,
@@ -98,7 +97,7 @@ fn downloadArchive(init: std.process.Init, url: []const u8, archive: []const u8)
         var writer = file.writer(io, &buffer);
         var client: std.http.Client = .{ .allocator = init.gpa, .io = io };
         defer client.deinit();
-        std.debug.print("Downloading Toolchain sysroot...\n", .{});
+        std.debug.print("Downloading toolchain sysroot...\n", .{});
         const response = try client.fetch(.{ .location = .{ .url = url }, .response_writer = &writer.interface });
         if (response.status != .ok) return error.DownloadFailed;
         try writer.end();
@@ -141,8 +140,8 @@ fn extractWindows(io: Io, path: []const u8, dest: Dir) !void {
 }
 
 fn extractSdk(io: Io, path: []const u8, dest: Dir) !void {
-    // SDK tarballs contain one top-level MacOSX.sdk directory. TAR preserves
-    // framework symlinks, unlike a plain ZIP extraction.
+    // SDK tarballs contain one top-level MacOSX.sdk directory. TAR preserves framework symlinks, unlike a plain ZIP
+    // extraction.
     const file = try Dir.cwd().openFile(io, path, .{});
     defer file.close(io);
     var buffer: [64 * 1024]u8 = undefined;
@@ -152,6 +151,8 @@ fn extractSdk(io: Io, path: []const u8, dest: Dir) !void {
     try std.tar.extract(io, dest, &gzip.reader, .{ .strip_components = 1 });
 }
 
+/// The header folders and x64 library folders the build uses; the archive also carries tools and other
+/// architectures.
 fn selected(name: []const u8) bool {
     inline for (.{
         "msvc/include/",
@@ -181,6 +182,9 @@ fn validate(io: Io, dir: Dir) !void {
     }
 }
 
+/// Make the SDK usable on a case-sensitive filesystem. MSVC and Windows SDK file names mix case, and so do the
+/// `#include` lines and `/DEFAULTLIB` directives that name them. Adds symlinks: a lowercase alias for every file,
+/// then every spelling an include or library directive asks for. Never changes the extracted files.
 fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
     var root_buffer: [std.fs.max_path_bytes]u8 = undefined;
     const root_path = root_buffer[0..try root.realPath(io, &root_buffer)];
@@ -197,11 +201,10 @@ fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
         if (std.mem.eql(u8, basename, lower)) continue;
         const alias = try std.fs.path.join(allocator, &.{ std.fs.path.dirname(path) orelse "", lower });
         // APFS and Windows already resolve the alias on case-insensitive volumes.
-        if (root.access(io, alias, .{})) |_| continue else |err| if (err != error.FileNotFound) return err;
+        if (try exists(io, root, alias)) continue;
         try root.symLink(io, basename, alias, .{});
     }
-    // Headers and static-library directives mix capitalization. Index the original
-    // files, then create the spellings they request without changing SDK contents.
+    // Lowercase relative path to the original file.
     var index: std.StringHashMapUnmanaged([]const u8) = .empty;
     defer index.deinit(allocator);
     for (files.items) |path| try index.put(allocator, try std.ascii.allocLowerString(allocator, path), path);
@@ -213,8 +216,10 @@ fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
         "winsdk/include/cppwinrt",
         "winsdk/include/ucrt",
     };
+    // Read each file through page_allocator and free it: the arena would keep every header and library alive.
     for (files.items) |path| {
-        if (!std.mem.startsWith(u8, path, "msvc/include/") and !std.mem.startsWith(u8, path, "winsdk/include/")) continue;
+        const header = std.mem.startsWith(u8, path, "msvc/include/") or std.mem.startsWith(u8, path, "winsdk/include/");
+        if (!header) continue;
         const content = try root.readFileAlloc(io, path, std.heap.page_allocator, .limited(16 * 1024 * 1024));
         defer std.heap.page_allocator.free(content);
         var lines = std.mem.splitScalar(u8, content, '\n');
@@ -223,12 +228,14 @@ fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
             if (!std.mem.startsWith(u8, rest, "#")) continue;
             rest = std.mem.trimStart(u8, rest[1..], " \t");
             if (!std.mem.startsWith(u8, rest, "include")) continue;
-            rest = std.mem.trimStart(u8, rest[7..], " \t");
+            rest = std.mem.trimStart(u8, rest["include".len..], " \t");
             if (rest.len == 0 or (rest[0] != '<' and rest[0] != '"')) continue;
             const end = std.mem.indexOfScalarPos(u8, rest, 1, if (rest[0] == '<') '>' else '"') orelse continue;
-            try aliasSpelling(allocator, io, root, root_path, &index, std.fs.path.dirname(path), &include_dirs, rest[1..end]);
+            const local_dir = std.fs.path.dirname(path);
+            try aliasSpelling(allocator, io, root, root_path, &index, local_dir, &include_dirs, rest[1..end]);
         }
     }
+    // Static libraries embed linker directives as plain text, quoted or not.
     const lib_dirs = [_][]const u8{ "msvc/lib/x64", "winsdk/lib/um/x64", "winsdk/lib/ucrt/x64" };
     for (files.items) |path| {
         if (!std.ascii.endsWithIgnoreCase(path, ".lib")) continue;
@@ -247,7 +254,10 @@ fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
                 else
                     std.mem.indexOfAny(u8, rest, " \t\r\n\x00") orelse continue;
                 const name = rest[begin..end];
-                const lib = if (std.ascii.endsWithIgnoreCase(name, ".lib")) name else try std.fmt.allocPrint(allocator, "{s}.lib", .{name});
+                const lib = if (std.ascii.endsWithIgnoreCase(name, ".lib"))
+                    name
+                else
+                    try std.fmt.allocPrint(allocator, "{s}.lib", .{name});
                 try aliasSpelling(allocator, io, root, root_path, &index, null, &lib_dirs, lib);
                 pos += end + @intFromBool(quoted);
             }
@@ -255,6 +265,8 @@ fn windowsAliases(allocator: std.mem.Allocator, io: Io, root: Dir) !void {
     }
 }
 
+/// Link `spelling` to the file it names case-insensitively, in `local_dir` first (the including file's folder)
+/// and then in each of `search_dirs`. Does nothing when no file matches or the spelling already exists.
 fn aliasSpelling(
     allocator: std.mem.Allocator,
     io: Io,
@@ -271,17 +283,26 @@ fn aliasSpelling(
     if (name.len == 0 or std.fs.path.isAbsolute(name)) return;
     var components = std.mem.splitScalar(u8, name, '/');
     while (components.next()) |part| if (std.mem.eql(u8, part, "..")) return;
-    for (0..search_dirs.len + 1) |i| {
-        const dir = if (i == 0) local_dir orelse continue else search_dirs[i - 1];
+    const dirs = if (local_dir) |dir|
+        try std.mem.concat(allocator, []const u8, &.{ &.{dir}, search_dirs })
+    else
+        search_dirs;
+    for (dirs) |dir| {
         const alias = try std.fs.path.join(allocator, &.{ dir, name });
         const source = index.get(try std.ascii.allocLowerString(allocator, alias)) orelse continue;
-        if (root.access(io, alias, .{})) |_| return else |err| if (err != error.FileNotFound) return err;
+        if (try exists(io, root, alias)) return;
         const parent = std.fs.path.dirname(alias).?;
         try root.createDirPath(io, parent);
         const target = try std.fs.path.relative(allocator, root_path, null, parent, source);
         try root.symLink(io, target, alias, .{});
         return;
     }
+}
+
+/// Access check for `path` under `dir`. FileNotFound reads as false; other errors propagate.
+fn exists(io: Io, dir: Dir, path: []const u8) !bool {
+    dir.access(io, path, .{}) catch |err| return if (err == error.FileNotFound) false else err;
+    return true;
 }
 
 test "only compiler headers and x64 static libraries are extracted" {
@@ -298,6 +319,7 @@ test "SDK include and linker spellings resolve on case-sensitive filesystems" {
     defer tmp.cleanup();
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
+    const allocator = arena.allocator();
     try tmp.dir.createDirPath(io, "winsdk/include/shared");
     try tmp.dir.createDirPath(io, "winsdk/include/um");
     try tmp.dir.createDirPath(io, "msvc/lib/x64");
@@ -314,13 +336,14 @@ test "SDK include and linker spellings resolve on case-sensitive filesystems" {
     });
     try tmp.dir.writeFile(io, .{ .sub_path = "winsdk/lib/um/x64/advapi32.lib", .data = "advapi import" });
     try tmp.dir.writeFile(io, .{ .sub_path = "winsdk/lib/um/x64/kernel32.lib", .data = "kernel import" });
-    try windowsAliases(arena.allocator(), io, tmp.dir);
-    const driver = try tmp.dir.readFileAlloc(io, "winsdk/include/shared/DriverSpecs.h", arena.allocator(), .limited(100));
+    try windowsAliases(allocator, io, tmp.dir);
+    const driver = try tmp.dir.readFileAlloc(io, "winsdk/include/shared/DriverSpecs.h", allocator, .limited(100));
     try std.testing.expectEqualStrings("driver specs", driver);
-    const specs = try tmp.dir.readFileAlloc(io, "winsdk/include/shared/SpecStrings.h", arena.allocator(), .limited(100));
+    const specs = try tmp.dir.readFileAlloc(io, "winsdk/include/shared/SpecStrings.h", allocator, .limited(100));
     try std.testing.expectEqualStrings("spec strings", specs);
     try tmp.dir.access(io, "winsdk/include/um/windows.h", .{});
     try tmp.dir.access(io, "winsdk/lib/um/x64/Advapi32.lib", .{});
     try tmp.dir.access(io, "winsdk/lib/um/x64/Kernel32.lib", .{});
-    try windowsAliases(arena.allocator(), io, tmp.dir);
+    // A second run over existing aliases must succeed.
+    try windowsAliases(allocator, io, tmp.dir);
 }

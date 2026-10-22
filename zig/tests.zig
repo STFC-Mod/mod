@@ -20,14 +20,12 @@ pub const Libs = struct {
 pub fn add(build_ctx: *const Ctx, libs: Libs) void {
     const ctx = build_ctx.withOptimize(build_ctx.options.test_optimize orelse build_ctx.optimize);
     const b = ctx.b;
-    const steps: Steps = .{
-        .build = b.step("build-tests", "Compile the tests without running them"),
-        .il2cpp = b.step("test-il2cpp", "Build and run the IL2CPP boundary tests (native targets only)"),
-        .mod = b.step("test-mod", "Build and run the settings and shortcut tests (native targets only)"),
-        .sync = b.step("test-sync", "Run sync record and delivery regression tests without the game"),
-        .launcher = b.step("test-launcher", "Run launcher delta and archive tests (Linux/macOS targets)"),
-        .spud = b.step("test-spud", "Run the x64 trampoline relocation test (native x86_64 targets only)"),
-    };
+    const build_tests = b.step("build-tests", "Compile the tests without running them");
+    const test_il2cpp = b.step("test-il2cpp", "Build and run the IL2CPP boundary tests (native targets only)");
+    const test_mod = b.step("test-mod", "Build and run the settings and shortcut tests (native targets only)");
+    const test_sync = b.step("test-sync", "Run sync record and delivery regression tests without the game");
+    const test_launcher = b.step("test-launcher", "Run launcher delta and archive tests (Linux/macOS targets)");
+    const test_spud = b.step("test-spud", "Run the x64 trampoline relocation test (native x86_64 targets only)");
     const flags = ctx.cxxFlags("c++23", &.{});
     const mod_flags = ctx.cxxFlags("c++23", &.{"-Wno-deprecated-literal-operator"});
 
@@ -36,20 +34,24 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
         const module = ctx.createModule(true);
         module.addIncludePath(b.path("src/mod"));
         module.addCSourceFile(.{ .file = b.path("tests/action_queue.cc"), .flags = flags });
-        addFixture(ctx, steps.build, steps.mod, "action-queue-tests", module);
+        addFixture(ctx, build_tests, test_mod, "action-queue-tests", module);
     }
 
-    // IL2CPP bindings and GC handles against a fake runtime API.
-    inline for (.{ "bindings", "gc" }) |name| {
+    // IL2CPP bindings and GC handles against a fake runtime API defined in each test file.
+    {
         const module = ctx.createModule(true);
         libs.il2cpp.linkInto(module);
-        module.addCSourceFile(.{ .file = b.path("tests/il2cpp_" ++ name ++ ".cc"), .flags = flags });
         // The fake API must precede consumers so the linker does not pull in production API storage.
-        if (comptime std.mem.eql(u8, name, "bindings")) {
-            module.addIncludePath(b.path("src/libs/unity/include"));
-            module.addCSourceFile(.{ .file = b.path("src/libs/unity/src/input.cc"), .flags = flags });
-        }
-        addFixture(ctx, steps.build, steps.il2cpp, "il2cpp-" ++ name ++ "-tests", module);
+        module.addCSourceFile(.{ .file = b.path("tests/il2cpp_bindings.cc"), .flags = flags });
+        module.addIncludePath(b.path("src/libs/unity/include"));
+        module.addCSourceFile(.{ .file = b.path("src/libs/unity/src/input.cc"), .flags = flags });
+        addFixture(ctx, build_tests, test_il2cpp, "il2cpp-bindings-tests", module);
+    }
+    {
+        const module = ctx.createModule(true);
+        libs.il2cpp.linkInto(module);
+        module.addCSourceFile(.{ .file = b.path("tests/il2cpp_gc.cc"), .flags = flags });
+        addFixture(ctx, build_tests, test_il2cpp, "il2cpp-gc-tests", module);
     }
     {
         const module = ctx.createModule(true);
@@ -57,7 +59,7 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
         libs.il2cpp.linkInto(module);
         libs.spud.linkInto(module);
         module.addCSourceFile(.{ .file = b.path("tests/unity_tracker.cc"), .flags = flags });
-        addFixture(ctx, steps.build, steps.il2cpp, "unity-tracker-tests", module);
+        addFixture(ctx, build_tests, test_il2cpp, "unity-tracker-tests", module);
     }
 
     // Settings, shortcuts and reload. The fixture paths are defined on mod_logic.cc alone, so the shared settings
@@ -95,7 +97,7 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
             });
             module.linkFramework("Cocoa", .{});
         }
-        addFixture(ctx, steps.build, steps.mod, "mod-logic-tests", module);
+        addFixture(ctx, build_tests, test_mod, "mod-logic-tests", module);
     }
     {
         const module = settingsModule(ctx, libs);
@@ -113,7 +115,7 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
             module.addCSourceFile(.{ .file = b.path("src/mod/features/notification_audio_mac.mm"), .flags = flags });
             module.linkFramework("Cocoa", .{});
         }
-        addFixture(ctx, steps.build, steps.mod, "config-reload-tests", module);
+        addFixture(ctx, build_tests, test_mod, "config-reload-tests", module);
     }
 
     // Sync records and delivery state over the generated protobuf messages.
@@ -128,18 +130,18 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
             .files = &.{ "tests/sync_logic.cc", "src/mod/sync/records.cc", "src/mod/sync/state.cc" },
             .flags = mod_flags,
         });
-        addFixture(ctx, steps.build, steps.sync, "sync-logic-tests", module);
+        addFixture(ctx, build_tests, test_sync, "sync-logic-tests", module);
     }
 
     // Launcher deltas in C++, plus the Swift archive code when the host can run swiftc.
-    if (ctx.target.result.os.tag == .linux or ctx.isMacos()) {
+    if (ctx.isLinux() or ctx.isMacos()) {
         const module = ctx.createModule(true);
         deps.rsync(ctx).linkInto(module);
         module.addCSourceFiles(.{
             .files = &.{ "tests/launcher_rsync.cc", "src/launcher/macos/rsync.cc" },
             .flags = flags,
         });
-        addFixture(ctx, steps.build, steps.launcher, "launcher-rsync-tests", module);
+        addFixture(ctx, build_tests, test_launcher, "launcher-rsync-tests", module);
         if (builtin.os.tag == .macos and ctx.isMacos()) {
             const compile = b.addSystemCommand(&.{ "xcrun", "swiftc", "-parse-as-library", "-o" });
             const exe = compile.addOutputFileArg("launcher-archive-tests");
@@ -148,10 +150,10 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
             const run = std.Build.Step.Run.create(b, "launcher-archive-tests");
             run.addFileArg(exe);
             run.addDirectoryArg(b.path("tests/fixtures/launcher"));
-            steps.launcher.dependOn(&run.step);
+            test_launcher.dependOn(&run.step);
         }
     } else {
-        steps.launcher.dependOn(&b.addFail("The launcher rsync tests require a Linux or macOS target").step);
+        test_launcher.dependOn(&b.addFail("The launcher rsync tests require a Linux or macOS target").step);
     }
 
     // A prologue where two RIP-relative instructions expand ahead of a relative call, detoured and run. ARM64
@@ -160,7 +162,9 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
         const module = ctx.createModule(true);
         libs.spud.linkInto(module);
         module.addCSourceFile(.{ .file = b.path("tests/spud_relocation.cc"), .flags = flags });
-        addFixture(ctx, steps.build, steps.spud, "spud-relocation-tests", module);
+        addFixture(ctx, build_tests, test_spud, "spud-relocation-tests", module);
+    } else {
+        test_spud.dependOn(&b.addFail("The SPUD relocation test requires an x86_64 target").step);
     }
 }
 
@@ -174,20 +178,11 @@ pub fn addDependencySmoke(ctx: *const Ctx, libs: []const Lib) void {
     const exe = ctx.executable("dependency-smoke", module);
     const run = b.addRunArtifact(exe);
     if (b.args) |args| run.addArgs(args);
-    const run_step = b.step("test-deps", "Run protobuf, zlib and HTTPS backend checks; optionally pass a test URL and CA file");
-    run_step.dependOn(&run.step);
+    b.step("test-deps", "Run protobuf, zlib and HTTPS backend checks; optionally pass a test URL and CA file")
+        .dependOn(&run.step);
     const build_step = b.step("build-dependency-test", "Cross-compile the dependency smoke executable");
     build_step.dependOn(&b.addInstallArtifact(exe, .{}).step);
 }
-
-const Steps = struct {
-    build: *std.Build.Step,
-    il2cpp: *std.Build.Step,
-    mod: *std.Build.Step,
-    sync: *std.Build.Step,
-    launcher: *std.Build.Step,
-    spud: *std.Build.Step,
-};
 
 /// Mod headers, logging and TOML for the settings fixtures. il2cpp contributes headers only; settings code never
 /// calls into the runtime.

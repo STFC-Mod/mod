@@ -3,20 +3,23 @@ const std = @import("std");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const Options = @import("ctx.zig").Options;
+const macos_min = @import("ctx.zig").macos_min;
 const globFiles = @import("ctx.zig").globFiles;
+const hostTool = @import("ctx.zig").hostTool;
 const deps = @import("deps.zig");
 
 /// Runtime bindings: metadata lookup, typed calls, strings, GC handles and detours. Also exposes Unity's
 /// libil2cpp headers.
 pub fn il2cpp(ctx: *const Ctx, spud: Lib) Lib {
     const b = ctx.b;
-    const headers = Lib{
+    var lib: Lib = .{
+        .dependencies = ctx.libs(&.{spud}),
         .include_dirs = ctx.dirs(&.{ b.path("src/libs/il2cpp/include"), b.path("third_party/libil2cpp") }),
         // il2cpp/api.h asks the linker for GameAssembly.lib on Windows.
         .lib_dirs = if (ctx.isWindows()) ctx.dirs(&.{b.path("src/libs/il2cpp")}) else &.{},
     };
     const module = ctx.createModule(true);
-    headers.includeInto(module);
+    lib.includeInto(module);
     // hook.h builds on SPUD's detours.
     spud.includeInto(module);
     module.addCSourceFiles(.{
@@ -26,20 +29,16 @@ pub fn il2cpp(ctx: *const Ctx, spud: Lib) Lib {
     });
     const artifact = ctx.staticLib("il2cpp", module);
     b.step("il2cpp", "Build the IL2CPP integration static library").dependOn(&b.addInstallArtifact(artifact, .{}).step);
-    return .{
-        .artifact = artifact,
-        .include_dirs = headers.include_dirs,
-        .lib_dirs = headers.lib_dirs,
-        .dependencies = ctx.b.allocator.dupe(Lib, &.{spud}) catch @panic("OOM"),
-    };
+    lib.artifact = artifact;
+    return lib;
 }
 
 /// Unity engine bindings over il2cpp: core types, UI, input and instance tracking. Knows nothing about the game.
 pub fn unity(ctx: *const Ctx, runtime: Lib, spud: Lib) Lib {
     const b = ctx.b;
-    const include = ctx.dirs(&.{b.path("src/libs/unity/include")});
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{b.path("src/libs/unity/include")}) };
     const module = ctx.createModule(true);
-    for (include) |dir| module.addIncludePath(dir);
+    lib.includeInto(module);
     runtime.includeInto(module);
     spud.includeInto(module);
     module.addCSourceFiles(.{
@@ -49,7 +48,8 @@ pub fn unity(ctx: *const Ctx, runtime: Lib, spud: Lib) Lib {
     });
     const artifact = ctx.staticLib("unity", module);
     b.step("unity", "Build the Unity bindings static library").dependOn(&b.addInstallArtifact(artifact, .{}).step);
-    return .{ .artifact = artifact, .include_dirs = include };
+    lib.artifact = artifact;
+    return lib;
 }
 
 /// The `mods` static library and the binary the game loads: version.dll on Windows, the injected dylib and its
@@ -115,12 +115,11 @@ fn addModSources(ctx: *const Ctx, module: *std.Build.Module, flags: []const []co
     if (ctx.isMacos() and ctx.optimize == .ReleaseFast) {
         // Release builds on macOS spend most of their time parsing game headers. Batches of four features share
         // that work; the heavy sync units stay separate so they keep compiling in parallel.
-        const features = globFiles(b, root, "features", &.{".cc"}, &.{});
-        var start: usize = 0;
-        while (start < features.len) : (start += 4) {
-            const batch = features[start..@min(start + 4, features.len)];
-            ctx.addCxxBatch(module, b.fmt("features-{d}", .{start}), root, batch, flags);
-        }
+        //
+        // A batch is one translation unit, so names in the anonymous namespaces of its four files must not clash.
+        // Batches follow file order: adding, renaming or merging a feature regroups them. This configuration is
+        // the only one that catches a clash, so check feature changes with a macOS ReleaseFast build.
+        ctx.addCxxBatches(module, "features", root, globFiles(b, root, "features", &.{".cc"}, &.{}), flags);
         const rest = globFiles(b, root, "", &.{".cc"}, &.{"features/"});
         module.addCSourceFiles(.{ .root = root, .files = rest, .flags = flags });
     } else {
@@ -172,15 +171,18 @@ fn addBuildIdentity(ctx: *const Ctx, module: *std.Build.Module) []const []const 
 fn embedImages(ctx: *const Ctx, module: *std.Build.Module) void {
     const b = ctx.b;
     const images = b.addWriteFiles();
-    // Header, symbol, and source image.
+    // Header, symbol, and source image. Built-in images resolve from the repository, so the build runs from any
+    // directory; a custom -Dbg_image stays relative to where the user ran it.
+    const custom_bg = ctx.options.bg_image;
+    const bg_image = if (custom_bg.len == 0) b.pathFromRoot("assets/loadingscreen.png") else custom_bg;
     const table = [_][3][]const u8{
-        .{ "embedded_loading_image.h", "g_embeddedLoadingImage", ctx.options.bg_image },
-        .{ "embedded_logo_image.h", "g_embeddedLogoImage", "assets/stfc-mod-logo.png" },
-        .{ "embedded_cc_logo_image.h", "g_embeddedCCLogoImage", "assets/official-cc-logo.png" },
+        .{ "embedded_loading_image.h", "g_embeddedLoadingImage", bg_image },
+        .{ "embedded_logo_image.h", "g_embeddedLogoImage", b.pathFromRoot("assets/stfc-mod-logo.png") },
+        .{ "embedded_cc_logo_image.h", "g_embeddedCCLogoImage", b.pathFromRoot("assets/official-cc-logo.png") },
     };
+    const limit: std.Io.Limit = .limited(64 * 1024 * 1024);
     for (table) |entry| {
         const header, const symbol, const path = entry;
-        const limit: std.Io.Limit = .limited(64 * 1024 * 1024);
         const data = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, limit) catch |err|
             std.debug.panic("unable to read embedded image {s}: {t}", .{ path, err });
         var out: std.Io.Writer.Allocating = .init(b.allocator);
@@ -222,32 +224,26 @@ fn addLoader(ctx: *const Ctx, flags: []const []const u8) void {
 /// `macos-universal`: run this build for both macOS architectures and lipo the dylib and loader together.
 /// Each architecture is a child `zig build` because one graph resolves a single -Dtarget.
 pub fn addUniversal(b: *std.Build, optimize: std.builtin.OptimizeMode, options: Options) void {
-    const lipo = b.addExecutable(.{
-        .name = "lipo",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("zig/tools/lipo.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-        }),
-    });
+    const lipo = hostTool(b, "lipo", "zig/tools/lipo.zig", .ReleaseSafe);
     const step = b.step("macos-universal", "Build and merge ARM64 and Intel macOS dylib and loader");
     var prefixes: [2]std.Build.LazyPath = undefined;
     inline for (.{ "aarch64", "x86_64" }, 0..) |arch, i| {
         const child = b.addSystemCommand(&.{
             b.graph.zig_exe,
             "build",
-            "-Dtarget=" ++ arch ++ "-macos.14.6",
+            "-Dtarget=" ++ arch ++ "-macos." ++ macos_min,
             b.fmt("-Doptimize={s}", .{@tagName(optimize)}),
             b.fmt("-Dlto={}", .{options.lto orelse false}),
             b.fmt("-Dmoddbg={}", .{options.moddbg}),
             b.fmt("-Duse_original_bg={}", .{options.use_original_bg}),
-            b.fmt("-Dbg_image={s}", .{options.bg_image}),
         });
-        child.setCwd(b.path(""));
-        child.has_side_effects = true;
+        if (options.bg_image.len != 0) child.addArg(b.fmt("-Dbg_image={s}", .{options.bg_image}));
         if (options.macos_sdk) |sdk| child.addArg(b.fmt("-Dmacos-sdk={s}", .{sdk}));
         child.addArg("--prefix");
         prefixes[i] = child.addOutputDirectoryArg(arch);
+        child.setCwd(b.path(""));
+        // The child reads sources Zig cannot track from here, so it must run every time.
+        child.has_side_effects = true;
     }
     inline for (.{ "lib/libstfc-community-mod.dylib", "bin/stfc-community-mod-loader" }) |binary| {
         const merge = b.addRunArtifact(lipo);

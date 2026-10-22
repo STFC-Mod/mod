@@ -25,7 +25,7 @@
 		<string>MacOSX</string>
 	</array>
 	<key>LSMinimumSystemVersion</key>
-	<string>14.6</string>
+	<string>${MACOS_MIN}</string>
 	<key>CFBundleIconFile</key>
 	<string>launcher</string>
 </dict>

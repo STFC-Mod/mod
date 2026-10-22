@@ -2,7 +2,10 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Options = @import("ctx.zig").Options;
+const hostTool = @import("ctx.zig").hostTool;
+const hostTests = @import("ctx.zig").hostTests;
 
+/// One entry of zig/toolchains.zon.
 const Pin = struct {
     version: []const u8,
     url: []const u8,
@@ -24,22 +27,12 @@ pub const Sysroot = struct {
 
 /// Register `fetch-toolchains` and the fetcher's own tests. Both run on the build host.
 pub fn addFetchSteps(b: *std.Build) void {
-    const tool = b.addExecutable(.{
-        .name = "fetch-toolchain",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("zig/tools/fetch_toolchain.zig"),
-            .target = b.graph.host,
-            .optimize = .ReleaseSafe,
-        }),
-    });
-    const tool_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("zig/tools/fetch_toolchain.zig"),
-            .target = b.graph.host,
-        }),
-    });
-    b.step("test-toolchains", "Run toolchain archive selection tests").dependOn(&b.addRunArtifact(tool_tests).step);
+    const test_step = b.step("test-toolchains", "Run toolchain archive selection and Mach-O archive tests");
+    test_step.dependOn(hostTests(b, "zig/tools/fetch_toolchain.zig"));
+    // The Mach-O archive extractor repacks the launcher's native archives; its tests run with the fetcher's.
+    test_step.dependOn(hostTests(b, "zig/tools/extract_macho_archive.zig"));
 
+    const tool = hostTool(b, "fetch-toolchain", "zig/tools/fetch_toolchain.zig", .ReleaseSafe);
     const step = b.step("fetch-toolchains", "Download, verify and extract cross-compilation sysroots");
     const selected = b.option([]const u8, "toolchains", "Comma-separated sysroots: windows_msvc,macos_sdk") orelse
         "windows_msvc";
@@ -89,9 +82,9 @@ pub fn find(b: *std.Build, target: std.Build.ResolvedTarget, options: Options) S
             // Resolve the host SDK explicitly, rather than leaving it to Zig, so the other architecture's build
             // (x86_64 on arm64) finds frameworks too.
             if (builtin.os.tag == .macos) {
-                const sdk = std.zig.system.darwin.getSdk(b.allocator, b.graph.io, &target.result) orelse
-                    std.debug.panic("unable to locate the macOS SDK via xcrun; install the Xcode command line tools", .{});
-                return .{ .macos_sdk = sdk };
+                if (std.zig.system.darwin.getSdk(b.allocator, b.graph.io, &target.result)) |sdk|
+                    return .{ .macos_sdk = sdk };
+                std.debug.panic("unable to locate the macOS SDK via xcrun; install the Xcode command line tools", .{});
             }
             std.debug.panic(
                 "macOS SDK not found at {s}. Run `zig build fetch-toolchains` (set {s}) or pass -Dmacos-sdk=<path>.",
@@ -102,6 +95,7 @@ pub fn find(b: *std.Build, target: std.Build.ResolvedTarget, options: Options) S
     }
 }
 
+/// A Zig libc file for the extracted toolchain, so Zig takes the CRT and STL from it instead of searching the host.
 fn msvcLibcFile(b: *std.Build, root: []const u8) std.Build.LazyPath {
     const contents = b.fmt(
         \\include_dir={0s}/winsdk/include/ucrt

@@ -1,5 +1,6 @@
 //! Third-party C and C++ libraries other than protobuf, compiled from the pins in build.zig.zon.
-//! Source lists are explicit where upstream ships platform files or tools we must not compile.
+//! Source lists are explicit where upstream ships platform files or tools we must not compile. Each library
+//! compiles against the same include dirs and defines it hands its consumers, plus private ones.
 const std = @import("std");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
@@ -37,16 +38,15 @@ pub fn spdlog(ctx: *const Ctx) Lib {
 /// toml++ compiled once from zig/deps/tomlplusplus.cc. Consumers see only declarations.
 pub fn tomlplusplus(ctx: *const Ctx) Lib {
     const b = ctx.b;
-    const include = b.dependency("tomlplusplus", .{}).path("include");
-    const module = ctx.createModule(true);
-    module.addIncludePath(include);
-    module.addCMacro("TOML_HEADER_ONLY", "0");
-    module.addCSourceFile(.{ .file = b.path("zig/deps/tomlplusplus.cc"), .flags = ctx.cxxFlags("c++17", &.{}) });
-    return .{
-        .artifact = ctx.staticLib("tomlplusplus", module),
-        .include_dirs = ctx.dirs(&.{include}),
+    var lib: Lib = .{
+        .include_dirs = ctx.dirs(&.{b.dependency("tomlplusplus", .{}).path("include")}),
         .defines = &.{.{ "TOML_HEADER_ONLY", "0" }},
     };
+    const module = ctx.createModule(true);
+    lib.includeInto(module);
+    module.addCSourceFile(.{ .file = b.path("zig/deps/tomlplusplus.cc"), .flags = ctx.cxxFlags("c++17", &.{}) });
+    lib.artifact = ctx.staticLib("tomlplusplus", module);
+    return lib;
 }
 
 /// nlohmann/json, header-only.
@@ -66,32 +66,31 @@ pub fn zydis(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const core = b.dependency("zycore", .{}).path("");
     const src = b.dependency("zydis", .{}).path("");
+    var lib: Lib = .{
+        .include_dirs = ctx.dirs(&.{ core.path(b, "include"), src.path(b, "include") }),
+        .defines = &.{ .{ "ZYCORE_STATIC_BUILD", "1" }, .{ "ZYDIS_STATIC_BUILD", "1" } },
+    };
     const module = ctx.createModule(false);
-    module.addIncludePath(core.path(b, "include"));
-    module.addIncludePath(src.path(b, "include"));
+    lib.includeInto(module);
     module.addIncludePath(src.path(b, "src"));
-    module.addCMacro("ZYCORE_STATIC_BUILD", "1");
-    module.addCMacro("ZYDIS_STATIC_BUILD", "1");
     // Native fixtures on Linux: glibc hides Zycore's recursive mutex attribute under strict C11.
-    if (ctx.target.result.os.tag == .linux) module.addCMacro("_GNU_SOURCE", "1");
+    if (ctx.isLinux()) module.addCMacro("_GNU_SOURCE", "1");
     inline for (.{ core, src }) |root| module.addCSourceFiles(.{
         .root = root,
         .files = globFiles(b, root, "src", &.{".c"}, &.{}),
         .flags = ctx.cFlags(&.{"-std=c11"}),
     });
-    return .{
-        .artifact = ctx.staticLib("zydis", module),
-        .include_dirs = ctx.dirs(&.{ core.path(b, "include"), src.path(b, "include") }),
-        .defines = &.{ .{ "ZYCORE_STATIC_BUILD", "1" }, .{ "ZYDIS_STATIC_BUILD", "1" } },
-    };
+    lib.artifact = ctx.staticLib("zydis", module);
+    return lib;
 }
 
 /// Capstone's core and AArch64 decoder only, for SPUD's ARM64 relocator.
 pub fn capstone(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("capstone", .{}).path("");
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{src.path(b, "include")}) };
     const module = ctx.createModule(false);
-    module.addIncludePath(src.path(b, "include"));
+    lib.includeInto(module);
     module.addIncludePath(src);
     module.addCMacro("CAPSTONE_HAS_AARCH64", "1");
     module.addCMacro("CAPSTONE_USE_SYS_DYN_MEM", "1");
@@ -115,10 +114,8 @@ pub fn capstone(ctx: *const Ctx) Lib {
         },
         .flags = ctx.cFlags(&.{"-std=c11"}),
     });
-    return .{
-        .artifact = ctx.staticLib("capstone", module),
-        .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
-    };
+    lib.artifact = ctx.staticLib("capstone", module);
+    return lib;
 }
 
 /// The vendored SPUD detour library. third_party/spud is SPUD's unmodified include/, src/ and LICENSE; the pinned
@@ -126,12 +123,17 @@ pub fn capstone(ctx: *const Ctx) Lib {
 pub fn spud(ctx: *const Ctx, zy: Lib, cs: Lib) Lib {
     const b = ctx.b;
     const src = b.path("third_party/spud");
+    // Only the ARM64 relocator uses Capstone. Like upstream, x86-64 builds leave out Capstone and the
+    // SPUD_AARCH64_SUPPORT relocator.
     const aarch64 = ctx.isAarch64();
+    var lib: Lib = .{
+        .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
+        .dependencies = ctx.libs(if (aarch64) &.{ zy, cs } else &.{zy}),
+    };
     const module = ctx.createModule(true);
-    module.addIncludePath(src.path(b, "include"));
+    lib.includeInto(module);
     module.addIncludePath(src.path(b, "src"));
     zy.includeInto(module);
-    // Only the ARM64 relocator uses Capstone. Like upstream, x86-64 builds leave both out.
     if (aarch64) {
         module.addCMacro("SPUD_AARCH64_SUPPORT", "1");
         cs.includeInto(module);
@@ -147,11 +149,8 @@ pub fn spud(ctx: *const Ctx, zy: Lib, cs: Lib) Lib {
         .files = globFiles(b, src, "src", &.{".cc"}, skip),
         .flags = ctx.cxxFlags("c++23", &.{}),
     });
-    return .{
-        .artifact = ctx.staticLib("spud", module),
-        .dependencies = b.allocator.dupe(Lib, if (aarch64) &.{ zy, cs } else &.{zy}) catch @panic("OOM"),
-        .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
-    };
+    lib.artifact = ctx.staticLib("spud", module);
+    return lib;
 }
 
 // --- Networking ------------------------------------------------------------------------------------------------
@@ -160,8 +159,9 @@ pub fn spud(ctx: *const Ctx, zy: Lib, cs: Lib) Lib {
 pub fn zlib(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("zlib", .{}).path("");
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{src}) };
     const module = ctx.createModule(false);
-    module.addIncludePath(src);
+    lib.includeInto(module);
     if (!ctx.isWindows()) module.addCMacro("HAVE_UNISTD_H", "1");
     module.addCSourceFiles(.{
         .root = src,
@@ -184,7 +184,8 @@ pub fn zlib(ctx: *const Ctx) Lib {
         },
         .flags = ctx.cFlags(&.{"-std=c11"}),
     });
-    return .{ .artifact = ctx.staticLib("zlib", module), .include_dirs = ctx.dirs(&.{src}) };
+    lib.artifact = ctx.staticLib("zlib", module);
+    return lib;
 }
 
 /// libcurl. macOS links Apple's system copy. Windows compiles the pin with Schannel TLS and the unused protocols
@@ -217,7 +218,7 @@ pub fn curl(ctx: *const Ctx, z: Lib) ?Lib {
     });
     return .{
         .artifact = ctx.staticLib("curl", module),
-        .dependencies = b.allocator.dupe(Lib, &.{z}) catch @panic("OOM"),
+        .dependencies = ctx.libs(&.{z}),
         .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
         .defines = &.{.{ "CURL_STATICLIB", "1" }},
     };
@@ -237,16 +238,13 @@ pub fn cpr(ctx: *const Ctx, curl_lib: Lib) Lib {
         \\#define CPR_VERSION_NUM 0x010e02
         \\
     );
-    const generated = version.dirname().dirname();
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{ src.path(b, "include"), version.dirname().dirname() }) };
     const module = ctx.createModule(true);
-    module.addIncludePath(src.path(b, "include"));
-    module.addIncludePath(generated);
+    lib.includeInto(module);
     curl_lib.includeInto(module);
     ctx.addCxxBatch(module, "cpr", src, globFiles(b, src, "cpr", &.{".cpp"}, &.{}), ctx.cxxFlags("c++17", &.{}));
-    return .{
-        .artifact = ctx.staticLib("cpr", module),
-        .include_dirs = ctx.dirs(&.{ src.path(b, "include"), generated }),
-    };
+    lib.artifact = ctx.staticLib("cpr", module);
+    return lib;
 }
 
 // --- Launcher --------------------------------------------------------------------------------------------------
@@ -256,9 +254,10 @@ pub fn rsync(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("librsync", .{}).path("");
     const config = b.addWriteFiles().addCopyFile(b.path("zig/deps/librsync/macos.h"), "config.h");
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{src.path(b, "src")}) };
     const module = ctx.createModule(false);
     module.addIncludePath(config.dirname());
-    module.addIncludePath(src.path(b, "src"));
+    lib.includeInto(module);
     module.addIncludePath(src.path(b, "src/blake2"));
     module.addCSourceFiles(.{
         .root = src,
@@ -292,7 +291,8 @@ pub fn rsync(ctx: *const Ctx) Lib {
             "src/whole.c",
             "src/blake2/blake2b-ref.c",
         },
-        .flags = &.{"-std=c99"},
+        .flags = ctx.cFlags(&.{"-std=c99"}),
     });
-    return .{ .artifact = ctx.staticLib("rsync", module), .include_dirs = ctx.dirs(&.{src.path(b, "src")}) };
+    lib.artifact = ctx.staticLib("rsync", module);
+    return lib;
 }
