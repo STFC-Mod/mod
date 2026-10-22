@@ -21,12 +21,15 @@ const std::string& DefaultConfig();
 
 // The -ccm profile name ("alt" for -ccm alt.toml), or empty without -ccm.
 const std::string& Profile();
-bool               Debug();
-bool               Trace();
+// -debug and -trace set the starting log level; _MODDBG builds start at debug.
+bool Debug();
+bool Trace();
 
 // Full path of a mod file. On macOS this is ~/Library/Preferences/com.stfcmod.startrekpatch unless -ccm points
 // elsewhere; on Windows it is the game's working directory.
 std::filesystem::path Path(std::string_view name, bool create_dir = false);
+// A path from UTF-8 text. std::filesystem::path(std::string) reads the ANSI code page on Windows instead.
+std::filesystem::path FromUtf8(std::string_view text);
 
 // Moves settings left behind by older releases. Logs, so call after the logger is up.
 void MigrateLegacyFiles();

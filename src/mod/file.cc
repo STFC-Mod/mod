@@ -1,3 +1,6 @@
+// Owns the mod's file names and their directory, the command-line flags that change them, and moving files left by
+// older releases.
+
 #include "file.h"
 
 #include <spdlog/spdlog.h>
@@ -22,7 +25,7 @@ constexpr std::string_view kDefaultConfig = "community_patch_settings.toml";
 constexpr std::string_view kDefaultVars   = "community_patch_runtime.vars";
 constexpr std::string_view kDefaultLog    = "community_patch.log";
 
-// Names used by older releases.
+// Names used by older releases; "path" is their typo.
 constexpr std::string_view kLegacyVars   = "community_path_runtime.vars";
 constexpr std::string_view kLegacyParsed = "community_patch_settings_parsed.toml";
 
@@ -36,16 +39,13 @@ bool debug = false;
 #endif
 bool trace = false;
 
-// std::filesystem::path(std::string) uses the ANSI code page on Windows; the mod's strings are UTF-8.
-std::filesystem::path FromUtf8(std::string_view text)
-{ return std::u8string(text.begin(), text.end()); }
-
 std::string ToUtf8(const std::filesystem::path& path)
 {
   const auto text = path.u8string();
   return {text.begin(), text.end()};
 }
 
+// The process's arguments as UTF-8, program name first.
 std::vector<std::string> Arguments()
 {
   std::vector<std::string> args;
@@ -69,14 +69,14 @@ std::vector<std::string> Arguments()
   return args;
 }
 
-std::filesystem::path Directory(bool legacy = false)
+// Where the mod's files live: beside the -ccm profile, the macOS preferences folder, or the working directory.
+std::filesystem::path Directory([[maybe_unused]] bool legacy = false)
 {
   if (!profile_path.empty())
     return profile_path.parent_path();
 #if __APPLE__
   return MacLibraryDirectory() / "Preferences" / (legacy ? "com.tashcan.startrekpatch" : "com.stfcmod.startrekpatch");
 #else
-  (void)legacy;
   return {};
 #endif
 }
@@ -97,7 +97,7 @@ void MigrateMacPreferences()
   if (!fs::is_regular_file(old_path))
     return;
 
-  spdlog::info("mac config migration: moving {} to {}", ToUtf8(old_dir), ToUtf8(new_dir));
+  spdlog::info("moving settings from {} to {}", ToUtf8(old_dir), ToUtf8(new_dir));
   try {
     fs::rename(old_dir, new_dir);
     fs::create_directories(old_dir);
@@ -109,7 +109,7 @@ void MigrateMacPreferences()
     info << "A symlink has been placed for your convenience, but it is generally recommended, that you use the new "
             "path and delete this directory going forward.";
   } catch (const std::exception& error) {
-    spdlog::warn("mac config migration failed: {}", error.what());
+    spdlog::warn("could not move settings from {}: {}", ToUtf8(old_dir), error.what());
   }
 #endif
 }
@@ -177,6 +177,9 @@ std::filesystem::path Path(std::string_view name, bool create_dir)
   return dir / FromUtf8(name).filename();
 }
 
+std::filesystem::path FromUtf8(std::string_view text)
+{ return std::u8string(text.begin(), text.end()); }
+
 void MigrateLegacyFiles()
 {
   MigrateMacPreferences();
@@ -184,6 +187,6 @@ void MigrateLegacyFiles()
   std::error_code ignored;
   std::filesystem::remove(Path(kLegacyVars), ignored);
   if (std::filesystem::remove(Path(kLegacyParsed), ignored))
-    spdlog::info("Removed {} (old parsed file)", kLegacyParsed);
+    spdlog::info("removed {}, which older releases wrote", kLegacyParsed);
 }
 } // namespace File

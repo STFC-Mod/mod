@@ -11,9 +11,16 @@ const globFiles = @import("ctx.zig").globFiles;
 pub fn spdlog(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("spdlog", .{}).path("");
+    var lib: Lib = .{
+        .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
+        // Wide file names on Windows, so the log's UTF-8 path is not read in the ANSI code page.
+        .defines = if (ctx.isWindows())
+            &.{ .{ "SPDLOG_COMPILED_LIB", "1" }, .{ "SPDLOG_WCHAR_FILENAMES", "1" } }
+        else
+            &.{.{ "SPDLOG_COMPILED_LIB", "1" }},
+    };
     const module = ctx.createModule(true);
-    module.addIncludePath(src.path(b, "include"));
-    module.addCMacro("SPDLOG_COMPILED_LIB", "1");
+    lib.includeInto(module);
     ctx.addCxxBatch(module, "spdlog", src, &.{
         "src/spdlog.cpp",
         "src/stdout_sinks.cpp",
@@ -23,11 +30,8 @@ pub fn spdlog(ctx: *const Ctx) Lib {
         "src/cfg.cpp",
         "src/bundled_fmtlib_format.cpp",
     }, ctx.cxxFlags("c++20", &.{}));
-    return .{
-        .artifact = ctx.staticLib("spdlog", module),
-        .include_dirs = ctx.dirs(&.{src.path(b, "include")}),
-        .defines = &.{.{ "SPDLOG_COMPILED_LIB", "1" }},
-    };
+    lib.artifact = ctx.staticLib("spdlog", module);
+    return lib;
 }
 
 /// toml++ compiled once from zig/deps/tomlplusplus.cc. Consumers see only declarations.
