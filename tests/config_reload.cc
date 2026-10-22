@@ -7,6 +7,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
+#include <format>
 #include <fstream>
 #include <iostream>
 #include <latch>
@@ -98,8 +99,8 @@ int main()
     bool reloads_ok = true;
     for (int i = 0; i < 20; ++i) {
       std::weak_ptr<const Config::Sync> previous = Config::Sync::Get();
-      Write("[patches]\nuiscalehooks = true\n[shortcuts]\nquit = \"F2\"\n[sync]\nresolver_cache_ttl = "
-            + std::to_string(200 + i));
+      Write(std::format("[patches]\nuiscalehooks = true\n[shortcuts]\nquit = \"F2\"\n[sync]\nresolver_cache_ttl = {}",
+                        200 + i));
       reloads_ok &= Config::Reload();
       reloads_ok &= Config::Sync::Get()->resolver_cache_ttl == 200 + i;
       if (i != 0)

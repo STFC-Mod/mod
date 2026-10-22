@@ -1,6 +1,7 @@
 // Settings parsing and shortcut matching, run against production code with Unity input replaced by a fake.
 #include "config.h"
 #include "features/chat_startup.h"
+#include "features/notification_audio.h"
 #include "features/ship_shortcut_hint.h"
 #include "features/toast_text.h"
 #include "shortcuts.h"
@@ -295,8 +296,11 @@ void NotificationAudio()
       {NotificationSound::kPing, "ping", 8422},        {NotificationSound::kRepair, "repair", 27912},
   };
   for (const auto& fixture : fixtures) {
-    Check(NotificationSoundName(fixture.sound) == fixture.name
-              && ParseNotificationSound(AsciiStrToUpper(fixture.name)) == fixture.sound,
+    toml::table effective;
+    const auto  config =
+        Config::Parse(toml::parse(std::string("[audio]\nalert_victory = \"") + AsciiStrToUpper(fixture.name) + "\""),
+                      effective, false);
+    Check(NotificationSoundName(fixture.sound) == fixture.name && config->audio.alert_victory == fixture.sound,
           "cue names round-trip");
     const auto data = NotificationSoundBytes(fixture.sound);
     Check(data.size() == fixture.bytes, "cue length matches the independent pre-refactor fixture");
@@ -314,6 +318,7 @@ void NotificationAudio()
     Check(word(24) == 44100 && word(28) == 88200 && data[20] == 1 && data[22] == 1 && data[34] == 16,
           "cue data is 44.1kHz mono 16-bit PCM");
   }
+  // Settings parsing trims and lower-cases, so " none " is a valid name there.
   for (const auto& [name, expected] :
        std::initializer_list<std::pair<std::string_view, NotificationSound>>{{"off", NotificationSound::kNone},
                                                                              {"silent", NotificationSound::kNone},
@@ -322,9 +327,13 @@ void NotificationAudio()
                                                                              {"attack", NotificationSound::kAlarm},
                                                                              {"arrive", NotificationSound::kArrival},
                                                                              {"quiet", NotificationSound::kSoft},
-                                                                             {"repaired", NotificationSound::kRepair}})
-    Check(ParseNotificationSound(name) == expected, "legacy cue aliases remain valid");
-  Check(!ParseNotificationSound("unknown") && !ParseNotificationSound(" none "), "unknown cue names are rejected");
+                                                                             {"repaired", NotificationSound::kRepair},
+                                                                             {"unknown", NotificationSound::kNone}}) {
+    toml::table effective;
+    const auto config = Config::Parse(toml::parse(std::string("[audio]\nalert_defeat = \"") + std::string(name) + "\""),
+                                      effective, false);
+    Check(config->audio.alert_defeat == expected, "legacy cue aliases remain valid, unknown names fall back to none");
+  }
   Check(NotificationSoundBytes(NotificationSound::kCount).empty()
             && NotificationSoundBytes(static_cast<NotificationSound>(255)).empty(),
         "invalid cues have no WAV data");

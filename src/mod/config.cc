@@ -1,9 +1,11 @@
+// Owns reading the settings file into Config: defaults, validation, renamed and retired keys, the runtime vars
+// file, and reloading when the file changes.
+
 #include "config.h"
 
 #include "file.h"
 #include "shortcuts.h"
 #include "text.h"
-#include "version.h"
 
 #include "game/ui.h"
 
@@ -15,16 +17,24 @@
 #include <chrono>
 #include <cmath>
 #include <filesystem>
+#include <format>
 #include <fstream>
-#include <iostream>
 #include <optional>
 #include <ranges>
-#include <tuple>
+#include <sstream>
+#include <utility>
 
 namespace
 {
+// --- Catalogs ---
+
+template <typename E> struct Choice {
+  std::string_view name;
+  E                value;
+};
+
 // Names of ToastState values as written in disabled_banner_types and notify_banner_types.
-constexpr std::pair<std::string_view, ToastState> kBannerTypes[] = {
+constexpr Choice<ToastState> kBannerTypes[] = {
     {"Standard", ToastState::Standard},
     {"FactionWarning", ToastState::FactionWarning},
     {"FactionLevelUp", ToastState::FactionLevelUp},
@@ -66,12 +76,8 @@ constexpr std::pair<std::string_view, ToastState> kBannerTypes[] = {
     {"SurgeTimeLeft", ToastState::SurgeTimeLeft},
 };
 
-template <typename E> struct Choice {
-  std::string_view name;
-  E                value;
-};
-
-// The first name listed for a value is the one written back; later ones are accepted synonyms.
+// For the enum settings, the first name listed for a value is the one written back; later ones are accepted
+// synonyms. The empty name keeps a blank setting at the default without a warning.
 constexpr Choice<MissionHudVisibility> kHudVisibility[] = {
     {"auto", MissionHudVisibility::kAuto},
     {"always", MissionHudVisibility::kAlways},
@@ -94,95 +100,148 @@ constexpr Choice<FleetLabelDetail> kFleetLabelDetail[] = {
     {"", FleetLabelDetail::kNative},
 };
 
-std::string MaskToken(const std::string& token)
+// In NotificationSound order, so the canonical names come first.
+constexpr Choice<NotificationSound> kNotificationSounds[] = {
+    {"none", NotificationSound::kNone},       {"default", NotificationSound::kDefault},
+    {"info", NotificationSound::kInfo},       {"success", NotificationSound::kSuccess},
+    {"warning", NotificationSound::kWarning}, {"alarm", NotificationSound::kAlarm},
+    {"arrival", NotificationSound::kArrival}, {"soft", NotificationSound::kSoft},
+    {"ping", NotificationSound::kPing},       {"repair", NotificationSound::kRepair},
+    {"off", NotificationSound::kNone},        {"silent", NotificationSound::kNone},
+    {"victory", NotificationSound::kSuccess}, {"warn", NotificationSound::kWarning},
+    {"attack", NotificationSound::kAlarm},    {"arrive", NotificationSound::kArrival},
+    {"quiet", NotificationSound::kSoft},      {"repaired", NotificationSound::kRepair},
+};
+
+constexpr std::string_view kKnownFactions[] = {"federation", "klingon", "romulan"};
+
+// --- Reading ---
+
+// The text of a setting as written, for messages about values that were rejected.
+std::string Raw(toml::node_view<const toml::node> node)
 {
-  if (token.size() <= 21)
-    return token;
-  auto masked = token;
-  for (size_t i = 9; i < token.size() - 12; ++i)
-    if (masked[i] != '-')
-      masked[i] = '*';
-  return masked;
+  if (auto text = node.value<std::string>())
+    return *text;
+  std::ostringstream out;
+  out << node;
+  return out.str();
 }
 
-// Reads settings from the user's file and records every effective value in `parsed`, which is written out as the
-// runtime vars file so users can see what the mod actually used.
+// Tokens are shown with their first 9 and last 12 characters, enough to tell two apart in a log.
+std::string MaskToken(std::string token)
+{
+  if (token.size() > 21)
+    std::ranges::replace_if(token.begin() + 9, token.end() - 12, [](char c) { return c != '-'; }, '*');
+  return token;
+}
+
+// Reads settings from the user's file and records every value used in `effective`, which is written out as the
+// runtime vars file so users can see what the mod actually used. A missing or rejected value falls back to the
+// default, which is the member's current value; every rejection logs one warning.
 class Reader
 {
 public:
-  Reader(const toml::table& config, toml::table& parsed, bool log)
-      : config_(config)
-      , parsed_(parsed)
+  Reader(const toml::table& file, toml::table& effective, bool log)
+      : file_(file)
+      , effective_(effective)
       , log_(log)
   {
   }
 
-  const toml::table& Config() const
-  { return config_; }
+  // The value as written, empty when the file does not set it.
+  toml::node_view<const toml::node> Node(std::string_view section, std::string_view key) const
+  { return file_[section][key]; }
 
-  toml::table& Section(std::string_view name)
-  { return *parsed_.emplace<toml::table>(name).first->second.as_table(); }
+  // The section of the vars file, created on first use.
+  toml::table& EffectiveSection(std::string_view section)
+  { return *effective_.emplace<toml::table>(section).first->second.as_table(); }
 
   // The configured value converted to T, or `fallback` when missing or of the wrong type. TOML integers read fine
   // into float settings; fractions into int settings do not.
   template <typename T> T Get(std::string_view section, std::string_view key, T fallback)
   {
-    T    value = fallback;
-    auto node  = config_[section][key];
-    if (auto read = node.template value<T>())
-      value = *read;
-    else if (node)
-      spdlog::warn("invalid config value {}.{}; using {}", section, key, fallback);
+    auto value = Convert(section, key, fallback);
     Record(section, key, value);
     return value;
   }
 
-  // Reads `key` into `value`, whose current value (the member's initializer) is the default.
   template <typename T> void Read(std::string_view section, std::string_view key, T& value)
   { value = Get(section, key, value); }
 
-  // A setting that was renamed: `key`, or `old_key` when only the old name is set. The vars file records `key`.
-  template <typename T>
-  void ReadRenamed(std::string_view section, std::string_view key, std::string_view old_key, T& value)
+  // Read, keeping the default when `valid` rejects the configured value.
+  template <typename T, typename Valid>
+  void ReadValid(std::string_view section, std::string_view key, T& value, Valid valid)
   {
-    if (config_[section][key] || !config_[section][old_key])
-      return Read(section, key, value);
-    if (auto read = config_[section][old_key].template value<T>())
-      value = *read;
-    else
-      spdlog::warn("invalid config value {}.{}; using {}", section, old_key, value);
+    const auto fallback = value;
+    Read(section, key, value);
+    if (valid(value))
+      return;
+    Invalid(section, key, value, fallback);
+    value = fallback;
     Record(section, key, value);
   }
 
-  // A case-insensitive choice from a fixed list of names, read into `value`, whose current value is the default.
+  // A renamed setting: `key`, or `old_key` when only the old name is set. The vars file records `key`.
+  template <typename T>
+  void ReadRenamed(std::string_view section, std::string_view key, std::string_view old_key, T& value)
+  {
+    if (Node(section, key) || !Node(section, old_key))
+      return Read(section, key, value);
+    spdlog::warn("deprecated config value {}.{}; use {}.{}", section, old_key, section, key);
+    value = Convert(section, old_key, value);
+    Record(section, key, value);
+  }
+
+  // A case-insensitive choice from `choices`. The vars file records the canonical name.
   template <typename E, size_t N>
   void Choose(std::string_view section, std::string_view key, E& value, const Choice<E> (&choices)[N])
   {
-    const auto fallback   = Name(value, choices);
-    const auto raw        = Get<std::string>(section, key, std::string(fallback));
-    const auto normalized = AsciiStrToLower(StripAsciiWhitespace(raw));
-    const auto found      = std::ranges::find(choices, normalized, &Choice<E>::name);
+    const auto fallback = CanonicalName(value, choices);
+    const auto raw      = Get<std::string>(section, key, std::string(fallback));
+    const auto found    = std::ranges::find(choices, AsciiStrToLower(StripAsciiWhitespace(raw)), &Choice<E>::name);
     if (found == std::end(choices))
-      spdlog::warn("invalid config value {}.{}: '{}'; using {}", section, key, raw, fallback);
+      Invalid(section, key, raw, fallback);
     else
       value = found->value;
-    Record(section, key, std::string(Name(value, choices)));
+    Record(section, key, std::string(CanonicalName(value, choices)));
   }
 
+  // A setting that no longer exists, at a dotted path. Says what replaced it when the file still sets it.
+  void Retired(std::string_view path, std::string_view replacement)
+  {
+    if (file_.at_path(path))
+      spdlog::warn("retired config value {}; {}", path, replacement);
+  }
+
+  // Sets the value the vars file shows. A later Record of the same key replaces it.
   template <typename T> void Record(std::string_view section, std::string_view key, const T& value)
   {
-    Section(section).insert_or_assign(key, value);
+    EffectiveSection(section).insert_or_assign(key, value);
     if (log_)
-      spdlog::debug("config value {}.{} value: {}", section, key, value);
+      spdlog::debug("config {}.{} = {}", section, key, value);
   }
 
 private:
-  // The canonical name: the first one listed for the value.
-  template <typename E, size_t N> static std::string_view Name(E value, const Choice<E> (&choices)[N])
+  // The value converted to T, or `fallback` when missing or, after a warning, of the wrong type.
+  template <typename T> T Convert(std::string_view section, std::string_view key, const T& fallback) const
+  {
+    const auto node = Node(section, key);
+    if (auto read = node.template value<T>())
+      return *read;
+    if (node)
+      Invalid(section, key, Raw(node), fallback);
+    return fallback;
+  }
+
+  template <typename R, typename F>
+  static void Invalid(std::string_view section, std::string_view key, const R& raw, const F& fallback)
+  { spdlog::warn("invalid config value {}.{}: '{}'; using {}", section, key, raw, fallback); }
+
+  template <typename E, size_t N> static std::string_view CanonicalName(E value, const Choice<E> (&choices)[N])
   { return std::ranges::find(choices, value, &Choice<E>::value)->name; }
 
-  const toml::table& config_;
-  toml::table&       parsed_;
+  const toml::table& file_;
+  toml::table&       effective_;
   bool               log_;
 };
 
@@ -190,54 +249,53 @@ private:
 ShipFilter ReadShipFilter(Reader& reader, std::string_view key)
 {
   const auto value = reader.Get<std::string>("ui", key, "");
+  if (StripAsciiWhitespace(value) == "*")
+    return {.all = true};
   ShipFilter filter;
-  filter.all = StripAsciiWhitespace(value) == "*";
-  if (!filter.all)
-    for (const auto& token : StrSplit(value, ','))
-      if (auto words = ShipNameWords(token); !words.empty())
-        filter.names.push_back(std::move(words));
+  for (const auto& token : StrSplit(value, ','))
+    if (auto words = ShipNameWords(token); !words.empty())
+      filter.names.push_back(std::move(words));
   return filter;
 }
 
+// A comma list of kKnownFactions, or "none", which wins over the others. Blank means all of them.
 std::vector<std::string> ReadFactions(Reader& reader)
 {
-  static constexpr std::string_view kKnownFactions[] = {"federation", "klingon", "romulan"};
+  const auto all   = kKnownFactions | std::views::join_with(',') | std::ranges::to<std::string>();
+  auto       value = reader.Get<std::string>("ui", "daily_bulk_claim_factions", all);
+  if (StripAsciiWhitespace(value).empty()) {
+    value = all;
+    // Replaces the blank that Get recorded, without a second debug line.
+    reader.EffectiveSection("ui").insert_or_assign("daily_bulk_claim_factions", value);
+  }
 
   std::vector<std::string> factions;
-  auto value = reader.Get<std::string>("ui", "daily_bulk_claim_factions", "federation,klingon,romulan");
-  if (StripAsciiWhitespace(value).empty()) {
-    value = "federation,klingon,romulan";
-    reader.Section("ui").insert_or_assign("daily_bulk_claim_factions", value);
-  }
-  bool none = false;
+  bool                     none = false;
   for (const auto& token : StrSplit(value, ',')) {
     auto faction = AsciiStrToLower(token);
-    if (faction == "none") {
+    if (faction == "none")
       none = true;
-      continue;
-    }
-    if (std::ranges::find(kKnownFactions, faction) == std::end(kKnownFactions)) {
-      spdlog::warn("Unrecognised faction '{}' in daily_bulk_claim_factions; expected one of: federation, klingon, "
-                   "romulan, or none by itself. Ignoring.",
-                   token);
-    } else if (std::ranges::find(factions, faction) == factions.end()) {
+    else if (!std::ranges::contains(kKnownFactions, faction))
+      spdlog::warn("invalid config value ui.daily_bulk_claim_factions: '{}'; ignoring it (expected {} or none)", token,
+                   all);
+    else if (!std::ranges::contains(factions, faction))
       factions.push_back(std::move(faction));
-    }
   }
-  if (none) {
-    if (!factions.empty())
-      spdlog::warn("daily_bulk_claim_factions: none overrides named factions; use none by itself.");
-    factions = {"none"};
-  }
-  return factions;
+  if (!none)
+    return factions;
+  if (!factions.empty())
+    spdlog::warn("invalid config value ui.daily_bulk_claim_factions: '{}'; using none, which overrides the others",
+                 value);
+  return {"none"};
 }
 
-// A comma list of banner names, or "All". The vars file gets the names that matched.
+// A case-insensitive comma list of kBannerTypes names, or "All". The vars file gets the names that matched, in
+// catalog order.
 std::vector<int> ReadBannerTypes(Reader& reader, std::string_view key)
 {
-  std::vector<std::string> wanted;
-  for (const auto& token : StrSplit(reader.Get<std::string>("ui", key, ""), ','))
-    wanted.push_back(AsciiStrToUpper(token));
+  auto wanted = StrSplit(reader.Get<std::string>("ui", key, ""), ',') | std::views::transform(AsciiStrToUpper)
+                | std::ranges::to<std::vector>();
+  // With "All", names after it are still reported as unknown.
   const bool all = std::erase(wanted, "ALL") > 0;
 
   std::vector<int> types;
@@ -245,22 +303,24 @@ std::vector<int> ReadBannerTypes(Reader& reader, std::string_view key)
   for (const auto& [name, state] : kBannerTypes) {
     if (!all && std::erase(wanted, AsciiStrToUpper(name)) == 0)
       continue;
-    types.push_back(static_cast<int>(state));
+    types.push_back(std::to_underlying(state));
     names += names.empty() ? "" : ", ";
     names += name;
   }
   for (const auto& unknown : wanted)
-    spdlog::warn("Unknown banner type '{}' in ui.{}", unknown, key);
+    spdlog::warn("invalid config value ui.{}: '{}'; ignoring it", key, unknown);
 
   reader.Record("ui", key, names);
   return types;
 }
 
+// [sync.targets.<name>] tables. Each target takes its proxy, verify_ssl and categories from [sync] unless it sets
+// its own. Unlike [sync], a target's renamed category keys are read without a deprecation warning.
 void ReadSyncTargets(Reader& reader, std::map<std::string, SyncTargetConfig>& sync_targets, const SyncConfig& defaults)
 {
   // The built-in targets are listed in the vars file as examples; they only sync once given a token.
-  auto& parsed_targets =
-      *reader.Section("sync")
+  auto& effective_targets =
+      *reader.EffectiveSection("sync")
            .insert_or_assign(
                "targets",
                toml::table{
@@ -270,7 +330,7 @@ void ReadSyncTargets(Reader& reader, std::map<std::string, SyncTargetConfig>& sy
                })
            .first->second.as_table();
 
-  const auto* targets = reader.Config()["sync"]["targets"].as_table();
+  const auto* targets = reader.Node("sync", "targets").as_table();
   if (!targets)
     return;
 
@@ -280,83 +340,100 @@ void ReadSyncTargets(Reader& reader, std::map<std::string, SyncTargetConfig>& sy
       continue;
 
     const auto section = "sync.targets." + std::string(name.str());
-    if (!values->contains("url") || !values->contains("token")) {
-      spdlog::warn("Skipping invalid target [{}]. Missing url or token.", section);
+    const auto url     = (*values)["url"].value<std::string>();
+    const auto token   = (*values)["token"].value<std::string>();
+    if (!url || !token) {
+      spdlog::warn("invalid config value {}: url and token are required; skipping the target", section);
       continue;
     }
-    const auto url   = (*values)["url"].value<std::string>();
-    const auto token = (*values)["token"].value<std::string>();
-    if (!url || !token || url->empty() || token->empty())
+    // Blank values are the example file's placeholders for a target the user has not set up.
+    if (url->empty() || token->empty())
       continue;
 
-    SyncTargetConfig target;
-    target.url        = *url;
-    target.token      = *token;
-    target.proxy      = (*values)["proxy"].value<std::string>().value_or(defaults.proxy);
-    target.verify_ssl = (*values)["verify_ssl"].value<bool>().value_or(defaults.verify_ssl);
+    SyncTargetConfig target{defaults, *url, *token};
+    target.proxy      = (*values)["proxy"].value<std::string>().value_or(target.proxy);
+    target.verify_ssl = (*values)["verify_ssl"].value<bool>().value_or(target.verify_ssl);
 
-    toml::table parsed{
+    toml::table effective{
         {"url", target.url}, {"token", target.token}, {"proxy", target.proxy}, {"verify_ssl", target.verify_ssl}};
-    for (const auto& option : SyncOptions) {
-      const auto key =
-          !values->contains(option.option_str) && !option.old_name.empty() ? option.old_name : option.option_str;
-      target.*option.option = (*values)[key].value<bool>().value_or(defaults.*option.option);
-      parsed.insert(option.option_str, target.*option.option);
+    for (const auto& [key, member, old_name] : SyncOptions) {
+      const auto read_as = values->contains(key) || old_name.empty() ? key : old_name;
+      target.*member     = (*values)[read_as].value<bool>().value_or(target.*member);
+      effective.insert(key, target.*member);
     }
 
-    if (sync_targets.emplace(name.str(), target).second) {
-      parsed_targets.insert_or_assign(name.str(), std::move(parsed));
-      spdlog::debug("config value {} url: {}, token: {}", section, target.url, MaskToken(target.token));
-      spdlog::info("target [{}] proxy: '{}', verify_ssl: {}", section, target.proxy, target.verify_ssl);
-    }
+    // TOML table keys are unique, so every target is new here.
+    effective_targets.insert_or_assign(name.str(), std::move(effective));
+    spdlog::debug("config {} = url {}, token {}, proxy '{}', verify_ssl {}", section, target.url,
+                  MaskToken(target.token), target.proxy, target.verify_ssl);
+    sync_targets.emplace(name.str(), std::move(target));
   }
 }
 
-void Save(const toml::table& table, const std::string& name, bool warning_header)
-{
-  std::ofstream file(File::Path(name, true));
-  if (warning_header) {
-    file << "#######################################################################\n";
-    file << "#######################################################################\n";
-    file << "####                                                               ####\n";
-    file << "#### NOTE: This file is not the configuration file that is used    ####\n";
-    file << "####       by the STFC Community Mod.  It is provided to help      ####\n";
-    file << "####       see what configuration is being used by the runtime     ####\n";
-    file << "####       and any desired settings should be copied to the same   ####\n";
-    file << "####       section in: " << File::DefaultConfig() << "\n";
-    file << "####                                                               ####\n";
-    file << "####        Config in: " << File::Config() << "\n";
-    file << "####                                                               ####\n";
-    file << "#######################################################################\n";
-    file << "#######################################################################\n\n";
-  }
-  file << table;
-}
-} // namespace
+// --- Files and activation ---
 
-namespace
-{
 std::unique_ptr<Config> current_config;
 // Detached sync workers can still read during static teardown, so the publication slot lives until process exit.
 auto& sync_config = *new std::shared_ptr<const Config::Sync>{std::make_shared<const Config::Sync>()};
 
-toml::table ParseSettingsFile()
+// The settings file, or nullopt after a warning that says why it could not be read and what happens `instead`.
+std::optional<toml::table> ReadSettingsFile(std::string_view instead)
 {
-  const auto path = File::Path(File::Config()).u8string();
-  return toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
+  try {
+    // The toml++ library is built without its char8_t overloads, so the UTF-8 path goes in as chars.
+    const auto path = File::Path(File::Config()).u8string();
+    return toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
+  } catch (const toml::parse_error& e) {
+    spdlog::warn("could not parse {}: {}; {}", File::Config(), e.description(), instead);
+  } catch (const std::exception& e) {
+    spdlog::warn("could not read {}: {}; {}", File::Config(), e.what(), instead);
+  }
+  return std::nullopt;
 }
 
-// Writes `effective` as the runtime vars file, and on first use creates the settings file from it when missing.
-void SaveEffective(const toml::table& effective, bool first)
+// Heads the runtime vars file; the placeholders are File::DefaultConfig() and File::Config().
+constexpr std::string_view kVarsHeader = R"(#######################################################################
+#######################################################################
+####                                                               ####
+#### NOTE: This file is not the configuration file that is used    ####
+####       by the STFC Community Mod.  It is provided to help      ####
+####       see what configuration is being used by the runtime     ####
+####       and any desired settings should be copied to the same   ####
+####       section in: {}
+####                                                               ####
+####        Config in: {}
+####                                                               ####
+#######################################################################
+#######################################################################
+
+)";
+
+void Save(const toml::table& table, const std::string& name, bool warning_header)
 {
-  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
-    spdlog::warn("Creating {} (default config file)", File::Config());
+  std::ofstream file(File::Path(name, true));
+  if (warning_header)
+    file << std::format(kVarsHeader, File::DefaultConfig(), File::Config());
+  file << table;
+}
+
+// Writes `effective` as the runtime vars file. At startup it also becomes the settings file when there is none, so
+// a new user starts from a complete list of settings.
+void SaveEffective(const toml::table& effective, bool startup)
+{
+  if (startup && !std::filesystem::exists(File::Path(File::Config()))) {
+    spdlog::info("creating {} with the default settings", File::Config());
     Save(effective, File::Config(), false);
   }
-  spdlog::info("Creating {} (final config file)", File::Vars());
+  spdlog::info("writing the settings in effect to {}", File::Vars());
   Save(effective, File::Vars(), true);
 }
 } // namespace
+
+std::string_view NotificationSoundName(NotificationSound sound)
+{
+  const auto found = std::ranges::find(kNotificationSounds, sound, &Choice<NotificationSound>::value);
+  return found == std::end(kNotificationSounds) ? "none" : found->name;
+}
 
 std::unique_ptr<Config> Config::Parse(const toml::table& file, toml::table& effective, bool log_values)
 {
@@ -368,71 +445,50 @@ std::unique_ptr<Config> Config::Parse(const toml::table& file, toml::table& effe
 std::shared_ptr<const Config::Sync> Config::Sync::Get()
 { return std::atomic_load_explicit(&sync_config, std::memory_order_acquire); }
 
+void Config::Activate(std::unique_ptr<Config> next)
+{
+  Shortcut::Set(std::move(next->shortcuts_));
+  std::atomic_store_explicit(&sync_config, next->sync_, std::memory_order_release);
+  current_config = std::move(next);
+}
+
 Config& Config::Get()
 {
-  // First use, inside il2cpp_init on the game thread. A broken file falls back to the defaults here.
-  if (!current_config)
-    current_config = [] {
-      File::MigrateLegacyFiles();
-      toml::table file;
-      bool        loaded = false;
-      try {
-        file   = ParseSettingsFile();
-        loaded = true;
-      } catch (const toml::parse_error& e) {
-        spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
-      } catch (...) {
-        spdlog::warn("Failed to load config file, falling back to default settings");
-      }
-      toml::table effective;
-      auto        config = Parse(file, effective, loaded);
-      SaveEffective(effective, true);
-      std::cout << "\n\n-----------------------------\n\n"
-                << effective << "\n\n-----------------------------\n"
-#if VERSION_PATCH
-                << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
-                << " (Patch " << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
-#else
-                << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
-                << "\n\n";
-#endif
-      Shortcut::Set(std::move(config->shortcuts_));
-      std::atomic_store_explicit(&sync_config, config->sync_, std::memory_order_release);
-      return config;
-    }();
+  // First use is inside il2cpp_init on the game thread. A file that cannot be read gives the defaults; values are
+  // only logged when they came from the file.
+  if (!current_config) {
+    File::MigrateLegacyFiles();
+    auto        file   = ReadSettingsFile("using the default settings");
+    const bool  loaded = file.has_value();
+    toml::table effective;
+    auto        config = Parse(std::move(file).value_or(toml::table{}), effective, loaded);
+    SaveEffective(effective, true);
+    Activate(std::move(config));
+  }
   return *current_config;
 }
 
 bool Config::Reload()
 {
-  toml::table file;
-  try {
-    file = ParseSettingsFile();
-  } catch (const toml::parse_error& e) {
-    spdlog::warn("Settings not reloaded, {} does not parse: {}", File::Config(), e.description());
+  const auto file = ReadSettingsFile("keeping the current settings");
+  if (!file)
     return false;
-  } catch (const std::exception& e) {
-    spdlog::warn("Settings not reloaded, {} could not be read: {}", File::Config(), e.what());
-    return false;
-  }
 
-  spdlog::info("Reloading settings from {}", File::Config());
+  spdlog::info("reloading settings from {}", File::Config());
   std::unique_ptr<Config> next;
   toml::table             effective;
   try {
-    next = Parse(file, effective, true);
+    next = Parse(*file, effective, true);
     SaveEffective(effective, false);
   } catch (const std::exception& e) {
-    spdlog::error("Settings not reloaded: {}", e.what());
+    spdlog::error("could not apply {}: {}; keeping the current settings", File::Config(), e.what());
     return false;
   }
   // Hooks are installed once, so the startup hook groups stay in force.
-  if (!(next->patches == Get().patches))
-    spdlog::warn("Changes to [patches] take effect after a restart");
+  if (next->patches != Get().patches)
+    spdlog::warn("changes to [patches] take effect after a restart");
   next->patches = Get().patches;
-  Shortcut::Set(std::move(next->shortcuts_));
-  std::atomic_store_explicit(&sync_config, next->sync_, std::memory_order_release);
-  current_config = std::move(next);
+  Activate(std::move(next));
   return true;
 }
 
@@ -453,6 +509,7 @@ void Config::ReloadIfChanged()
   const auto      time = std::filesystem::last_write_time(File::Path(File::Config()), error);
   if (error)
     return;
+  // The first check only learns the time of the file Get already read.
   if (!applied || time == *applied) {
     applied = time;
     pending.reset();
@@ -467,72 +524,64 @@ void Config::ReloadIfChanged()
   Reload();
 }
 
-void Config::Read(const toml::table& config, toml::table& parsed, bool log_values)
+void Config::Read(const toml::table& file, toml::table& effective, bool log_values)
 {
-  Reader r(config, parsed, log_values);
-  r.Read("graphics", "interior_zoom_scale", graphics.interior_zoom_scale);
-  if (!std::isfinite(graphics.interior_zoom_scale) || graphics.interior_zoom_scale < 1.0f) {
-    spdlog::warn("invalid graphics.interior_zoom_scale {}; using 2", graphics.interior_zoom_scale);
-    graphics.interior_zoom_scale = 2.0f;
-    r.Record("graphics", "interior_zoom_scale", graphics.interior_zoom_scale);
-  }
+  Reader r(file, effective, log_values);
+
+  // [patches]. Reload keeps the startup values, since hooks are only installed once.
+  constexpr std::pair<std::string_view, bool Patches::*> kPatches[] = {
+      {"actionqueuerecoveryhooks", &Patches::actionqueuerecoveryhooks},
+      {"alliancegamesstorehooks", &Patches::alliancegamesstorehooks},
+      {"artifactexchangehooks", &Patches::artifactexchangehooks},
+      {"audioeventhooks", &Patches::audioeventhooks},
+      {"bufffixhooks", &Patches::bufffixhooks},
+      {"cargoformathooks", &Patches::cargoformathooks},
+      {"chatpatches", &Patches::chatpatches},
+      {"chattitledisplayhooks", &Patches::chattitledisplayhooks},
+      {"dailyfactionbulkclaimhooks", &Patches::dailyfactionbulkclaimhooks},
+      {"doubleclickassignshiphooks", &Patches::doubleclickassignshiphooks},
+      {"forbiddentechconfirmhooks", &Patches::forbiddentechconfirmhooks},
+      {"forbiddentechshipnamehooks", &Patches::forbiddentechshipnamehooks},
+      {"freeresizehooks", &Patches::freeresizehooks},
+      {"galacticanomalytimerhooks", &Patches::galacticanomalytimerhooks},
+      {"game_version", &Patches::game_version},
+      {"giftsbulkclaimhooks", &Patches::giftsbulkclaimhooks},
+      {"havenhistoryhooks", &Patches::havenhistoryhooks},
+      {"havenzoomhooks", &Patches::havenzoomhooks},
+      {"hotkeyhooks", &Patches::hotkeyhooks},
+      {"instantcargocounterhooks", &Patches::instantcargocounterhooks},
+      {"interiorzoomhooks", &Patches::interiorzoomhooks},
+      {"loadingscreenhooks", &Patches::loadingscreenhooks},
+      {"loadingtiphooks", &Patches::loadingtiphooks},
+      {"miscpatches", &Patches::miscpatches},
+      {"missionhudtweakshooks", &Patches::missionhudtweakshooks},
+      {"objecttracker", &Patches::objecttracker},
+      {"officersorthooks", &Patches::officersorthooks},
+      {"panhooks", &Patches::panhooks},
+      {"pinnedshipclicktoggle", &Patches::pinnedshipclicktoggle},
+      {"pinnedshiphooks", &Patches::pinnedshiphooks},
+      {"queueaddressguardhooks", &Patches::queueaddressguardhooks},
+      {"revealconfirmhooks", &Patches::revealconfirmhooks},
+      {"syncpatches", &Patches::syncpatches},
+      {"tempcrashfixes", &Patches::tempcrashfixes},
+      {"testpatches", &Patches::testpatches},
+      {"thinqueueprotectionhooks", &Patches::thinqueueprotectionhooks},
+      {"toastbannerhooks", &Patches::toastbannerhooks},
+      {"transitionscreenhooks", &Patches::transitionscreenhooks},
+      {"uiscalehooks", &Patches::uiscalehooks},
+      {"zoomhooks", &Patches::zoomhooks},
+  };
+  for (const auto& [key, member] : kPatches)
+    r.Read("patches", key, patches.*member);
+
+  // [control] comes next: enable_experimental and hotkeys_extended decide which other settings are read.
   r.Read("control", "kirshara_fixes", control.kirshara_fixes);
-  if (!config["control"]["kirshara_fixes"]
-      && (config["control"]["faster_queue_recovery"] || config["control"]["thin_queue_protection"]
-          || config["control"]["queue_address_guard"] || config["advanced"]["queue"]["thin_queue_protection"]))
-    spdlog::warn("The separate queue feature settings have been replaced by [control] kirshara_fixes (default=true). "
-                 "Set kirshara_fixes=false to disable the combined fixes; old feature settings are ignored.");
+  // Once kirshara_fixes is set, leftover queue keys are not worth a warning.
+  if (!r.Node("control", "kirshara_fixes"))
+    for (const auto path : {"control.faster_queue_recovery", "control.thin_queue_protection",
+                            "control.queue_address_guard", "advanced.queue.thin_queue_protection"})
+      r.Retired(path, "control.kirshara_fixes switches all the queue fixes");
   r.Read("control", "primary_requires_visible_target", control.primary_requires_visible_target);
-  r.Read("ui", "show_player_title", ui.show_player_title);
-  r.Read("ui", "auto_confirm_reveal_ability", ui.auto_confirm_reveal_ability);
-  r.Read("ui", "dock_syncmanagement", ui.dock_syncmanagement);
-  r.Read("patches", "interiorzoomhooks", patches.interiorzoomhooks);
-  r.Read("patches", "chattitledisplayhooks", patches.chattitledisplayhooks);
-  r.Read("patches", "revealconfirmhooks", patches.revealconfirmhooks);
-  r.Read("patches", "actionqueuerecoveryhooks", patches.actionqueuerecoveryhooks);
-  r.Read("patches", "queueaddressguardhooks", patches.queueaddressguardhooks);
-  r.Read("patches", "thinqueueprotectionhooks", patches.thinqueueprotectionhooks);
-  r.Read("patches", "pinnedshipclicktoggle", patches.pinnedshipclicktoggle);
-
-  // [patches] toggles are read in every build: they let users disable hook groups that collide with BepInEx
-  // plugins hooking the same IL2CPP methods (a native and a managed detour on one prologue crash).
-  for (auto [key, value] : std::initializer_list<std::pair<const char*, bool*>>{
-           {"uiscalehooks", &patches.uiscalehooks},
-           {"zoomhooks", &patches.zoomhooks},
-           {"havenzoomhooks", &patches.havenzoomhooks},
-           {"havenhistoryhooks", &patches.havenhistoryhooks},
-           {"alliancegamesstorehooks", &patches.alliancegamesstorehooks},
-           {"bufffixhooks", &patches.bufffixhooks},
-           {"toastbannerhooks", &patches.toastbannerhooks},
-           {"panhooks", &patches.panhooks},
-           {"hotkeyhooks", &patches.hotkeyhooks},
-           {"freeresizehooks", &patches.freeresizehooks},
-           {"tempcrashfixes", &patches.tempcrashfixes},
-           {"testpatches", &patches.testpatches},
-           {"miscpatches", &patches.miscpatches},
-           {"missionhudtweakshooks", &patches.missionhudtweakshooks},
-           {"chatpatches", &patches.chatpatches},
-           {"syncpatches", &patches.syncpatches},
-           {"game_version", &patches.game_version},
-           {"objecttracker", &patches.objecttracker},
-           {"loadingscreenhooks", &patches.loadingscreenhooks},
-           {"transitionscreenhooks", &patches.transitionscreenhooks},
-           {"giftsbulkclaimhooks", &patches.giftsbulkclaimhooks},
-           {"dailyfactionbulkclaimhooks", &patches.dailyfactionbulkclaimhooks},
-           {"galacticanomalytimerhooks", &patches.galacticanomalytimerhooks},
-           {"loadingtiphooks", &patches.loadingtiphooks},
-           {"doubleclickassignshiphooks", &patches.doubleclickassignshiphooks},
-           {"forbiddentechconfirmhooks", &patches.forbiddentechconfirmhooks},
-           {"forbiddentechshipnamehooks", &patches.forbiddentechshipnamehooks},
-           {"audioeventhooks", &patches.audioeventhooks},
-           {"instantcargocounterhooks", &patches.instantcargocounterhooks},
-           {"cargoformathooks", &patches.cargoformathooks},
-           {"officersorthooks", &patches.officersorthooks},
-           {"pinnedshiphooks", &patches.pinnedshiphooks},
-           {"artifactexchangehooks", &patches.artifactexchangehooks},
-       })
-    r.Read("patches", key, *value);
-
   r.Read("control", "queue_enabled", control.queue_enabled);
   r.Read("control", "hotkeys_enabled", control.hotkeys_enabled);
   r.Read("control", "hotkeys_extended", control.hotkeys_extended);
@@ -540,32 +589,24 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   r.Read("control", "select_timer", control.select_timer);
   r.Read("control", "enable_experimental", control.enable_experimental);
 
+  // [graphics]
   auto& g = graphics;
   r.Read("graphics", "ui_scale", g.ui_scale);
   r.ReadRenamed("graphics", "ui_scale_step", "ui_scale_adjust", g.ui_scale_step);
   r.Read("graphics", "ui_scale_ship", g.ui_scale_ship);
   r.Read("graphics", "ui_scale_viewer", g.ui_scale_viewer);
   r.Read("graphics", "zoom", g.zoom);
-  const auto haven_default = g.haven_zoom;
-  r.Read("graphics", "haven_zoom", g.haven_zoom);
-  if (!std::isfinite(g.haven_zoom) || g.haven_zoom < 0.0f) {
-    spdlog::warn("invalid graphics.haven_zoom {}; using {}", g.haven_zoom, haven_default);
-    g.haven_zoom = haven_default;
-    r.Record("graphics", "haven_zoom", haven_default);
-  }
+  r.ReadValid("graphics", "haven_zoom", g.haven_zoom, [](float v) { return std::isfinite(v) && v >= 0.0f; });
+  r.ReadValid("graphics", "interior_zoom_scale", g.interior_zoom_scale,
+              [](float v) { return std::isfinite(v) && v >= 1.0f; });
   r.Read("graphics", "fr_scale", g.fr_scale);
-  for (auto [profile, prefix] : {std::pair{&g.zoom_label_player, std::string("zoom_label_player")},
-                                 std::pair{&g.zoom_label_non_player, std::string("zoom_label_non_player")}}) {
-    const auto fallback = profile->zoom_threshold;
-    r.Choose("graphics", prefix + "_detail", profile->detail, kFleetLabelDetail);
-    r.Read("graphics", prefix + "_threshold", profile->zoom_threshold);
-    if (!std::isfinite(profile->zoom_threshold) || profile->zoom_threshold < 0.0f || profile->zoom_threshold > 1.0f) {
-      spdlog::warn("invalid config value graphics.{}_threshold: {}; using {}", prefix, profile->zoom_threshold,
-                   fallback);
-      profile->zoom_threshold = fallback;
-      r.Record("graphics", prefix + "_threshold", fallback);
-    }
-  }
+  const auto read_label = [&r](const std::string& prefix, FleetLabelProfile& profile) {
+    r.Choose("graphics", prefix + "_detail", profile.detail, kFleetLabelDetail);
+    r.ReadValid("graphics", prefix + "_threshold", profile.zoom_threshold,
+                [](float v) { return std::isfinite(v) && v >= 0.0f && v <= 1.0f; });
+  };
+  read_label("zoom_label_player", g.zoom_label_player);
+  read_label("zoom_label_non_player", g.zoom_label_non_player);
   r.Read("graphics", "free_resize", g.free_resize);
   r.Read("graphics", "allow_cursor", g.allow_cursor);
   r.Read("graphics", "keyboard_zoom_speed", g.keyboard_zoom_speed);
@@ -601,33 +642,34 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   r.Read("graphics", "loader_tip_enabled", g.loader_tip_enabled);
   r.Read("graphics", "galactic_anomaly_timer", g.galactic_anomaly_timer);
 
+  // [buffs]
   r.Read("buffs", "use_out_of_dock_power", buffs.use_out_of_dock_power);
 
+  // [audio]
   r.Read("audio", "trace_events", audio.trace_events);
-  for (const auto& event : StrSplit(r.Get<std::string>("audio", "disabled_events", ""), ',')) {
+  for (auto& event : StrSplit(r.Get<std::string>("audio", "disabled_events", ""), ',')) {
     if (AsciiStrToLower(event) == "all")
       audio.disable_all_events = true;
     else
-      audio.disabled_events.push_back(event);
+      audio.disabled_events.push_back(std::move(event));
   }
+  constexpr std::pair<std::string_view, NotificationSound Audio::*> kAlerts[] = {
+      {"alert_victory", &Audio::alert_victory},
+      {"alert_defeat", &Audio::alert_defeat},
+      {"alert_armada_created", &Audio::alert_armada_created},
+      {"alert_armada_battle_won", &Audio::alert_armada_battle_won},
+      {"alert_armada_battle_lost", &Audio::alert_armada_battle_lost},
+  };
   bool has_audio_alert = false;
-  for (auto [key, value] : std::initializer_list<std::pair<const char*, NotificationSound*>>{
-           {"alert_victory", &audio.alert_victory},
-           {"alert_defeat", &audio.alert_defeat},
-           {"alert_armada_created", &audio.alert_armada_created},
-           {"alert_armada_battle_won", &audio.alert_armada_battle_won},
-           {"alert_armada_battle_lost", &audio.alert_armada_battle_lost}}) {
-    const auto name  = r.Get<std::string>("audio", key, "none");
-    const auto sound = ParseNotificationSound(StripAsciiWhitespace(name));
-    if (!sound)
-      spdlog::warn("invalid config value audio.{}: '{}'; using none", key, name);
-    *value = sound.value_or(NotificationSound::kNone);
-    r.Record("audio", key, NotificationSoundName(*value));
-    has_audio_alert |= *value != NotificationSound::kNone;
+  for (const auto& [key, alert] : kAlerts) {
+    r.Choose("audio", key, audio.*alert, kNotificationSounds);
+    has_audio_alert |= audio.*alert != NotificationSound::kNone;
   }
+  // The alerts play from the toast hooks.
   if (has_audio_alert && !patches.toastbannerhooks)
-    spdlog::warn("audio alerts require patches.toastbannerhooks = true");
+    spdlog::warn("audio alerts need patches.toastbannerhooks = true; they stay silent");
 
+  // [ui]
   auto& u = ui;
   r.Read("ui", "disable_escape_exit", u.disable_escape_exit);
   r.Read("ui", "disable_escape_exit_timer", u.disable_escape_exit_timer);
@@ -637,10 +679,11 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "disable_move_keys", u.disable_move_keys);
   r.Read("ui", "disable_toast_banners", u.disable_toast_banners);
-  r.Read("ui", "default_chat_width", u.default_chat_width);
+  r.ReadValid("ui", "default_chat_width", u.default_chat_width, [](float v) { return std::isfinite(v) && v >= 0.0f; });
   r.Read("ui", "auto_open_chat", u.auto_open_chat);
   r.Read("ui", "disable_galaxy_chat", u.disable_galaxy_chat);
   r.Read("ui", "disable_veil_chat", u.disable_veil_chat);
+  r.Read("ui", "show_player_title", u.show_player_title);
   r.Read("ui", "auto_open_bulk_claim_flyout", u.auto_open_bulk_claim_flyout);
   u.daily_bulk_claim_factions = ReadFactions(r);
   r.Read("ui", "daily_bulk_claim_toggle_default_on", u.daily_bulk_claim_toggle_default_on);
@@ -651,6 +694,7 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   // "*" pins nothing.
   u.pinned_ships = ReadShipFilter(r, "pinned_ships").names;
   r.Read("ui", "double_click_to_assign_ship", u.double_click_to_assign_ship);
+  r.Read("ui", "dock_syncmanagement", u.dock_syncmanagement);
   r.Read("ui", "focus_search", u.focus_search);
   r.ReadRenamed("ui", "format_cargo_values", "cargo_format", u.format_cargo_values);
   r.Read("ui", "officer_sort", u.officer_sort);
@@ -658,6 +702,7 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   r.Read("ui", "auto_confirm_ft_upgrade", u.auto_confirm_ft_upgrade);
   r.Read("ui", "forbidden_tech_ship_name", u.forbidden_tech_ship_name);
   r.Read("ui", "auto_confirm_alliance_contribution", u.auto_confirm_alliance_contribution);
+  r.Read("ui", "auto_confirm_reveal_ability", u.auto_confirm_reveal_ability);
   r.Read("ui", "extend_chest_purchase_max", u.extend_chest_purchase_max);
   r.Read("ui", "extend_donation_slider", u.extend_donation_slider);
   r.Read("ui", "extend_donation_max", u.extend_donation_max);
@@ -677,6 +722,7 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   u.disabled_banner_types = ReadBannerTypes(r, "disabled_banner_types");
   u.notify_banner_types   = ReadBannerTypes(r, "notify_banner_types");
 
+  // [sync]
   auto sync = std::make_shared<Sync>();
   r.Read("sync", "debug", sync->debug);
   r.Read("sync", "logging", sync->logging);
@@ -684,29 +730,25 @@ void Config::Read(const toml::table& config, toml::table& parsed, bool log_value
   SyncConfig sync_defaults;
   r.Read("sync", "proxy", sync_defaults.proxy);
   r.Read("sync", "verify_ssl", sync_defaults.verify_ssl);
-  for (const auto& option : SyncOptions)
-    if (option.old_name.empty())
-      r.Read("sync", option.option_str, sync_defaults.*option.option);
+  for (const auto& [key, member, old_name] : SyncOptions)
+    if (old_name.empty())
+      r.Read("sync", key, sync_defaults.*member);
     else
-      r.ReadRenamed("sync", option.option_str, option.old_name, sync_defaults.*option.option);
+      r.ReadRenamed("sync", key, old_name, sync_defaults.*member);
   ReadSyncTargets(r, sync->targets, sync_defaults);
 
-  if (auto sync_file = config["sync"]["file"].value<std::string>(); sync_file && !sync_file->empty()) {
-    spdlog::error("Deprecation Notice: The 'sync_file' config option has been deprecated and removed. "
-                  "For capturing sync output, please use a local HTTP server instead.");
-  }
+  r.Retired("sync.file", "capture sync output with a local HTTP server instead");
 
-  // The global options say whether any target wants a category, so the game hooks can skip the rest.
-  sync->options.proxy      = sync_defaults.proxy;
-  sync->options.verify_ssl = sync_defaults.verify_ssl;
-  for (const auto& option : SyncOptions) {
-    sync->options.*option.option = std::ranges::any_of(sync->targets | std::views::values,
-                                                       [&](const auto& target) { return target.*option.option; });
-  }
+  // The global options carry [sync]'s proxy and verify_ssl, and for each category whether any target wants it.
+  sync->options = {.proxy = sync_defaults.proxy, .verify_ssl = sync_defaults.verify_ssl};
+  for (const auto& [key, member, old_name] : SyncOptions)
+    sync->options.*member =
+        std::ranges::any_of(sync->targets | std::views::values, [&](const auto& target) { return target.*member; });
 
+  // [config]
   r.Read("config", "settings_url", game.settings_url);
   r.Read("config", "assets_url_override", game.assets_url_override);
 
-  shortcuts_ = Shortcut::Parse(config, parsed, control.hotkeys_extended, control.enable_experimental);
+  shortcuts_ = Shortcut::Parse(file, effective, control.hotkeys_extended, control.enable_experimental);
   sync_      = std::move(sync);
 }

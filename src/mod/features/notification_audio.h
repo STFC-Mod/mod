@@ -1,26 +1,18 @@
 #pragma once
 
+// The notification cues toasts play for [audio] alert_*: tones generated as WAV data and played without the game.
+
+#include "config.h"
+
+#include <cstddef>
 #include <cstdint>
-#include <optional>
 #include <span>
-#include <string_view>
 
-enum class NotificationSound : uint8_t {
-  kNone = 0,
-  kDefault,
-  kInfo,
-  kSuccess,
-  kWarning,
-  kAlarm,
-  kArrival,
-  kSoft,
-  kPing,
-  kRepair,
-  kCount,
-};
-
-[[nodiscard]] std::string_view                 NotificationSoundName(NotificationSound sound);
-[[nodiscard]] std::optional<NotificationSound> ParseNotificationSound(std::string_view name);
-// Generated mono PCM WAV bytes, cached for the process lifetime. None and invalid sounds have no data.
+// Mono 16-bit PCM WAV data for `sound`, generated on first use and kept for the process: playback is asynchronous
+// and reads the buffer after the call returns. None has no data.
 std::span<const uint8_t> NotificationSoundBytes(NotificationSound sound);
 void                     PlayNotificationSound(NotificationSound sound);
+
+// Starts asynchronous playback of WAV data that outlives it. Windows plays it in notification_audio.cc, macOS in
+// notification_audio_mac.mm; elsewhere nothing plays.
+bool PlayNotificationBuffer(const uint8_t* data, size_t size);

@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "features/features.h"
+#include "features/notification_audio.h"
 #include "features/toast_text.h"
 #include "text.h"
 
@@ -20,7 +21,7 @@
 #include <vector>
 
 #if _WIN32
-#include <windows.h>
+#include <Windows.h>
 #include <winrt/windows.data.xml.dom.h>
 #include <winrt/windows.ui.notifications.h>
 #endif
