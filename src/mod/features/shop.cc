@@ -24,7 +24,7 @@ bool                            drawer_opened  = false;
 
 void OpenBulkClaimDrawer(ShopListScrollerViewController* controller)
 {
-  if (!Config::Get().ui.auto_open_bulk_claim_flyout || !controller || drawer_opened)
+  if (!Config::Get().ui.auto_open_bulk_claim_flyout || drawer_opened)
     return;
 
   auto* drawer  = controller->selectionDrawerWidget();
@@ -74,17 +74,16 @@ void InventoryUseRowWidget_SetWidgetData_Hook(auto original, InventoryUseRowWidg
   auto*       context = _this->Context();
   const auto& ui      = Config::Get().ui;
   if (context && context->IsChestPurchase()) {
-    const auto native_max  = context->MaxItemsToUse();
-    const auto bounded_max = std::min(static_cast<int64_t>(ui.extend_chest_purchase_max), kMaximumChestPurchaseMax);
-    if (native_max > 0 && bounded_max > native_max)
-      context->SetMaxItemsToUse(bounded_max);
+    const auto native_max = context->MaxItemsToUse();
+    const auto extended   = std::min(int64_t{ui.extend_chest_purchase_max}, kMaximumChestPurchaseMax);
+    if (native_max > 0 && extended > native_max)
+      context->SetMaxItemsToUse(extended);
   } else if (context && ui.extend_donation_slider && context->IsDonationUse()) {
     // extend_donation_max replaces the game's donation cap; 0 or less means no cap. Either way the slider stops at
     // what the player owns.
     const auto owned  = context->AmountOwned();
-    auto       target = ui.extend_donation_max > 0 ? static_cast<int64_t>(ui.extend_donation_max) : owned;
-    if (owned > 0)
-      target = std::min(target, owned);
+    const auto cap    = ui.extend_donation_max > 0 ? int64_t{ui.extend_donation_max} : owned;
+    const auto target = owned > 0 ? std::min(cap, owned) : cap;
     if (target > 0 && target != context->MaxItemsToUse())
       context->SetMaxItemsToUse(target);
   }
@@ -104,10 +103,7 @@ void BundleDataWidget_OnActionButtonPressedCallback_Hook(auto original, BundleDa
 // --- Reveal sequence ---
 
 bool ShopSceneManager_ShouldShowRevealSequence_Hook(auto original, il2cpp::Object* _this, bool ignore)
-{
-  const auto result = original(_this, ignore);
-  return result && !Config::Get().ui.always_skip_reveal_sequence;
-}
+{ return original(_this, ignore) && !Config::Get().ui.always_skip_reveal_sequence; }
 
 // --- First popup only ---
 

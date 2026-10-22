@@ -13,11 +13,13 @@
 #include "game/ui.h"
 
 #include <il2cpp/hook.h>
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 #include <unity/core.h>
 #include <unity/tracker.h>
 
 #include <chrono>
+#include <utility>
 
 namespace
 {
@@ -85,27 +87,21 @@ void ChatFrame()
 
 // --- Disabled channels ---
 
-// Tab positions in both the full-screen chat and the preview. Cadet and veil chat only exist for some players,
-// and shift the tabs after them; a missing tab is -1.
+// Tab positions in both the full-screen chat and the preview. Cadet chat, first, and veil chat, after galaxy,
+// only exist for some players and shift the tabs after them; a missing veil tab is -1.
 struct ChatTabs {
-  int32_t cadet    = -1;
   int32_t galaxy   = 0;
   int32_t veil     = -1;
   int32_t alliance = 1;
 
   static ChatTabs Current()
   {
-    ChatTabs tabs;
-    auto*    chat = ChatManager::Instance();
+    auto* chat = ChatManager::Instance();
     if (!chat)
-      return tabs;
-    const bool cadet = chat->CanSeeNewbieChat();
-    const bool veil  = chat->CanSeeRegionalChat();
-    tabs.cadet       = cadet ? 0 : -1;
-    tabs.galaxy      = cadet ? 1 : 0;
-    tabs.veil        = veil ? tabs.galaxy + 1 : -1;
-    tabs.alliance    = tabs.galaxy + 1 + (veil ? 1 : 0);
-    return tabs;
+      return {};
+    const int32_t galaxy = chat->CanSeeNewbieChat() ? 1 : 0;
+    const bool    veil   = chat->CanSeeRegionalChat();
+    return {.galaxy = galaxy, .veil = veil ? galaxy + 1 : -1, .alliance = galaxy + (veil ? 2 : 1)};
   }
 
   // Whether `index` is a tab the settings disable.
@@ -116,25 +112,20 @@ struct ChatTabs {
   }
 };
 
-bool AnyDisabled()
-{ return Config::Get().ui.disable_galaxy_chat || Config::Get().ui.disable_veil_chat; }
-
 void FullScreenChatViewController_AboutToShow_Hook(auto original, FullScreenChatViewController* _this)
 {
   original(_this);
-  if (!AnyDisabled())
+  const auto& ui = Config::Get().ui;
+  if (!ui.disable_galaxy_chat && !ui.disable_veil_chat)
     return;
 
-  auto* tab_bar_view = _this->categoriesTabBarViewController();
-  auto* tab_bar      = tab_bar_view ? tab_bar_view->tabBar() : nullptr;
-  auto* buttons      = tab_bar ? tab_bar->data() : nullptr;
-  if (!buttons)
-    return;
-  const auto tabs = ChatTabs::Current();
-  for (int32_t index : {tabs.galaxy, tabs.veil})
-    if (index >= 0 && index < buttons->Count() && tabs.Disabled(index))
-      if (auto* button = (*buttons)[index])
-        static_cast<GenericButtonContext*>(button)->SetInteractable(false);
+  auto*      tab_bar_view = _this->categoriesTabBarViewController();
+  auto*      tab_bar      = tab_bar_view ? tab_bar_view->tabBar() : nullptr;
+  auto*      buttons      = tab_bar ? tab_bar->data() : nullptr;
+  const auto tabs         = ChatTabs::Current();
+  for (const auto index : {tabs.galaxy, tabs.veil})
+    if (auto* button = tabs.Disabled(index) ? il2cpp::At(buttons, index) : nullptr)
+      static_cast<GenericButtonContext*>(button)->SetInteractable(false);
 }
 
 // Selecting a disabled tab (with the keyboard, say) does nothing.
@@ -145,6 +136,7 @@ void FullScreenChatViewController_OnDidChangeSelectedTab_Hook(auto original, Ful
     original(_this, index, tab);
 }
 
+// Lines the preview's scroller up with the alliance panel.
 void FocusAlliance(ChatPreviewController* preview, int32_t alliance)
 {
   if (auto* scroller = preview->swipeScroller(); scroller && scroller->currentContentIndex() != alliance)
@@ -237,15 +229,14 @@ bool InstallChat()
   return hooks.Commit();
 }
 
+// The feature is the update hook. The bind paths only catch titles bound without an update, so each goes in as
+// a set of its own, and the feature does not depend on them.
 bool InstallChatTitles()
 {
   const auto      update = UserProfileWidget::Class::Method("UpdatePlayerTitle", 0);
   il2cpp::HookSet hooks("ChatTitles");
   IL2CPP_STAGE(hooks, update, UserProfileWidget_UpdatePlayerTitle_Hook);
-  // The feature is the update hook; the bind paths below only add to it.
   const bool installed = hooks.Commit();
-  // The bind paths catch titles bound without an update, so each is a set of its own and adds to the update hook
-  // where SPUD can detour it.
   const auto set_data = PlayerTitleWidget::Class::Method("SetWidgetData", 0);
   const auto bind     = PlayerTitleWidget::Class::Method("OnDidBindContext", 0);
   if (!set_data || !bind)
@@ -281,10 +272,9 @@ void OpenChatShortcut()
 
   // With side chat already open, the shortcut focuses its input instead.
   if (chat->IsSideChatOpen()) {
-    auto* view  = unity::Newest<FullScreenChatViewController>();
-    auto* list  = view ? view->messageList() : nullptr;
-    auto* input = list ? list->inputField() : nullptr;
-    if (input)
+    auto* view = unity::Newest<FullScreenChatViewController>();
+    auto* list = view ? view->messageList() : nullptr;
+    if (auto* input = list ? list->inputField() : nullptr)
       input->ActivateInputField();
   } else {
     chat->OpenChannel(ChatChannelCategory::Alliance, side ? ChatViewMode::Side : ChatViewMode::Fullscreen);
@@ -296,9 +286,9 @@ bool ChatChannelShortcuts()
   auto* chat = ChatManager::Instance();
   if (!chat)
     return false;
-  for (auto [shortcut, channel] : {std::pair{Action::kSelectChatGlobal, ChatChannelCategory::Global},
-                                   std::pair{Action::kSelectChatAlliance, ChatChannelCategory::Alliance},
-                                   std::pair{Action::kSelectChatPrivate, ChatChannelCategory::Private}}) {
+  for (const auto [shortcut, channel] : {std::pair{Action::kSelectChatGlobal, ChatChannelCategory::Global},
+                                         std::pair{Action::kSelectChatAlliance, ChatChannelCategory::Alliance},
+                                         std::pair{Action::kSelectChatPrivate, ChatChannelCategory::Private}}) {
     if (Shortcut::IsDown(shortcut)) {
       chat->OpenChannel(channel);
       return true;

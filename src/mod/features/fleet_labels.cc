@@ -8,7 +8,6 @@
 #include "game/navigation.h"
 
 #include <il2cpp/hook.h>
-#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
 
 #include <optional>
@@ -46,7 +45,7 @@ public:
       case FleetLabelDetail::kCompact:
         return ZoomLevels::Far;
       case FleetLabelDetail::kThreshold:
-        if (!zoom_known_)
+        if (!camera_.zoom_known)
           return native;
         return ExpandedAt(profile->zoom_threshold) ? expanded : ZoomLevels::Far;
       default:
@@ -58,25 +57,25 @@ public:
   {
     // Fresh pooled widgets are enabled before BindDataContext assigns their context; forcing an LOD before then
     // fires OnLODChanged callbacks that dereference the unbound fleet data.
-    auto* lod = widget && widget->Context() ? widget->lod() : nullptr;
+    auto* lod = widget->Context() ? widget->lod() : nullptr;
     if (!lod)
       return;
     widgets_.insert_or_assign(lod, widget);
-    if (zoom_known_ && Enabled())
-      lod->UpdateLOD(zoom_level_);
+    if (camera_.zoom_known && Enabled())
+      lod->UpdateLOD(camera_.zoom_level);
   }
 
   void Untrack(NavigationFleetWidget* widget)
   {
-    auto* lod = widget ? widget->lod() : nullptr;
+    auto* lod = widget->lod();
     if (!lod)
       return;
     widgets_.erase(lod);
     // Give a reused widget back to the game at the game's own level.
-    if (widget->Context() && zoom_known_ && Enabled()) {
-      lod->SetTargetLevel(zoom_level_);
-      lod->UpdateLOD(zoom_level_);
-      lod->SetTargetLevel(zoom_level_);
+    if (widget->Context() && camera_.zoom_known && Enabled()) {
+      lod->SetTargetLevel(camera_.zoom_level);
+      lod->UpdateLOD(camera_.zoom_level);
+      lod->SetTargetLevel(camera_.zoom_level);
     }
   }
 
@@ -85,11 +84,10 @@ public:
   {
     if (!installed_)
       return;
-    if (depth == NodeDepth::SolarSystem) {
+    if (depth == NodeDepth::SolarSystem)
       Follow(zoom);
-    } else if (camera_ == zoom) {
-      Forget();
-    }
+    else if (camera_.zoom == zoom)
+      camera_ = {};
   }
 
   // After the camera's own update: picks up the zoom level and re-applies labels when they change.
@@ -98,11 +96,11 @@ public:
     if (!installed_ || zoom->depth() != NodeDepth::SolarSystem)
       return;
     Follow(zoom);
-    const bool was_known = zoom_known_;
-    zoom_level_          = zoom->zoomLevel();
-    zoom_known_          = true;
+    const bool was_known = camera_.zoom_known;
+    camera_.zoom_level   = zoom->zoomLevel();
+    camera_.zoom_known   = true;
     if (UsesThreshold()) {
-      normalized_zoom_ = zoom->NormalizedZoom();
+      camera_.normalized_zoom = zoom->NormalizedZoom();
       UpdateThreshold();
     } else if (!was_known) {
       ApplyAll();
@@ -112,9 +110,8 @@ public:
 private:
   const FleetLabelProfile* Profile(NavigationLOD* lod) const
   {
-    const auto it     = widgets_.find(lod);
-    auto*      widget = it == widgets_.end() ? nullptr : it->second;
-    auto*      fleet  = widget ? widget->Context() : nullptr;
+    const auto it    = widgets_.find(lod);
+    auto*      fleet = it == widgets_.end() ? nullptr : it->second->Context();
     if (!fleet)
       return nullptr;
     // A missing FleetType property reads as Nonexistent, which counts as non-player.
@@ -132,23 +129,12 @@ private:
 
   // Labels expand when zoomed in at least as far as the threshold. 0 never expands, 1 always does.
   bool ExpandedAt(float threshold) const
-  { return threshold > 0.0f && (threshold >= 1.0f || normalized_zoom_ <= threshold); }
+  { return threshold > 0.0f && (threshold >= 1.0f || camera_.normalized_zoom <= threshold); }
 
   void Follow(NavigationZoom* zoom)
   {
-    if (camera_ != zoom) {
-      Forget();
-      camera_ = zoom;
-    }
-  }
-
-  void Forget()
-  {
-    camera_          = nullptr;
-    zoom_known_      = false;
-    zoom_level_      = ZoomLevels::None;
-    normalized_zoom_ = 0.0f;
-    threshold_known_ = false;
+    if (camera_.zoom != zoom)
+      camera_ = {.zoom = zoom};
   }
 
   // UpdateLOD goes through the hook, which picks each label's level.
@@ -158,37 +144,45 @@ private:
       return;
     for (const auto& [lod, widget] : widgets_)
       if (widget->Context())
-        lod->UpdateLOD(zoom_level_);
+        lod->UpdateLOD(camera_.zoom_level);
   }
 
   // Re-applies labels only when a threshold profile crosses its threshold, not on every zoom step.
   void UpdateThreshold()
   {
-    const auto& config     = Config::Get();
-    const bool  player     = config.graphics.zoom_label_player.detail == FleetLabelDetail::kThreshold
-                             && ExpandedAt(config.graphics.zoom_label_player.zoom_threshold);
-    const bool  non_player = config.graphics.zoom_label_non_player.detail == FleetLabelDetail::kThreshold
-                             && ExpandedAt(config.graphics.zoom_label_non_player.zoom_threshold);
-    if (threshold_known_ && player == player_expanded_ && non_player == non_player_expanded_)
+    const auto& graphics = Config::Get().graphics;
+    const auto  expanded = [this](const FleetLabelProfile& profile) {
+      return profile.detail == FleetLabelDetail::kThreshold && ExpandedAt(profile.zoom_threshold);
+    };
+    const bool player     = expanded(graphics.zoom_label_player);
+    const bool non_player = expanded(graphics.zoom_label_non_player);
+    if (camera_.threshold_known && player == camera_.player_expanded && non_player == camera_.non_player_expanded)
       return;
-    threshold_known_     = true;
-    player_expanded_     = player;
-    non_player_expanded_ = non_player;
+    camera_.threshold_known     = true;
+    camera_.player_expanded     = player;
+    camera_.non_player_expanded = non_player;
     ApplyAll();
-    spdlog::debug("[FleetLabels] threshold crossed at normalized zoom {:.4f}", normalized_zoom_);
+    spdlog::debug("[FleetLabels] threshold crossed at normalized zoom {:.4f}", camera_.normalized_zoom);
   }
+
+  // What is known of the system camera's zoom. A new camera starts over.
+  struct Camera {
+    NavigationZoom* zoom            = nullptr;
+    bool            zoom_known      = false;
+    ZoomLevels      zoom_level      = ZoomLevels::None;
+    float           normalized_zoom = 0.0f;
+    // Whether player and non-player threshold labels were last expanded, once threshold_known.
+    bool threshold_known     = false;
+    bool player_expanded     = false;
+    bool non_player_expanded = false;
+  };
 
   bool                                                       installed_ = false;
   std::unordered_map<NavigationLOD*, NavigationFleetWidget*> widgets_;
-  // The system camera the zoom state below belongs to.
-  NavigationZoom* camera_              = nullptr;
-  bool            zoom_known_          = false;
-  ZoomLevels      zoom_level_          = ZoomLevels::None;
-  float           normalized_zoom_     = 0.0f;
-  bool            threshold_known_     = false;
-  bool            player_expanded_     = false;
-  bool            non_player_expanded_ = false;
+  Camera                                                     camera_;
 } fleet_labels;
+
+// --- Hooks ---
 
 void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevels level)
 {
@@ -227,10 +221,9 @@ void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, Navigatio
 
 bool InstallFleetLabels()
 {
-  // Installed as a set, whether or not zoom_label_* is set, so labels can be switched at runtime. Missing fields
-  // and properties (_lod, Context, FleetType) read as null or zero, which the hooks treat as native labels, so
-  // only the methods gate installation. The zoom reports come from camera.cc's NavigationZoom.Update hook, so it
-  // has to exist too.
+  // Installed whether or not zoom_label_* is set, so labels can be switched at runtime. Missing fields and
+  // properties (_lod, Context, FleetType) read as null or zero, which the hooks treat as native labels. The zoom
+  // reports come from camera.cc's NavigationZoom.Update hook, so that method has to exist too.
   if (!NavigationZoom::Class::Method("Update"))
     return false;
   il2cpp::HookSet hooks("FleetLabels");

@@ -19,9 +19,9 @@ void Model_LoadConfigs_Hook(auto original, Model* _this)
     return;
   const auto& game = Config::Get().game;
   if (!game.settings_url.empty())
-    config->SetPlatformSettingsUrl(il2cpp::NewString(game.settings_url.c_str()));
+    config->SetPlatformSettingsUrl(il2cpp::NewString(game.settings_url));
   if (!game.assets_url_override.empty())
-    config->SetAssetUrlOverride(il2cpp::NewString(game.assets_url_override.c_str()));
+    config->SetAssetUrlOverride(il2cpp::NewString(game.assets_url_override));
 }
 
 bool InstallGameConfigOverrides()

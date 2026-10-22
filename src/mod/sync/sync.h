@@ -383,10 +383,10 @@ void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation);
 void CachePlayerNames(const Input& input);
 void CacheAllianceNames(const Input& input);
 
-// fleets.cc. Client fleet records are read on the game thread, from fleet_watch and the frame tick.
+// fleets.cc. Client fleet records are read on the game thread, from sync's frame work.
 
-// Sync's frame work for fleets: subscribes to fleet_watch once a target wants fleets, then polls it and re-reads and
-// snapshots what was asked for. Returns at once until then.
+// Sync's frame work for fleets: once a target wants fleets, watches the fleet slots, then re-reads and snapshots what
+// was asked for. Returns at once until then.
 void UpdateFleetSync();
 // Asks the game thread for a full fleet snapshot, sent as a first sync. Any thread.
 void RequestFleetSnapshot();

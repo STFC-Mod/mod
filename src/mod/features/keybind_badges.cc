@@ -15,11 +15,17 @@
 #include <spdlog/spdlog.h>
 #include <unity/tracker.h>
 
+#include <algorithm>
 #include <array>
+#include <string>
 #include <string_view>
 
 namespace
 {
+bool badges_installed = false;
+
+// --- Badge text ---
+
 struct NativeAction {
   std::string_view name;
   Action           primary;
@@ -65,22 +71,13 @@ constexpr auto kNativeActions = std::to_array<NativeAction>({
 
 constexpr const NativeAction* FindNativeAction(std::string_view name)
 {
-  for (const auto& action : kNativeActions)
-    if (action.name == name)
-      return &action;
-  return nullptr;
+  const auto action = std::ranges::find(kNativeActions, name, &NativeAction::name);
+  return action == kNativeActions.end() ? nullptr : &*action;
 }
 
-consteval bool NativeActionsAreUnique()
-{
-  for (size_t i = 0; i < kNativeActions.size(); ++i)
-    for (size_t j = i + 1; j < kNativeActions.size(); ++j)
-      if (kNativeActions[i].name == kNativeActions[j].name)
-        return false;
-  return true;
-}
-
-static_assert(NativeActionsAreUnique());
+static_assert(std::ranges::all_of(kNativeActions, [](const NativeAction& action) {
+  return std::ranges::count(kNativeActions, action.name, &NativeAction::name) == 1;
+}));
 static_assert(FindNativeAction("side_chat")->fallback == Action::kShowChatSide2);
 static_assert(FindNativeAction("unknown") == nullptr);
 
@@ -92,12 +89,12 @@ std::string BadgeText(std::string_view action_name)
     return "-";
   auto hint_action = action->primary;
   if (hint_action >= Action::kSelectShip1 && hint_action <= Action::kSelectShip8) {
-    // Use the same context array as FleetBarViewController::RequestSelect(int, bool), not the native dock index.
-    auto* bar     = unity::Newest<FleetBarViewController>();
-    auto* context = bar ? bar->CanvasContext() : nullptr;
-    auto* fleets  = context ? context->FleetData() : nullptr;
-    hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->size() : 0, [fleets](std::size_t position) {
-      auto* fleet = (*fleets)[position];
+    // The mod's ship keys select by position in the bar's context array, as RequestSelect does, not by dock index.
+    auto*      bar     = unity::Newest<FleetBarViewController>();
+    auto*      context = bar ? bar->CanvasContext() : nullptr;
+    const auto fleets  = il2cpp::Items(context ? context->FleetData() : nullptr);
+    hint_action        = ShipShortcutHintAction(hint_action, fleets.size(), [fleets](std::size_t position) {
+      auto* fleet = fleets[position];
       return fleet ? fleet->Index() : -1;
     });
   }
@@ -108,7 +105,7 @@ std::string BadgeText(std::string_view action_name)
   return hint.empty() ? "-" : hint;
 }
 
-bool badges_installed = false;
+// --- Hooks ---
 
 void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _this)
 {
@@ -127,8 +124,7 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _th
 
   auto* reference = _this->inputAction();
   auto* action    = reference ? reference->action() : nullptr;
-  auto* name      = action ? action->name() : nullptr;
-  if (name)
+  if (auto* name = action ? action->name() : nullptr)
     label->OverrideLocalizedText(il2cpp::NewString(BadgeText(il2cpp::ToUtf8(name)).c_str()));
 }
 
@@ -147,10 +143,12 @@ bool ToggleKeybindBadges()
   if (!badges_installed)
     return false;
   auto* manager = ShortcutsManager::Instance();
-  if (!manager)
+  if (!manager) {
     spdlog::warn("[Hotkeys] the game's shortcut manager is not up; no badges to toggle");
+    return true;
+  }
   // The same gate the game's own show_keybindings action checks.
-  else if (ShortcutsManager::CanUseShortcuts())
+  if (ShortcutsManager::CanUseShortcuts())
     manager->SetShowKeybindings(!manager->ShowKeybindings());
   return true;
 }

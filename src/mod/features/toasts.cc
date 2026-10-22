@@ -5,9 +5,7 @@
 #include "features/features.h"
 #include "features/notification_audio.h"
 #include "features/toast_text.h"
-#include "text.h"
 
-#include "game/fleet.h"
 #include "game/server.h"
 #include "game/ui.h"
 
@@ -16,8 +14,10 @@
 #include <spdlog/fmt/fmt.h>
 #include <spdlog/spdlog.h>
 
-#include <cstring>
+#include <algorithm>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #if _WIN32
@@ -28,7 +28,7 @@
 
 namespace
 {
-using toast_text::FormatPlaceholders;
+// --- Toast states ---
 
 constexpr std::pair<ToastState, const char*> kTitles[] = {
     {ToastState::Standard, "Notification"},
@@ -122,14 +122,14 @@ constexpr BattleType kPvpBattles[] = {BattleType::Fleet,       BattleType::Base,
                                       BattleType::ArmadaAsb,   BattleType::ArmadaMta, BattleType::PvpCuttingBeam,
                                       BattleType::PvpChainShot};
 
-template <typename T, size_t N> bool Contains(const T (&list)[N], T value)
-{ return std::ranges::find(list, value) != std::end(list); }
-
+// --- Notification text ---
+//
 // Toast data comes from a dozen game types whose layouts drift between builds. On Windows, an access violation
-// while reading one is contained and logged instead of taking the game down.
+// while reading one is contained and logged instead of taking the game down, so every read below is Guarded.
+
 using il2cpp::Guarded;
 
-// Localizes `identifier` with one parameter, guarded like the rest of the toast reads.
+// Localizes `identifier` with one parameter.
 std::string Localize(const char* identifier, const char* category, Il2CppObject* parameter)
 {
   std::string result;
@@ -151,19 +151,19 @@ std::string HullName(BattleResultHeader* header, int64_t hull_id)
   if (!hull)
     return fmt::format("Hull#{}", hull_id);
 
-  // An unknown id localizes to the identifier itself.
+  // An unknown id localizes to the identifier itself, which counts as no name.
+  const auto localized = [](Il2CppObject* id, const std::string& id_text) {
+    auto name = Localize("ship_name_{0}", "ships", id);
+    return name == "ship_name_" + id_text ? std::string{} : name;
+  };
   if (auto* ids = hull->idRefs()) {
-    if (const auto loca_id = ids->locaId()) {
-      auto name = Localize("ship_name_{0}", "ships", il2cpp::Box(loca_id));
-      if (!name.empty() && name != fmt::format("ship_name_{}", loca_id))
+    if (const auto loca_id = ids->locaId())
+      if (auto name = localized(il2cpp::Box(loca_id), std::to_string(loca_id)); !name.empty())
         return name;
-    }
-    if (auto* loca_string = ids->locaStringId(); loca_string && loca_string->length) {
-      const auto id   = il2cpp::ToUtf8(loca_string);
-      auto       name = Localize("ship_name_{0}", "ships", reinterpret_cast<Il2CppObject*>(loca_string));
-      if (!name.empty() && name != "ship_name_" + id)
+    if (auto* loca_string = ids->locaStringId(); loca_string && loca_string->length)
+      if (auto name = localized(reinterpret_cast<Il2CppObject*>(loca_string), il2cpp::ToUtf8(loca_string));
+          !name.empty())
         return name;
-    }
   }
   auto* key = hull->name();
   return key ? toast_text::HullKeyName(il2cpp::ToUtf8(key)) : fmt::format("Hull#{}", hull_id);
@@ -190,7 +190,7 @@ std::string BattleBody(BattleResultHeader* header)
         enemy = std::move(name);
     }
   });
-  Guarded("the battle type", [&] { pvp = Contains(kPvpBattles, header->Type()); });
+  Guarded("the battle type", [&] { pvp = std::ranges::contains(kPvpBattles, header->Type()); });
   Guarded("the player hull",
           [&] { player_ship = toast_text::TitleCase(HullName(header, header->PlayerShipHullId())); });
   Guarded("the enemy hull", [&] { enemy_ship = toast_text::TitleCase(HullName(header, header->EnemyShipHullId())); });
@@ -236,9 +236,8 @@ std::string ArmadaCreatedBody(ArmadaCreatedData* data)
 std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameters)
 {
   std::vector<std::string> values;
-  for (il2cpp_array_size_t i = 0; parameters && i < parameters->size(); ++i) {
-    auto*         element = (*parameters)[i];
-    Il2CppString* text    = nullptr;
+  for (auto* element : il2cpp::Items(parameters)) {
+    Il2CppString* text = nullptr;
     if (element)
       Guarded("a text parameter", [&] { text = il2cpp::ToString(static_cast<il2cpp::Object*>(element)); });
     values.push_back(il2cpp::ToUtf8(text));
@@ -246,47 +245,48 @@ std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameter
   return values;
 }
 
-// Use the named object[] binding. Other array fields may contain unboxed values, not object pointers.
+// Fills `text` from the toast's TextParameters, its object[] field. Other array fields may hold unboxed values
+// rather than object pointers, so they are not read as parameters.
 std::string FormatToastText(const std::string& text, Toast* toast)
 {
   if (auto* parameters = toast->TextParameters(); parameters && parameters->size() > 0)
-    return FormatPlaceholders(text, ParameterValues(parameters));
-  if (text.find('{') != std::string::npos)
+    return toast_text::FormatPlaceholders(text, ParameterValues(parameters));
+  if (text.contains('{'))
     spdlog::warn("[Toasts] TextParameters unavailable; placeholders unresolved in template: \"{}\"", text);
   return text;
 }
 
-// The toast's own localized text with its parameters filled in.
+// The toast's own localized text with its parameters filled in, for toasts without a body of their own.
 std::string ToastText(Toast* toast)
 {
   auto* context = toast->TextLocaleTextContext();
   if (!context) {
-    spdlog::debug("[Toasts] No TextLocaleTextContext for toast state {}", static_cast<int>(toast->State()));
+    spdlog::debug("[Toasts] No TextLocaleTextContext for toast state {}", std::to_underlying(toast->State()));
     return {};
   }
 
   // LocaleUtilities.Localize fills the context's own parameters; the toast may carry them instead.
   if (auto* text = LocaleUtilities::Localize(context, true, false)) {
     auto result = il2cpp::ToUtf8(text);
-    return result.find('{') == std::string::npos ? result : FormatToastText(result, toast);
+    return result.contains('{') ? FormatToastText(result, toast) : result;
   }
 
   Il2CppString* text    = nullptr;
   auto*         manager = LanguageManager::Instance();
   if (!manager || !manager->Localize(text, context) || !text) {
-    spdlog::debug("[Toasts] toast state {} could not be localized", static_cast<int>(toast->State()));
+    spdlog::debug("[Toasts] toast state {} could not be localized", std::to_underlying(toast->State()));
     return {};
   }
   return FormatToastText(il2cpp::ToUtf8(text), toast);
 }
 
-std::string EventCategory(Toast* toast)
+// Empty for a category this table does not name.
+std::string_view EventCategory(Toast* toast)
 {
   auto*      data     = toast->Data();
   auto*      event    = data ? data->As<EventModel>() : nullptr;
   const auto category = event ? event->category() : -1;
-  return category >= 0 && category < static_cast<int32_t>(std::size(kEventCategories)) ? kEventCategories[category]
-                                                                                       : "";
+  return category >= 0 && std::cmp_less(category, std::size(kEventCategories)) ? kEventCategories[category] : "";
 }
 
 std::string NotificationBody(Toast* toast)
@@ -296,25 +296,28 @@ std::string NotificationBody(Toast* toast)
   std::string body;
   if (state == ToastState::ArmadaCreated)
     body = ArmadaCreatedBody(static_cast<ArmadaCreatedData*>(data));
-  else if (auto* header = data && Contains(kBattleToasts, state) ? data->As<BattleResultHeader>() : nullptr)
+  else if (auto* header =
+               data && std::ranges::contains(kBattleToasts, state) ? data->As<BattleResultHeader>() : nullptr)
     body = BattleBody(header);
   if (body.empty())
     body = toast_text::StripRichText(ToastText(toast));
   if (body.empty())
     body = "(no details available)";
 
-  if (Contains(kEventToasts, state))
+  if (std::ranges::contains(kEventToasts, state))
     if (const auto category = EventCategory(toast); !category.empty())
-      body = category + " - " + body;
+      body = fmt::format("{} - {}", category, body);
   return body;
 }
+
+// --- Windows notifications ---
 
 #if _WIN32
 void ShowWindowsNotification(const char* title, const std::string& body)
 {
   // Notifications need a WinRT apartment on the game thread, set up by the first one. The game may already have
   // one in another mode, which only matters if notifications then fail.
-  static const bool apartment = [] {
+  [[maybe_unused]] static const bool apartment = [] {
     try {
       winrt::init_apartment(winrt::apartment_type::single_threaded);
     } catch (const winrt::hresult_error& e) {
@@ -325,7 +328,6 @@ void ShowWindowsNotification(const char* title, const std::string& body)
     }
     return true;
   }();
-  (void)apartment;
   try {
     using namespace winrt::Windows::UI::Notifications;
     auto xml   = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02);
@@ -341,17 +343,17 @@ void ShowWindowsNotification(const char* title, const std::string& body)
 }
 #endif
 
-// TODO: macOS has no notification delivery yet; the body code above runs on Windows only.
+// TODO: macOS has no notification delivery yet, so notify_banner_types does nothing there.
 void Notify(Toast* toast)
 {
 #if _WIN32
   const auto  state = toast->State();
   const auto& types = Config::Get().ui.notify_banner_types;
-  if (std::ranges::find(types, static_cast<int>(state)) == types.end())
+  if (!std::ranges::contains(types, std::to_underlying(state)))
     return;
   const auto title = std::ranges::find(kTitles, state, &std::pair<ToastState, const char*>::first);
   if (title == std::end(kTitles)) {
-    spdlog::debug("[Toasts] No title mapping for toast state {}, skipping", static_cast<int>(state));
+    spdlog::debug("[Toasts] No title mapping for toast state {}, skipping", std::to_underlying(state));
     return;
   }
   ShowWindowsNotification(title->second, NotificationBody(toast));
@@ -360,7 +362,9 @@ void Notify(Toast* toast)
 #endif
 }
 
-// Notifies, then reports whether the in-game banner should be shown.
+// --- Banners ---
+
+// Plays the toast's alert and sends its notification, then says whether the game should show its banner.
 bool ShowBanner(Toast* toast)
 {
   if (!toast)
@@ -388,8 +392,7 @@ bool ShowBanner(Toast* toast)
   }
   PlayNotificationSound(sound);
   Notify(toast);
-  const auto& disabled = Config::Get().ui.disabled_banner_types;
-  return std::ranges::find(disabled, static_cast<int>(toast->State())) == disabled.end();
+  return !std::ranges::contains(Config::Get().ui.disabled_banner_types, std::to_underlying(toast->State()));
 }
 
 void ToastObserver_EnqueueToast_Hook(auto original, ToastObserver* _this, Toast* toast)

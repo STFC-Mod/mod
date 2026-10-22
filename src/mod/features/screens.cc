@@ -17,31 +17,21 @@
 #include <spdlog/spdlog.h>
 #include <unity/tracker.h>
 
+#include <algorithm>
 #include <optional>
 
 namespace
 {
-// Ship Swap and Officer Swap live on the Manage Ships screen, and Officer Presets on the officer assignment screen
-// that Officer Swap opens. Their shortcuts open those screens first, then press the button once it exists. 300
-// frames is a few seconds at the game's frame rate.
-constexpr int kButtonWaitFrames = 300;
-
-enum class ButtonStage { kShipSwap, kOfficerSwap, kOfficerAssignment, kOfficerPresets };
-
-struct ButtonWait {
-  ButtonStage stage;
-  int         frames = kButtonWaitFrames;
-};
-std::optional<ButtonWait> pending_button;
+// --- Opening screens ---
 
 // Runs one of the game's own shortcut handlers. A handler missing from this client is reported once by the binding
 // layer and does nothing.
-template <il2cpp::Name Action> void Native()
+template <il2cpp::Name Handler> void Native()
 {
   if (auto* manager = ShortcutsManager::Instance())
-    manager->Run<Action>();
+    manager->Run<Handler>();
   else
-    spdlog::warn("[Hotkeys] native {} shortcut is unavailable", Action.View());
+    spdlog::warn("[Hotkeys] native {} shortcut is unavailable", Handler.View());
 }
 
 template <SectionID Section> void Goto()
@@ -76,15 +66,38 @@ void ShowCoordinateSearch()
   }
 }
 
-void ShowHaven()
-{ PlanetaryBaseManager::ViewOwnHaven(); }
+// Opens Manage Ships for the fleet selected in the fleet bar. False when none is selected.
+bool OpenManageShips()
+{
+  auto* panel = FleetBarViewController::NewestPanel();
+  auto* fleet = panel ? panel->fleet() : nullptr;
+  if (!fleet)
+    return false;
+  panel->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+  return true;
+}
+
+// --- Swap and preset buttons ---
+
+// Ship Swap and Officer Swap live on the Manage Ships screen, and Officer Presets on the officer assignment screen
+// that Officer Swap opens. Their shortcuts open those screens first, then press the button once it exists. 300
+// frames is a few seconds at the game's frame rate.
+constexpr int kButtonWaitFrames = 300;
+
+// kOfficerAssignment waits on Manage Ships for Officer Swap, on the way to Officer Presets.
+enum class ButtonStage { kShipSwap, kOfficerSwap, kOfficerAssignment, kOfficerPresets };
+
+struct ButtonWait {
+  ButtonStage stage;
+  int         frames = kButtonWaitFrames;
+};
+std::optional<ButtonWait> pending_button;
 
 // Presses the button `pick` returns on the first visible, active Controller.
 template <typename Controller> bool PressButton(unity::Button* (*pick)(Controller*))
 {
   for (auto* controller : unity::Instances<Controller>()) {
-    auto* button = controller->isActiveAndEnabled() && CanvasController::Shows(controller) ? pick(controller) : nullptr;
-    if (button) {
+    if (auto* button = CanvasController::OnScreen(controller) ? pick(controller) : nullptr) {
       button->Press();
       return true;
     }
@@ -113,24 +126,13 @@ bool PressOfficerPresetsButton()
       });
 }
 
-void OpenManageShips()
-{
-  auto* fleet_bar = unity::Newest<FleetBarViewController>();
-  auto* fleet     = fleet_bar ? fleet_bar->SelectedFleet() : nullptr;
-  if (auto* panel = fleet ? fleet_bar->fleetPanelController() : nullptr)
-    panel->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
-}
-
-// Opens Manage Ships for the selected fleet, for a button that is only there. False, with a warning, without one.
+// Opens Manage Ships for a button that only it has. False, with a warning, when no fleet is selected.
 bool OpenManageShipsFor(const char* what)
 {
-  auto* fleet_bar = unity::Newest<FleetBarViewController>();
-  if (!fleet_bar || !fleet_bar->SelectedFleet()) {
-    spdlog::warn("[Hotkeys] no fleet is selected, so Manage Ships cannot open for {}", what);
-    return false;
-  }
-  OpenManageShips();
-  return true;
+  if (OpenManageShips())
+    return true;
+  spdlog::warn("[Hotkeys] no fleet is selected, so Manage Ships cannot open for {}", what);
+  return false;
 }
 
 void ShowShipSwap()
@@ -155,6 +157,8 @@ void ShowOfficerPresets()
     pending_button = ButtonWait{ButtonStage::kOfficerAssignment};
 }
 
+// --- Shortcut table ---
+
 struct ScreenShortcut {
   Action shortcut;
   void (*run)();
@@ -173,7 +177,7 @@ constexpr ScreenShortcut kScreens[] = {
     {Action::kNativeShortcutGalaxy, Native<"OnGalaxyAction">},
     {Action::kShowGalaxy, GotoNavigation<SectionID::Navigation_Galaxy>},
     {Action::kShowStationInterior, Goto<SectionID::Starbase_Interior>},
-    {Action::kShowHaven, ShowHaven},
+    {Action::kShowHaven, PlanetaryBaseManager::ViewOwnHaven},
     {Action::kShowSystem, GotoNavigation<SectionID::Navigation_System>},
     {Action::kShowArtifacts, Goto<SectionID::ArtifactHall_Inventory>},
     {Action::kShowShipConstruction, Native<"OnShipsAction">},
@@ -199,96 +203,96 @@ constexpr ScreenShortcut kScreens[] = {
     {Action::kShowAllianceHelp, Goto<SectionID::Alliance_Help>},
     {Action::kShowAllianceArmada, Goto<SectionID::Alliance_Armadas>},
     {Action::kShowSettings, Goto<SectionID::GameSettings>},
-    {Action::kShowShips, OpenManageShips, false},
+    {Action::kShowShips, [] { OpenManageShips(); }, false},
 };
 
-// Left and right step through docks, ship lists, artifacts and officer pages on the screens that have them,
-// before they pan the camera. Returns true when something moved.
-bool StepScreen(bool left)
+// --- Arrow keys and search ---
+
+// Left and right step through docks, ship lists, artifacts and officer pages on the screens that have them, before
+// they pan the camera. Each Step* moves one screen by `step`, -1 or 1, and says whether it moved.
+
+bool StepShipDetails(ShipManagementViewController* controller, int32_t step)
 {
-  const auto& config = Config::Get();
+  auto* context = CanvasController::OnScreen(controller) ? controller->Context() : nullptr;
+  if (!context)
+    return false;
+  const int32_t count   = context->ListCount();
+  const int32_t current = context->CurrentIndex();
+  const int32_t next    = current + step;
+  if (count <= 1 || current < 0 || next < 0 || next >= count)
+    return false;
+  context->SetLastMovementWasToIncrement(step > 0);
+  context->SetCurrentIndex(next);
+  return true;
+}
 
-  if (config.ui.arrow_keys_to_select_ship && Hub::CurrentSection() == SectionID::ShipManagement_Details) {
-    bool moved = false;
-    for (auto* controller : unity::Instances<ShipManagementViewController>()) {
-      auto* context =
-          controller->isActiveAndEnabled() && CanvasController::Shows(controller) ? controller->Context() : nullptr;
-      if (!context)
-        continue;
-      const int32_t count = context->ListCount();
-      const int32_t next  = context->CurrentIndex() + (left ? -1 : 1);
-      if (count <= 1 || context->CurrentIndex() < 0 || next < 0 || next >= count)
-        continue;
-      context->SetLastMovementWasToIncrement(!left);
-      context->SetCurrentIndex(next);
-      moved = true;
-    }
-    if (moved)
-      return true;
-  }
-
-  if (config.ui.arrow_keys_to_select_ship) {
-    bool moved = false;
-    for (auto* widget : unity::Instances<AssignShipsWidget>()) {
-      auto* list = widget->isActiveAndEnabled() && CanvasController::Shows(widget) ? widget->selectableList() : nullptr;
-      if (!list || list->Count() <= 0)
-        continue;
-      // Skip empty dock slots.
-      const int32_t count = list->Count();
-      int32_t       index = list->SelectedIndex();
-      do
-        index += left ? -1 : 1;
-      while (index >= 0 && index < count
-             && !(list->DataItem(index) && static_cast<FleetPlayerData*>(list->DataItem(index))->HasShip()));
-      if (index < 0 || index >= count)
-        continue;
+// Skips empty dock slots.
+bool StepDock(AssignShipsWidget* widget, int32_t step)
+{
+  auto* list = CanvasController::OnScreen(widget) ? widget->selectableList() : nullptr;
+  if (!list)
+    return false;
+  const int32_t count = list->Count();
+  for (int32_t index = list->SelectedIndex() + step; index >= 0 && index < count; index += step) {
+    if (auto* fleet = static_cast<FleetPlayerData*>(list->DataItem(index)); fleet && fleet->HasShip()) {
       list->RequestSelect(index);
-      moved = true;
+      return true;
     }
-    if (moved)
+  }
+  return false;
+}
+
+bool StepArtifact(ArtifactHallDetailsViewController* controller, int32_t step)
+{
+  if (!controller->isActiveAndEnabled())
+    return false;
+  step < 0 ? controller->PressLeftArrow() : controller->PressRightArrow();
+  return true;
+}
+
+bool StepSelector(ElementSelectorViewController* selector, int32_t step)
+{
+  if (!selector->isActiveAndEnabled())
+    return false;
+  step < 0 ? selector->PressDecrement() : selector->PressIncrement();
+  return true;
+}
+
+// Steps every live Screen, and says whether any of them moved.
+template <typename Screen> bool StepAll(bool (*step_one)(Screen*, int32_t), int32_t step)
+{
+  bool moved = false;
+  for (auto* screen : unity::Instances<Screen>())
+    moved |= step_one(screen, step);
+  return moved;
+}
+
+// The first kind of screen that moves wins.
+bool StepScreen(int32_t step)
+{
+  if (Config::Get().ui.arrow_keys_to_select_ship) {
+    if (Hub::CurrentSection() == SectionID::ShipManagement_Details && StepAll(StepShipDetails, step))
+      return true;
+    if (StepAll(StepDock, step))
       return true;
   }
-
-  bool moved = false;
-  for (auto* controller : unity::Instances<ArtifactHallDetailsViewController>()) {
-    if (!controller->isActiveAndEnabled())
-      continue;
-    left ? controller->PressLeftArrow() : controller->PressRightArrow();
-    moved = true;
-  }
-  if (moved)
-    return true;
-
-  for (auto* selector : unity::Instances<ElementSelectorViewController>()) {
-    if (!selector->isActiveAndEnabled())
-      continue;
-    left ? selector->PressDecrement() : selector->PressIncrement();
-    moved = true;
-  }
-  return moved;
+  return StepAll(StepArtifact, step) || StepAll(StepSelector, step);
 }
 
 // Focuses the search box of whichever inventory, officer or ship list is on screen.
 bool FocusSearchBox()
 {
   const auto focus = [](auto* owner) {
-    auto* field = owner->inputField();
-    if (!field || !owner->isActiveAndEnabled() || !CanvasController::Shows(owner) || !field->isActiveAndEnabled())
+    auto* field = CanvasController::OnScreen(owner) ? owner->inputField() : nullptr;
+    if (!field || !field->isActiveAndEnabled())
       return false;
     field->Focus();
     return true;
   };
   // InventoryListViewController also covers the officer roster and the other inventory screens.
-  for (auto* controller : unity::Instances<InventoryListViewController>())
-    if (focus(controller))
-      return true;
-  for (auto* controller : unity::Instances<OfficerAssignmentViewController>())
-    if (focus(controller))
-      return true;
-  for (auto* widget : unity::Instances<AssignShipsWidget>())
-    if (focus(widget))
-      return true;
-  return false;
+  return std::ranges::any_of(unity::Instances<InventoryListViewController>(), focus)
+         || std::ranges::any_of(unity::Instances<OfficerAssignmentViewController>(), focus)
+         || std::ranges::any_of(unity::Instances<AssignShipsWidget>(), focus);
 }
 } // namespace
 
@@ -335,9 +339,9 @@ bool PressAwaitedButton()
 
 bool ScreenShortcuts()
 {
-  if (Shortcut::IsDown(Action::kMoveLeft) && StepScreen(true))
+  if (Shortcut::IsDown(Action::kMoveLeft) && StepScreen(-1))
     return true;
-  if (Shortcut::IsDown(Action::kMoveRight) && StepScreen(false))
+  if (Shortcut::IsDown(Action::kMoveRight) && StepScreen(1))
     return true;
   if (Config::Get().ui.focus_search && Shortcut::IsDown(Action::kFocusSearch) && FocusSearchBox())
     return true;

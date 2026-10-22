@@ -1,5 +1,5 @@
-// forbidden_tech_ship_name: shows the ship a forbidden tech is equipped on below the header of the large selected-item
-// panel, including ships without a dock. Inventory tiles keep their native dock badges.
+// [ui] forbidden_tech_ship_name: shows the ship a forbidden tech is equipped on below the header of the large
+// selected-item panel, including ships without a dock. Inventory tiles keep their native dock badges.
 
 #include "config.h"
 #include "features/features.h"
@@ -16,69 +16,64 @@
 
 #include <algorithm>
 #include <iterator>
-#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
 {
-constexpr float RowHeight = 30.0f;
+// --- Equipped ship ---
 
-unity::RectTransform* RectOf(il2cpp::Object* component)
-{
-  auto* as_component = component ? component->As<unity::Component>() : nullptr;
-  auto* transform    = as_component ? as_component->transform() : nullptr;
-  return transform ? transform->As<unity::RectTransform>() : nullptr;
-}
-
-void SetActive(il2cpp::Object* component, bool active)
-{
-  auto* as_component = component->As<unity::Component>();
-  auto* object       = as_component ? as_component->gameObject() : nullptr;
-  if (!object)
-    throw std::runtime_error("Forbidden Tech label object unavailable");
-  object->SetActive(active);
-}
-
+// The ship the widget's tech is fitted to, by name in the player's language; empty when it is not fitted.
 std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
 {
   auto* context = widget->Context();
   auto* tech    = context ? context->ForbiddenTech() : nullptr;
-  if (!tech)
-    return {};
-  const auto id      = tech->Id();
-  auto*      manager = ForbiddenTechManager::Instance();
+  auto* manager = tech ? ForbiddenTechManager::Instance() : nullptr;
   if (!manager)
     return {};
-
-  // The fleet-index API returns -1 for a ship in the hangar. Resolve the slot's
-  // OwnerId instead; it identifies the actual ship regardless of dock assignment.
+  // The fleet-index API returns -1 for a ship in the hangar. Resolve the slot's OwnerId instead; it identifies the
+  // actual ship regardless of dock assignment.
   EntitySlot* slot = nullptr;
-  if (!manager->TryGetEntitySlotFromForbiddenTech(id, slot) || !slot)
+  if (!manager->TryGetEntitySlotFromForbiddenTech(tech->Id(), slot) || !slot)
     return {};
-  auto* params = slot->ForbiddenTechSlotParams();
-  if (!params)
-    return {};
-  const auto owner = params->OwnerId();
-
-  auto* service = manager->FleetService();
-  if (!service)
-    return {};
-  auto* ship = service->GetShip(owner);
-  auto* hull = ship ? ship->Hull() : nullptr;
+  auto* params  = slot->ForbiddenTechSlotParams();
+  auto* service = params ? manager->FleetService() : nullptr;
+  auto* ship    = service ? service->GetShip(params->OwnerId()) : nullptr;
+  auto* hull    = ship ? ship->Hull() : nullptr;
   if (!hull)
     return {};
   // Hull IDs and localisation IDs differ on many ships. Mirror FleetPlayerData.GetLocaId.
-  auto*      refs    = hull->idRefs();
-  const auto loca_id = refs ? refs->locaId() : hull->id();
-  return LocalizedShipName(loca_id);
+  auto* refs = hull->idRefs();
+  return LocalizedShipName(refs ? refs->locaId() : hull->id());
 }
 
-struct Row {
+// --- Ship name rows ---
+
+// The row takes this much from the top of the panel's scrollable buff list.
+constexpr float kShipNameRowHeight = 30.0f;
+
+// The panel's own labels and lists, as the components they are.
+unity::GameObject* ShipNameObjectOf(il2cpp::Object* component)
+{
+  auto* as_component = component->As<unity::Component>();
+  return as_component ? as_component->gameObject() : nullptr;
+}
+unity::RectTransform* ShipNameRectOf(il2cpp::Object* component)
+{
+  auto* as_component = component->As<unity::Component>();
+  auto* transform    = as_component ? as_component->transform() : nullptr;
+  return transform ? transform->As<unity::RectTransform>() : nullptr;
+}
+
+// The ship name row added to one large panel, found again by the panel's buff list. The handles are weak: the panel
+// owns both objects and may destroy them.
+struct ShipNameRow {
   il2cpp::GcHandle scroller;
   il2cpp::GcHandle label;
-  unity::Vector2   original_top{};
-  bool             visible = false;
+  // The buff list's top edge without the row.
+  unity::Vector2 original_top{};
+  bool           visible = false;
 
   unity::RectTransform* Scroller() const
   { return scroller.Get<unity::RectTransform>(); }
@@ -87,95 +82,47 @@ struct Row {
 
   void Hide()
   {
-    if (unity::Alive(Label()))
-      SetActive(Label(), false);
+    if (auto* label_object = unity::Alive(Label()) ? ShipNameObjectOf(Label()) : nullptr)
+      label_object->SetActive(false);
     if (visible && unity::Alive(Scroller()))
       Scroller()->SetOffsetMax(original_top);
     visible = false;
   }
-};
-std::vector<Row> rows;
 
-void HideWidgetRow(ForbiddenTechInventoryItemWidget* widget)
-{
-  auto* scroller = widget->buffListScroller();
-  if (!unity::Alive(scroller))
-    return;
-  auto* rect = RectOf(scroller);
-  for (auto& row : rows) {
-    if (row.Scroller() == rect)
-      row.Hide();
-  }
-}
-
-void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
-{
-  // Only the large selected-item panel: inventory tiles retain their native dock badges.
-  if (widget->widgetType() != ForbiddenTechInventoryItemWidget::Type::LargeShowcase)
-    return;
-
-  auto* scroller = widget->buffListScroller();
-  if (!unity::Alive(scroller))
-    return;
-  auto* rect = RectOf(scroller);
-  if (!rect)
-    throw std::runtime_error("Forbidden Tech buff layout unavailable");
-
-  std::erase_if(rows, [](const Row& row) { return !unity::Alive(row.Scroller()); });
-  auto found = std::find_if(rows.begin(), rows.end(), [rect](const Row& row) { return row.Scroller() == rect; });
-  if (found == rows.end()) {
-    Row row;
-    row.original_top = rect->offsetMax();
-    row.scroller     = il2cpp::GcHandle::Weak(rect);
-    if (!row.scroller)
-      return;
-    rows.push_back(std::move(row));
-    found = std::prev(rows.end());
-  }
-  auto& row = *found;
-  // Clear before resolving a new assignment so errors/unassigned tech cannot retain an old ship name.
-  row.Hide();
-  // Native refresh may have resized the panel since the previous selection.
-  row.original_top = rect->offsetMax();
-  if (!Config::Get().ui.forbidden_tech_ship_name)
-    return;
-  const auto name = EquippedShipName(widget);
-  if (name.empty())
-    return;
-
-  try {
-    auto* label = row.Label();
-    if (!unity::Alive(label)) {
+  // Shows `name` in the row, cloning the panel's name label on first use. Null when shown, otherwise what failed.
+  const char* Show(ForbiddenTechInventoryItemWidget* widget, unity::RectTransform* list, const std::string& name)
+  {
+    auto* text_label = Label();
+    if (!unity::Alive(text_label)) {
       auto* source = widget->name();
       if (!unity::Alive(source))
-        return;
-      label = unity::Instantiate(source, rect->parent());
-      if (!unity::Alive(label))
-        throw std::runtime_error("Forbidden Tech ship label could not be created");
-      SetActive(label, false);
-      row.label = il2cpp::GcHandle::Weak(label);
-      if (!row.label)
-        throw std::runtime_error("Forbidden Tech label handle unavailable");
+        return nullptr;
+      text_label = unity::Instantiate(source, list->parent());
+      if (!unity::Alive(text_label))
+        return "Forbidden Tech ship label could not be created";
+      label = il2cpp::GcHandle::Weak(text_label);
     }
-    auto* label_rect = RectOf(label);
+    auto* label_object = ShipNameObjectOf(text_label);
+    if (!label_object)
+      return "Forbidden Tech label object unavailable";
+    label_object->SetActive(false);
+    auto* label_rect = ShipNameRectOf(text_label);
     if (!label_rect)
-      throw std::runtime_error("Forbidden Tech ship label layout unavailable");
-    const auto min     = rect->offsetMin();
-    const auto max     = row.original_top;
-    const auto anchors = rect->anchorMax();
-    auto anchor_min    = rect->anchorMin();
-    anchor_min.y       = anchors.y;
-    label_rect->SetAnchorMin(anchor_min);
+      return "Forbidden Tech ship label layout unavailable";
+    const auto min     = list->offsetMin();
+    const auto max     = original_top;
+    const auto anchors = list->anchorMax();
+    label_rect->SetAnchorMin({list->anchorMin().x, anchors.y});
     label_rect->SetAnchorMax(anchors);
     label_rect->SetPivot({0.5f, 1.0f});
-    label_rect->SetOffsetMin({min.x, max.y - RowHeight});
+    label_rect->SetOffsetMin({min.x, max.y - kShipNameRowHeight});
     label_rect->SetOffsetMax(max);
 
     // Target resolves the graphic lazily, even when the source label was inactive at clone time.
-    auto* target = label->Target();
+    auto* target = text_label->Target();
     auto* text   = target ? target->As<unity::TMP_Text>() : nullptr;
     if (!text)
-      throw std::runtime_error("Forbidden Tech ship label text unavailable");
+      return "Forbidden Tech ship label text unavailable";
     text->SetAlignment(unity::TMP_Text::Alignment::Left); // Left, vertically centred.
     text->SetRaycastTarget(false);
     text->SetRichText(false); // Ship names are plain text, never markup.
@@ -184,46 +131,82 @@ void UpdateRow(ForbiddenTechInventoryItemWidget* widget)
     text->SetEnableAutoSizing(false);
     text->SetFontSize(20.0f);
     text->SetColor({1.0f, 1.0f, 1.0f, 1.0f});
-    label->OverrideLocalizedText(il2cpp::NewString("Equipped on: " + name));
+    text_label->OverrideLocalizedText(il2cpp::NewString("Equipped on: " + name));
     // Keep the panel's outer size, reserving one row from the scrollable buff area.
-    rect->SetOffsetMax({max.x, max.y - RowHeight});
-    row.visible = true;
-    SetActive(label, true);
+    list->SetOffsetMax({max.x, max.y - kShipNameRowHeight});
+    visible = true;
+    label_object->SetActive(true);
     static bool reported = false;
-    if (!reported) {
-      reported = true;
+    if (!std::exchange(reported, true))
       spdlog::info("[ForbiddenTechShipName] equipped-ship row created and populated");
-    }
-  } catch (...) {
-    row.Hide();
-    throw;
+    return nullptr;
   }
+};
+std::vector<ShipNameRow> ship_name_rows;
+
+// Hides the row of the widget's panel, if it has one.
+void HideShipNameRow(ForbiddenTechInventoryItemWidget* widget)
+{
+  auto* scroller = widget->buffListScroller();
+  if (!unity::Alive(scroller))
+    return;
+  auto* list = ShipNameRectOf(scroller);
+  for (auto& row : ship_name_rows)
+    if (row.Scroller() == list)
+      row.Hide();
 }
+
+// Shows the equipped ship in the large selected-item panel after the game refreshed it. Null unless something
+// failed, which then says what.
+const char* UpdateShipNameRow(ForbiddenTechInventoryItemWidget* widget)
+{
+  // Only the large selected-item panel: inventory tiles retain their native dock badges.
+  if (widget->widgetType() != ForbiddenTechInventoryItemWidget::Type::LargeShowcase)
+    return nullptr;
+  auto* scroller = widget->buffListScroller();
+  if (!unity::Alive(scroller))
+    return nullptr;
+  auto* list = ShipNameRectOf(scroller);
+  if (!list)
+    return "Forbidden Tech buff layout unavailable";
+
+  std::erase_if(ship_name_rows, [](const ShipNameRow& row) { return !unity::Alive(row.Scroller()); });
+  auto row = std::ranges::find(ship_name_rows, list, &ShipNameRow::Scroller);
+  if (row == ship_name_rows.end()) {
+    ship_name_rows.push_back({.scroller = il2cpp::GcHandle::Weak(list), .original_top = list->offsetMax()});
+    row = std::prev(ship_name_rows.end());
+  }
+  // Clear before resolving a new assignment so errors/unassigned tech cannot retain an old ship name.
+  row->Hide();
+  // Native refresh may have resized the panel since the previous selection.
+  row->original_top = list->offsetMax();
+  if (!Config::Get().ui.forbidden_tech_ship_name)
+    return nullptr;
+  const auto name = EquippedShipName(widget);
+  if (name.empty())
+    return nullptr;
+  const char* failure = row->Show(widget, list, name);
+  if (failure)
+    row->Hide();
+  return failure;
+}
+
+// --- Hooks ---
 
 void ForbiddenTechInventoryItemWidget_SetWidgetData_Hook(auto original, ForbiddenTechInventoryItemWidget* _this)
 {
-  try {
-    HideWidgetRow(_this);
-  } catch (const std::exception&) {
-  }
+  HideShipNameRow(_this);
   original(_this);
-  try {
-    UpdateRow(_this);
-  } catch (const std::exception& error) {
+  if (const char* failure = UpdateShipNameRow(_this)) {
     static bool warned = false;
-    if (!warned) {
-      warned = true;
-      spdlog::warn("[ForbiddenTechShipName] native display retained: {}", error.what());
-    }
+    if (!std::exchange(warned, true))
+      spdlog::warn("[ForbiddenTechShipName] native display retained: {}", failure);
   }
 }
 
 void ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook(auto original, ForbiddenTechInventoryItemWidget* _this)
 {
-  try {
-    HideWidgetRow(_this);
-  } catch (const std::exception&) {
-  }
+  HideShipNameRow(_this);
   original(_this);
 }
 

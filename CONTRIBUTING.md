@@ -213,8 +213,7 @@ It uses text matching. Runtime type checks and in-game validation remain necessa
 | `sync/state.cc` | Comparisons, removals, and per-target acknowledgements |
 | `sync/upload.cc` | Sessions, the record store, target workers, and HTTP delivery |
 | `sync/battlelogs.cc` | Battle-journal fetching |
-| `sync/fleets.cc` | Client fleet records: state changes, snapshots, and late re-reads, on the game thread |
-| `sync/fleet_watch.cc` | Fleet state polling, baselines, and transitions for fleet sync |
+| `sync/fleets.cc` | Client fleet records: slot polling, baselines, state changes, snapshots, and late re-reads, on the game thread |
 
 Payload construction and HTTP run outside the store lock.
 Session generations prevent old responses and acknowledgements from changing a new login.

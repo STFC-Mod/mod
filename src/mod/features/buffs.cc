@@ -9,6 +9,8 @@
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 
+#include <algorithm>
+
 namespace
 {
 // Leaves out the buffs that only apply while docked at the station.
@@ -25,13 +27,7 @@ bool BuffService_IsBuffConditionMet_Hook(auto original, il2cpp::Object* _this, B
 // with a null buff crashes the game, so it is answered with no buffs instead.
 il2cpp::List<il2cpp::Object*>* BuffService_ExtractBuffsOfType_Hook(auto original, ClientModifierType modifier,
                                                                    il2cpp::List<il2cpp::Object*>* list)
-{
-  if (list)
-    for (auto* buff : *list)
-      if (!buff)
-        return nullptr;
-  return original(modifier, list);
-}
+{ return std::ranges::contains(il2cpp::Items(list), nullptr) ? nullptr : original(modifier, list); }
 
 bool InstallOutOfDockPower()
 {

@@ -244,6 +244,13 @@ struct SmartScrollerBase : il2cpp::Object {
   std::optional<float> ScrollPosition()
   { return TryCall<"get_ScrollPosition", float()>(); }
 
+  // How many cards are spawned; empty when the pool is missing or its count could not be read.
+  std::optional<int32_t> SpawnedCount()
+  {
+    auto* items = spawnedItems();
+    return items ? items->TryCall<"get_Count", int32_t()>() : std::nullopt;
+  }
+
   // The tooltip widget on a spawned card, active or not.
   static InventoryTooltipTriggerWidget* CardTooltip(unity::Component* card)
   {

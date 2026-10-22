@@ -13,22 +13,22 @@
 
 #include <algorithm>
 #include <string_view>
-#include <utility>
 
 namespace
 {
 // The localization identifier of the "X of Y" cargo label.
 constexpr std::string_view kCargoIdentifier = "shared_x_of_y_x_coloured";
 
-int SignificantDecimals()
-{ return std::clamp(Config::Get().ui.cargo_significant_decimals, 0, 6); }
+// --- Cargo format ---
 
-// m_significantDecimals is read by Localize(), which runs after SetLocalTextParameters, so set it here for good.
+// Localize() reads m_significantDecimals after SetLocalTextParameters, so setting it first covers the label's
+// next render.
 void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, ColourTextLocalizer* _this, bool parse_id,
                                                      void* args)
 {
-  if (Config::Get().ui.format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
-    _this->SetSignificantDecimals(SignificantDecimals());
+  const auto& ui = Config::Get().ui;
+  if (ui.format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
+    _this->SetSignificantDecimals(std::clamp(ui.cargo_significant_decimals, 0, 6));
   original(_this, parse_id, args);
 }
 
@@ -45,16 +45,20 @@ bool IsCargoText(LegacyComparableProgressBar* bar)
   if (context && context->klass == CargoProgressData::Raw())
     return true;
   static bool reported = false;
-  if (!std::exchange(reported, true))
+  if (!reported) {
+    reported = true;
     spdlog::warn("[InstantCargo] the cargo label shows a {}, not cargo; keeping the game's count-up",
                  context ? il2cpp::ClassName(context->klass) : "null");
+  }
   return false;
 }
 
 void LegacyComparableProgressBar_SetWidgetData_Hook(auto original, LegacyComparableProgressBar* _this)
 {
-  if (!Config::Get().ui.instant_cargo_counter || !IsCargoText(_this))
-    return original(_this);
+  if (!Config::Get().ui.instant_cargo_counter || !IsCargoText(_this)) {
+    original(_this);
+    return;
+  }
   // Render the current total through the game's own formatting with the prefab's snap flag set, then restore
   // the flag so reward updates and interpolation carry on normally.
   const bool previous = _this->snapToValue();

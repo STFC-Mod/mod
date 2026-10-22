@@ -14,6 +14,7 @@
 #include <unity/input.h>
 
 #include <chrono>
+#include <optional>
 
 #if _WIN32
 #include <Windows.h>
@@ -21,11 +22,12 @@
 
 namespace
 {
-using Clock = std::chrono::steady_clock;
-
+// The frame tick dispatches shortcuts whether or not this feature installed; this says whether it did.
 bool hotkeys_installed = false;
 
-template <auto Section, auto Setting> void Toggle()
+// --- Setting shortcuts ---
+
+template <auto Section, auto Setting> void ToggleSetting()
 {
   auto& section    = Config::Get().*Section;
   section.*Setting = !(section.*Setting);
@@ -37,12 +39,6 @@ template <spdlog::level::level_enum Level> void SetLogLevel()
   spdlog::flush_on(Level);
 }
 
-template <void (*Adjust)(bool), bool Up> void Scale()
-{ Adjust(Up); }
-
-void ReloadSettings()
-{ Config::Reload(); }
-
 struct SettingShortcut {
   Action shortcut;
   void (*run)();
@@ -51,39 +47,41 @@ struct SettingShortcut {
 };
 
 // Shortcuts that change a setting. The game sees their keys too. The first pressed one runs.
-constexpr SettingShortcut kSettings[] = {
-    {Action::kUiScaleUp, Scale<AdjustUiScale, true>, true},
-    {Action::kUiScaleDown, Scale<AdjustUiScale, false>, true},
-    {Action::kUiShipScaleUp, Scale<AdjustUiShipScale, true>, true},
-    {Action::kUiShipScaleDown, Scale<AdjustUiShipScale, false>, true},
-    {Action::kUiViewerScaleUp, Scale<AdjustUiViewerScale, true>, true},
-    {Action::kUiViewerScaleDown, Scale<AdjustUiViewerScale, false>, true},
+constexpr SettingShortcut kSettingShortcuts[] = {
+    {Action::kUiScaleUp, [] { AdjustUiScale(true); }, true},
+    {Action::kUiScaleDown, [] { AdjustUiScale(false); }, true},
+    {Action::kUiShipScaleUp, [] { AdjustUiShipScale(true); }, true},
+    {Action::kUiShipScaleDown, [] { AdjustUiShipScale(false); }, true},
+    {Action::kUiViewerScaleUp, [] { AdjustUiViewerScale(true); }, true},
+    {Action::kUiViewerScaleDown, [] { AdjustUiViewerScale(false); }, true},
     {Action::kToggleAutoConfirmInstantWarp, CycleInstantWarpConfirmation},
-    {Action::kTogglePreviewLocate, Toggle<&Config::ui, &Config::Ui::disable_preview_locate>},
-    {Action::kTogglePreviewRecall, Toggle<&Config::ui, &Config::Ui::disable_preview_recall>},
-    {Action::kToggleCargoDefault, Toggle<&Config::ui, &Config::Ui::show_cargo_default>},
-    {Action::kToggleCargoPlayer, Toggle<&Config::ui, &Config::Ui::show_player_cargo>},
-    {Action::kToggleCargoStation, Toggle<&Config::ui, &Config::Ui::show_station_cargo>},
-    {Action::kToggleCargoHostile, Toggle<&Config::ui, &Config::Ui::show_hostile_cargo>},
-    {Action::kToggleCargoArmada, Toggle<&Config::ui, &Config::Ui::show_armada_cargo>},
+    {Action::kTogglePreviewLocate, ToggleSetting<&Config::ui, &Config::Ui::disable_preview_locate>},
+    {Action::kTogglePreviewRecall, ToggleSetting<&Config::ui, &Config::Ui::disable_preview_recall>},
+    {Action::kToggleCargoDefault, ToggleSetting<&Config::ui, &Config::Ui::show_cargo_default>},
+    {Action::kToggleCargoPlayer, ToggleSetting<&Config::ui, &Config::Ui::show_player_cargo>},
+    {Action::kToggleCargoStation, ToggleSetting<&Config::ui, &Config::Ui::show_station_cargo>},
+    {Action::kToggleCargoHostile, ToggleSetting<&Config::ui, &Config::Ui::show_hostile_cargo>},
+    {Action::kToggleCargoArmada, ToggleSetting<&Config::ui, &Config::Ui::show_armada_cargo>},
     {Action::kLogLevelOff, SetLogLevel<spdlog::level::off>},
     {Action::kLogLevelError, SetLogLevel<spdlog::level::err>},
     {Action::kLogLevelWarn, SetLogLevel<spdlog::level::warn>},
     {Action::kLogLevelInfo, SetLogLevel<spdlog::level::info>},
     {Action::kLogLevelDebug, SetLogLevel<spdlog::level::debug>},
     {Action::kLogLevelTrace, SetLogLevel<spdlog::level::trace>},
-    {Action::kReloadSettings, ReloadSettings},
+    {Action::kReloadSettings, [] { Config::Reload(); }},
 };
 
 void SettingShortcuts()
 {
-  for (const auto& setting : kSettings) {
+  for (const auto& setting : kSettingShortcuts) {
     if (setting.held ? Shortcut::IsPressed(setting.shortcut) : Shortcut::IsDown(setting.shortcut)) {
       setting.run();
       return;
     }
   }
 }
+
+// --- Escape exit ---
 
 // With disable_escape_exit, Escape no longer reaches the game's exit prompt. disable_escape_exit_timer > 0 lets
 // a double tap within that many milliseconds through. Returns true when Escape is swallowed.
@@ -96,22 +94,45 @@ bool SwallowEscape()
   if (config.ui.disable_escape_exit_timer <= 0 || !unity::Key::Down(unity::KeyCode::Escape))
     return true;
 
-  static Clock::time_point first_press{};
-  const auto               now = Clock::now();
-  if (first_press == Clock::time_point{}
-      || now - first_press > std::chrono::milliseconds(config.ui.disable_escape_exit_timer)) {
+  static std::optional<std::chrono::steady_clock::time_point> first_press;
+  const auto                                                  now = std::chrono::steady_clock::now();
+  if (!first_press || now - *first_press > std::chrono::milliseconds(config.ui.disable_escape_exit_timer)) {
     first_press = now;
     return true;
   }
   // Consume the pair so a quick third press starts a new one.
-  first_press = {};
+  first_press.reset();
   return false;
 }
 
-// The shortcut dispatch for one frame. Returns true when the game's Update must not run, so it does not also
-// handle the key.
-bool DispatchShortcuts()
+// --- Scopely hotkeys ---
+
+// With Scopely hotkeys off, the game never registers its own input actions, so its shortcuts cannot fire.
+void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _this)
 {
+  if (Config::Get().control.use_scopely_hotkeys)
+    original(_this);
+}
+
+bool InstallHotkeys()
+{
+  il2cpp::HookSet hooks("Hotkeys");
+  IL2CPP_STAGE(hooks, ShortcutsManager::Class::Method("InitializeActions"), ShortcutsManager_InitializeActions_Hook);
+  // The badges only make sense when the game's own input actions are under the mod's control.
+  if (hooks.Commit())
+    InstallKeybindBadges();
+  InstallFleetActions();
+  // The dispatch itself needs no hook: the frame tick runs it. The hint badges and pre-scan cargo are extras whose
+  // own sets report themselves.
+  hotkeys_installed = true;
+  return true;
+}
+} // namespace
+
+bool HandleShortcuts()
+{
+  if (!hotkeys_installed)
+    return false;
   auto& config = Config::Get();
 
   if (Shortcut::IsDown(Action::kDisableHotKeys)) {
@@ -143,7 +164,8 @@ bool DispatchShortcuts()
   if (!typing && Shortcut::IsDown(Action::kRestart)) {
     spdlog::info("[Hotkeys] clearing the localisation cache and restarting");
     LanguageManager::ClearCache();
-    Hub::App()->Reload();
+    if (auto* app = Hub::App())
+      app->Reload();
     return true;
   }
   if (!typing && Shortcut::IsDown(Action::kQuit)) {
@@ -151,7 +173,8 @@ bool DispatchShortcuts()
 #if _WIN32
     TerminateProcess(GetCurrentProcess(), 1);
 #else
-    Hub::App()->Quit();
+    if (auto* app = Hub::App())
+      app->Quit();
 #endif
     return true;
   }
@@ -180,30 +203,5 @@ bool DispatchShortcuts()
 
   return FleetActionShortcuts() || SwallowEscape();
 }
-
-// With Scopely hotkeys off, the game never registers its own input actions, so its shortcuts cannot fire.
-void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _this)
-{
-  if (Config::Get().control.use_scopely_hotkeys)
-    original(_this);
-}
-
-bool InstallHotkeys()
-{
-  il2cpp::HookSet hooks("Hotkeys");
-  IL2CPP_STAGE(hooks, ShortcutsManager::Class::Method("InitializeActions"), ShortcutsManager_InitializeActions_Hook);
-  // The badges only make sense when the game's own input actions are under the mod's control.
-  if (hooks.Commit())
-    InstallKeybindBadges();
-  InstallFleetActions();
-  // The dispatch itself needs no hook: the frame tick runs it. The hint badges and pre-scan cargo are extras whose
-  // own sets report themselves.
-  hotkeys_installed = true;
-  return true;
-}
-} // namespace
-
-bool HandleShortcuts()
-{ return hotkeys_installed && DispatchShortcuts(); }
 
 const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys};

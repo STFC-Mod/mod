@@ -3,9 +3,11 @@
 // The decisions behind the Kir'Shara queue fixes in action_queue.cc, kept free of game types so tests can drive
 // them. Each fix acts only on narrow, observed evidence and otherwise leaves the game's own handling alone.
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -61,6 +63,7 @@ public:
       if (record.started < slot->started)
         slot = &record;
     }
+    // An attempt without a readable head still clears the slot, so an older attempt cannot answer for it.
     *slot             = {};
     const auto serial = ++serial_;
     if (state.valid && state.count > 0 && state.front != 0)
@@ -150,6 +153,9 @@ struct QueueSnapshot {
   bool                        is_engaging            = false;
   std::int64_t                last_engaged_target_id = 0;
   std::int64_t                pending_target_id      = 0;
+
+  constexpr std::span<const std::int64_t> Targets() const
+  { return std::span(target_ids).first(static_cast<std::size_t>(captured_target_count)); }
 };
 
 // A destroyed target the native disposal left at the head of an idle queue.
@@ -159,26 +165,6 @@ constexpr bool ShouldProcessDestroyedHead(bool enabled, bool target_destroyed, s
   return enabled && target_destroyed && target_id != 0 && after_native.present && after_native.count > 0
          && after_native.head_target_id == target_id && !after_native.is_engaging
          && after_native.last_engaged_target_id != target_id && after_native.pending_target_id != target_id;
-}
-
-constexpr bool IsNoTargetOrRemovedPrefix(std::int64_t target_id, const QueueSnapshot& before_native, int removed_prefix)
-{
-  if (target_id <= 0)
-    return true;
-  for (int index = 0; index < removed_prefix; ++index)
-    if (before_native.target_ids[index] == target_id)
-      return true;
-  return false;
-}
-
-constexpr bool LatchNamesSurvivingTarget(std::int64_t target_id, const QueueSnapshot& queue)
-{
-  if (target_id <= 0)
-    return false;
-  for (int index = 0; index < queue.count; ++index)
-    if (queue.target_ids[index] == target_id)
-      return true;
-  return false;
 }
 
 // The native call removed an exact prefix and left the same fleet idle with an unchanged remainder, and neither
@@ -196,13 +182,12 @@ constexpr bool IsNativePruneResumeCandidate(bool enabled, bool player_fleet_idle
       || after_native.captured_target_count != after_native.count)
     return false;
 
-  const auto removed_prefix = before_native.count - after_native.count;
-  for (int index = 0; index < after_native.count; ++index)
-    if (after_native.target_ids[index] != before_native.target_ids[index + removed_prefix])
-      return false;
-
-  return IsNoTargetOrRemovedPrefix(after_native.last_engaged_target_id, before_native, removed_prefix)
-         && IsNoTargetOrRemovedPrefix(after_native.pending_target_id, before_native, removed_prefix);
+  // A latch that names nothing, or only a target the native call removed, is stale rather than live.
+  const auto removed =
+      before_native.Targets().first(static_cast<std::size_t>(before_native.count - after_native.count));
+  const auto stale = [&](std::int64_t target) { return target <= 0 || std::ranges::contains(removed, target); };
+  return std::ranges::equal(after_native.Targets(), before_native.Targets().subspan(removed.size()))
+         && stale(after_native.last_engaged_target_id) && stale(after_native.pending_target_id);
 }
 
 // The queue read again just before resuming still matches what the decision was made on.
@@ -215,15 +200,15 @@ constexpr bool IsStableResumePostcondition(const QueueSnapshot& expected, const 
       || confirmed.targets_truncated || expected.captured_target_count != expected.count
       || confirmed.captured_target_count != confirmed.count || confirmed.is_engaging || expected.is_engaging
       || confirmed.last_engaged_target_id != expected.last_engaged_target_id
-      || confirmed.pending_target_id != expected.pending_target_id
-      || LatchNamesSurvivingTarget(confirmed.last_engaged_target_id, confirmed)
-      || LatchNamesSurvivingTarget(confirmed.pending_target_id, confirmed))
+      || confirmed.pending_target_id != expected.pending_target_id)
     return false;
 
-  for (int index = 0; index < expected.count; ++index)
-    if (confirmed.target_ids[index] != expected.target_ids[index])
-      return false;
-  return true;
+  // Both queues are fully captured by now, so Targets() is the whole queue.
+  const auto queued = [&](std::int64_t target) {
+    return target > 0 && std::ranges::contains(confirmed.Targets(), target);
+  };
+  return std::ranges::equal(confirmed.Targets(), expected.Targets()) && !queued(confirmed.last_engaged_target_id)
+         && !queued(confirmed.pending_target_id);
 }
 
 // --- Queue address guard ---

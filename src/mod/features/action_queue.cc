@@ -18,15 +18,16 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <array>
 #include <mutex>
+#include <ranges>
 #include <utility>
+#include <vector>
 
 namespace
 {
-using action_queue::Clock;
+using Clock = action_queue::Clock;
 
-// The only check a hook needs: each fix installs all of its hooks or none, so a hook that runs has its partners.
+// The only check a hook needs: each fix installs whole or not at all, so a hook that runs has its partners.
 bool QueueFixesEnabled()
 {
   const auto& control = Config::Get().control;
@@ -34,71 +35,63 @@ bool QueueFixesEnabled()
 }
 
 // Sets a thread-local for the length of one native call, so hooks the game reaches from inside it can see it.
-template <typename T> class Scoped
+template <typename T> class QueueCallScope
 {
 public:
-  Scoped(T& slot, T value)
+  QueueCallScope(T& slot, T value)
       : slot_(slot)
       , previous_(std::exchange(slot, value))
   {
   }
-  ~Scoped()
+  ~QueueCallScope()
   { slot_ = previous_; }
-  Scoped(const Scoped&)            = delete;
-  Scoped& operator=(const Scoped&) = delete;
+  QueueCallScope(const QueueCallScope&)            = delete;
+  QueueCallScope& operator=(const QueueCallScope&) = delete;
 
 private:
   T& slot_;
   T  previous_;
 };
 
-// A queue's actions and their count, or null when the queue has no list.
-il2cpp::List<QueueableAction*>* Actions(ActionQueueInstance* queue, int32_t& count)
-{
-  auto* list = queue ? queue->actionQueue() : nullptr;
-  count      = list ? list->Count() : 0;
-  return list;
-}
-
 ActionQueueInstance* FindQueue(ActionQueueManager* manager, int64_t fleet_id)
 {
-  if (auto* queues = manager->battleQueue())
-    for (auto* queue : *queues)
-      if (queue && queue->PlayerFleetId() == fleet_id)
-        return queue;
+  for (auto* queue : il2cpp::Items(manager->battleQueue()))
+    if (queue && queue->PlayerFleetId() == fleet_id)
+      return queue;
   return nullptr;
 }
 
+// Empty, which reads as no queue, when the queue or any captured action cannot be read.
 action_queue::QueueSnapshot SnapshotOf(ActionQueueInstance* queue)
 {
-  action_queue::QueueSnapshot snapshot;
-  int32_t                     count   = 0;
-  auto*                       actions = Actions(queue, count);
+  auto* actions = queue ? queue->actionQueue() : nullptr;
   if (!actions)
     return {};
-  snapshot.count                  = count;
-  snapshot.player_fleet_id        = queue->PlayerFleetId();
-  snapshot.is_engaging            = queue->IsEngaging();
-  snapshot.last_engaged_target_id = queue->LastEngagedTargetId();
-  snapshot.pending_target_id      = queue->PendingEngageTargetId();
-  snapshot.captured_target_count  = std::min(count, static_cast<int32_t>(snapshot.target_ids.size()));
-  snapshot.targets_truncated      = count > snapshot.captured_target_count;
-  for (int32_t i = 0; i < snapshot.captured_target_count; ++i) {
-    auto* action = (*actions)[i];
-    if (!action || !(snapshot.target_ids[i] = action->FleetId()))
+  action_queue::QueueSnapshot snapshot{
+      .player_fleet_id        = queue->PlayerFleetId(),
+      .count                  = actions->Count(),
+      .is_engaging            = queue->IsEngaging(),
+      .last_engaged_target_id = queue->LastEngagedTargetId(),
+      .pending_target_id      = queue->PendingEngageTargetId(),
+  };
+  for (auto* action : *actions | std::views::take(snapshot.target_ids.size())) {
+    const auto target = action ? action->FleetId() : 0;
+    if (!target)
       return {};
+    snapshot.target_ids[snapshot.captured_target_count++] = target;
   }
-  snapshot.head_target_id = count ? snapshot.target_ids[0] : 0;
-  snapshot.present        = snapshot.player_fleet_id != 0;
+  snapshot.targets_truncated = snapshot.count > snapshot.captured_target_count;
+  snapshot.head_target_id    = snapshot.count ? snapshot.target_ids[0] : 0;
+  snapshot.present           = snapshot.player_fleet_id != 0;
   return snapshot;
 }
 
 // --- Faster queue recovery ---
 
 // Shared by four hooks; locked rather than assuming they all run on the game thread.
-std::mutex requests_mutex;
+std::mutex recovery_mutex;
 // Never destroyed: freeing a GC handle in a static destructor can run after the runtime has shut down.
-auto& requests = *new action_queue::Requests<il2cpp::GcHandle>;
+auto& recovery_requests = *new action_queue::Requests<il2cpp::GcHandle>;
 
 // What the course response handler knew on entry, for the retry decision it makes inside.
 struct CourseContext {
@@ -110,32 +103,36 @@ thread_local CourseContext* current_course = nullptr;
 
 void ClearRequests()
 {
-  std::lock_guard lock(requests_mutex);
-  requests.Clear();
+  std::lock_guard lock(recovery_mutex);
+  recovery_requests.Clear();
 }
 
 // `target`, when given, is checked against every queued action; otherwise only the head is read.
 action_queue::RetryState RetryStateOf(ActionQueueInstance* queue, int64_t target = 0)
 {
-  action_queue::RetryState state;
   if (!queue)
-    return state;
-  state.fleet     = queue->PlayerFleetId();
-  state.attempt   = queue->LastEngageAttemptTime();
-  state.engaging  = queue->IsEngaging();
-  int32_t count   = 0;
-  auto*   actions = Actions(queue, count);
+    return {};
+  action_queue::RetryState state{
+      .fleet    = queue->PlayerFleetId(),
+      .attempt  = queue->LastEngageAttemptTime(),
+      .engaging = queue->IsEngaging(),
+  };
+  auto* actions = queue->actionQueue();
   if (!actions)
     return state;
-  state.count = count;
-  for (int32_t i = 0; i < (target ? count : std::min(count, 1)); ++i) {
-    auto* action = (*actions)[i];
-    if (!action)
+  state.count = actions->Count();
+  if (state.count > 0) {
+    auto* head = (*actions)[0];
+    if (!head)
       return state;
-    const auto id = action->FleetId();
-    if (i == 0)
-      state.front = id;
-    state.contains_target |= target && id == target;
+    state.front = head->FleetId();
+  }
+  if (target) {
+    for (auto* action : *actions) {
+      if (!action)
+        return state;
+      state.contains_target |= action->FleetId() == target;
+    }
   }
   state.valid = state.fleet != 0;
   return state;
@@ -145,16 +142,12 @@ action_queue::RetryState RetryStateOf(ActionQueueInstance* queue, int64_t target
 bool AbsentFromAllQueues(ActionQueueManager* manager, int64_t target)
 {
   auto* queues = manager->battleQueue();
-  if (!queues)
-    return false;
-  for (auto* queue : *queues) {
-    if (!queue)
-      continue;
-    const auto state = RetryStateOf(queue, target);
-    if (!state.valid || state.contains_target)
-      return false;
-  }
-  return true;
+  return queues && std::ranges::all_of(*queues, [target](ActionQueueInstance* queue) {
+           if (!queue)
+             return true;
+           const auto state = RetryStateOf(queue, target);
+           return state.valid && !state.contains_target;
+         });
 }
 
 EngageResult ActionQueueManager_TryPlanPathAndEngageTarget_Hook(auto original, ActionQueueManager* _this,
@@ -163,16 +156,16 @@ EngageResult ActionQueueManager_TryPlanPathAndEngageTarget_Hook(auto original, A
   uint64_t serial = 0;
   if (QueueFixesEnabled()) {
     const auto      state = RetryStateOf(queue);
-    std::lock_guard lock(requests_mutex);
-    serial = requests.Remember(queue, state, Clock::now());
+    std::lock_guard lock(recovery_mutex);
+    serial = recovery_requests.Remember(queue, state, Clock::now());
   } else {
     ClearRequests();
   }
   const auto result = original(_this, fleet, queue);
   // Only a dispatched attempt can be answered by a course response.
   if (serial && result != EngageResult::Success) {
-    std::lock_guard lock(requests_mutex);
-    requests.Cancel(serial);
+    std::lock_guard lock(recovery_mutex);
+    recovery_requests.Cancel(serial);
   }
   return result;
 }
@@ -189,6 +182,7 @@ bool ActionQueueManager_ShouldRetryFailedSetCourse_Hook(auto original, ActionQue
     return retry;
   const auto& course = *current_course;
   const auto  state  = RetryStateOf(queue, target);
+  // Absence from every queue is checked below, last, because it reads all of them.
   if (course.target_id != target
       || !action_queue::CanAdvance(state, course.fleet_id, target, course.engaging_at_entry, course.queue == queue,
                                    true))
@@ -197,8 +191,8 @@ bool ActionQueueManager_ShouldRetryFailedSetCourse_Hook(auto original, ActionQue
   // still hold the target.
   if (!AbsentFromAllQueues(_this, target))
     return retry;
-  std::lock_guard lock(requests_mutex);
-  if (!requests.Consume(queue, state, target, Clock::now()))
+  std::lock_guard lock(recovery_mutex);
+  if (!recovery_requests.Consume(queue, state, target, Clock::now()))
     return retry;
   // True takes the handler's retry branch, which runs the native planner for this fleet with all of its checks.
   return true;
@@ -215,7 +209,7 @@ void ActionQueueManager_OnSetCourseResponseEventHandler_Hook(auto original, Acti
     course.queue             = FindQueue(_this, response.fleet_id);
     course.engaging_at_entry = course.queue && course.queue->IsEngaging();
   }
-  Scoped scope(current_course, &course);
+  QueueCallScope scope(current_course, &course);
   original(_this, response);
 }
 
@@ -230,10 +224,9 @@ void ActionQueueManager_StopWatchdogAndClearAllQueues_Hook(auto original, Action
 
 ActionQueueInstance* FindQueueWithHead(ActionQueueManager* manager, int64_t target)
 {
-  if (auto* queues = manager->battleQueue())
-    for (auto* queue : *queues)
-      if (const auto snapshot = SnapshotOf(queue); snapshot.present && snapshot.head_target_id == target)
-        return queue;
+  for (auto* queue : il2cpp::Items(manager->battleQueue()))
+    if (const auto snapshot = SnapshotOf(queue); snapshot.present && snapshot.head_target_id == target)
+      return queue;
   return nullptr;
 }
 
@@ -294,22 +287,17 @@ void ActionQueueManager_HandleStall_Hook(auto original, ActionQueueManager* _thi
 void ActionQueueManager_OnFleetsDisposedEventHandler_Hook(auto original, ActionQueueManager* _this,
                                                           il2cpp::List<FleetDeployedData*>* fleets)
 {
-  // Read before the game disposes of them. A wave destroys a handful at a time; 64 is plenty.
-  std::array<int64_t, 64> destroyed{};
-  size_t                  count = 0;
-  const auto              total = QueueFixesEnabled() && fleets ? fleets->Count() : 0;
-  for (int32_t i = 0; i < std::min<int32_t>(total, destroyed.size()); ++i) {
-    auto* fleet = (*fleets)[i];
-    if (!fleet || !fleet->IsDestroyed() || fleet->RemovalReason() != FleetRemovalReason::Destroyed)
-      continue;
-    const auto id = fleet->Id();
-    if (id && std::find(destroyed.begin(), destroyed.begin() + count, id) == destroyed.begin() + count)
-      destroyed[count++] = id;
-  }
+  if (!QueueFixesEnabled())
+    return original(_this, fleets);
+  // Read before the game disposes of them.
+  std::vector<int64_t> destroyed;
+  for (auto* fleet : il2cpp::Items(fleets))
+    if (fleet && fleet->IsDestroyed() && fleet->RemovalReason() == FleetRemovalReason::Destroyed)
+      if (const auto id = fleet->Id(); id && !std::ranges::contains(destroyed, id))
+        destroyed.push_back(id);
   original(_this, fleets);
-  for (size_t i = 0; i < count; ++i) {
-    const auto target = destroyed[i];
-    const auto queue  = SnapshotOf(FindQueueWithHead(_this, target));
+  for (const auto target : destroyed) {
+    const auto queue = SnapshotOf(FindQueueWithHead(_this, target));
     if (!action_queue::ShouldProcessDestroyedHead(true, true, target, queue))
       continue;
     _this->ProcessQueue(target, false);
@@ -346,21 +334,10 @@ action_queue::Address AddressOf(NodeAddress* address)
 // The fleet's own slot holds its queue, and every queued action names a target.
 bool OwnsNonemptyQueue(ActionQueueManager* manager, FleetPlayerData* fleet, int64_t fleet_id)
 {
-  auto*      queues = manager->battleQueue();
-  const auto index  = fleet->Index();
-  if (!queues || !fleet_id || index < 0 || static_cast<size_t>(index) >= queues->size())
-    return false;
-  auto* queue = (*queues)[index];
-  if (!queue || queue->PlayerFleetId() != fleet_id)
-    return false;
-  int32_t count   = 0;
-  auto*   actions = Actions(queue, count);
-  if (!actions || count == 0)
-    return false;
-  for (auto* action : *actions)
-    if (!action || !action->FleetId())
-      return false;
-  return true;
+  auto* queue   = il2cpp::At(manager->battleQueue(), fleet->Index());
+  auto* actions = fleet_id && queue && queue->PlayerFleetId() == fleet_id ? queue->actionQueue() : nullptr;
+  return actions && actions->Count() > 0
+         && std::ranges::all_of(*actions, [](QueueableAction* action) { return action && action->FleetId(); });
 }
 
 bool IsOwnDeployment(FleetDeployedData* deployment, int64_t fleet_id)
@@ -374,7 +351,7 @@ void ActionQueueManager_OnPlayerFleetStateChangedEventHandler_Hook(auto original
 {
   if (!QueueFixesEnabled())
     return original(_this, fleets);
-  Scoped scope(in_player_state_event, true);
+  QueueCallScope scope(in_player_state_event, true);
   original(_this, fleets);
 }
 
@@ -386,8 +363,8 @@ bool ActionQueueManager_DoesFleetQueueContainMismatchedAddressTargets_Hook(auto 
   const auto fleet_id = fleet->Id();
   if (!OwnsNonemptyQueue(_this, fleet, fleet_id))
     return original(_this, fleet);
-  AddressCheck check{fleet, fleet_id};
-  Scoped       scope(current_address_check, &check);
+  AddressCheck   check{fleet, fleet_id};
+  QueueCallScope scope(current_address_check, &check);
   return original(_this, fleet);
 }
 
@@ -434,8 +411,6 @@ FleetDeployedData* DeploymentService_GetDeployedFleet_Hook(auto original, Deploy
 }
 
 // --- Installation ---
-//
-// Each fix needs all of its hooks, so each installs as one HookSet: every hook or none.
 
 bool InstallActionQueueRecovery()
 {

@@ -3,6 +3,7 @@
 
 #include "features/action_queue.h"
 
+#include <algorithm>
 #include <cassert>
 #include <initializer_list>
 #include <iostream>
@@ -62,25 +63,33 @@ private:
   }
   void Reset()
   {
-    if (id_)
-      assert(live.erase(std::exchange(id_, 0)) == 1);
+    if (!id_)
+      return;
+    // Outside the assert, so the handle is released even when asserts are compiled out.
+    [[maybe_unused]] const auto erased = live.erase(id_);
+    assert(erased == 1);
+    id_ = 0;
   }
   unsigned id_ = 0;
 };
 
 using Requests = action_queue::Requests<FakeHandle>;
 const auto now = Clock::time_point{} + 100s;
-RetryState dispatch{true, 10, 100, 2.5f, 2, false, false};
-RetryState remaining{true, 10, 200, 2.5f, 1, false, false};
+// Fleet 10's queue when it dispatches its attempt on target 100, and after target 100 has gone.
+const RetryState dispatch{.valid = true, .fleet = 10, .front = 100, .attempt = 2.5f, .count = 2};
+const RetryState remaining{.valid = true, .fleet = 10, .front = 200, .attempt = 2.5f, .count = 1};
 
+// A copy of `value` with one change, for the cases that differ from a baseline in a single field.
+template <typename T, typename Change> T With(T value, Change change)
+{
+  change(value);
+  return value;
+}
+
+// A queue of `count` targets of which only the head is captured.
 QueueSnapshot Queue(int count, std::int64_t head)
 {
-  auto queue = QueueSnapshot{
-      .present         = true,
-      .player_fleet_id = 42,
-      .count           = count,
-      .head_target_id  = head,
-  };
+  QueueSnapshot queue{.present = true, .player_fleet_id = 42, .count = count, .head_target_id = head};
   if (count > 0) {
     queue.target_ids[0]         = head;
     queue.captured_target_count = count;
@@ -88,19 +97,16 @@ QueueSnapshot Queue(int count, std::int64_t head)
   return queue;
 }
 
+// A fully captured queue of `targets`.
 QueueSnapshot Queue(std::initializer_list<std::int64_t> targets)
 {
-  QueueSnapshot queue{
-      .present         = true,
-      .player_fleet_id = 42,
-      .count           = static_cast<int>(targets.size()),
-  };
-  int index = 0;
-  for (const auto target : targets) {
-    queue.target_ids[index++] = target;
-  }
-  queue.captured_target_count = queue.count;
-  queue.head_target_id        = queue.count > 0 ? queue.target_ids[0] : 0;
+  const auto    count = static_cast<int>(targets.size());
+  QueueSnapshot queue{.present               = true,
+                      .player_fleet_id       = 42,
+                      .count                 = count,
+                      .head_target_id        = count > 0 ? *targets.begin() : 0,
+                      .captured_target_count = count};
+  std::ranges::copy(targets, queue.target_ids.begin());
   return queue;
 }
 
@@ -115,9 +121,7 @@ void TestRecovery()
   assert(FakeHandle::live.empty());
 
   // Native retry remains responsible while the target is still queued, even after reordering.
-  auto reordered            = remaining;
-  reordered.contains_target = true;
-  assert(!CanAdvance(reordered, 10, 100, true, true, true));
+  assert(!CanAdvance(With(remaining, [](auto& s) { s.contains_target = true; }), 10, 100, true, true, true));
   assert(!CanAdvance(dispatch, 10, 100, true, true, true));
   // Cross-fleet target cleanup must retain native false-branch behavior without consuming the request.
   requests.Remember(1, dispatch, now);
@@ -128,15 +132,9 @@ void TestRecovery()
   assert(!CanAdvance(remaining, 10, 100, false, true, true));
   assert(!CanAdvance(remaining, 10, 100, true, false, true));
   assert(!CanAdvance(remaining, 10, 0, true, true, true));
-  auto invalid  = remaining;
-  invalid.valid = false;
-  assert(!CanAdvance(invalid, 10, 100, true, true, true));
-  auto empty  = remaining;
-  empty.count = 0;
-  assert(!CanAdvance(empty, 10, 100, true, true, true));
-  auto active     = remaining;
-  active.engaging = true;
-  assert(!CanAdvance(active, 10, 100, true, true, true));
+  assert(!CanAdvance(With(remaining, [](auto& s) { s.valid = false; }), 10, 100, true, true, true));
+  assert(!CanAdvance(With(remaining, [](auto& s) { s.count = 0; }), 10, 100, true, true, true));
+  assert(!CanAdvance(With(remaining, [](auto& s) { s.engaging = true; }), 10, 100, true, true, true));
 
   // Latest target/attempt supersedes old failures; pointer reuse after collection cannot resurrect identity.
   requests.Remember(1, dispatch, now);
@@ -147,9 +145,7 @@ void TestRecovery()
   requests.Remember(1, newer, now + 1s);
   assert(!requests.Consume(1, remaining, 100, now + 2s));
   requests.Remember(1, dispatch, now);
-  auto differentAttempt    = remaining;
-  differentAttempt.attempt = 9;
-  assert(!requests.Consume(1, differentAttempt, 100, now));
+  assert(!requests.Consume(1, With(remaining, [](auto& s) { s.attempt = 9; }), 100, now));
   FakeHandle::Collect(1);
   assert(!requests.Consume(1, remaining, 100, now));
   assert(FakeHandle::live.empty());
@@ -167,18 +163,12 @@ void TestRecovery()
   assert(!requests.Consume(1, remaining, 100, now + 30s));
   assert(FakeHandle::live.empty());
   // Bounded capacity, independent fleets and session cleanup release all handles.
-  for (int i = 1; i <= 9; ++i) {
-    auto s  = dispatch;
-    s.fleet = i;
-    requests.Remember(i, s, now + std::chrono::seconds(i));
+  for (int fleet = 1; fleet <= 9; ++fleet) {
+    requests.Remember(fleet, With(dispatch, [&](auto& s) { s.fleet = fleet; }), now + std::chrono::seconds(fleet));
     assert(FakeHandle::live.size() <= 8);
   }
-  auto first  = remaining;
-  first.fleet = 1;
-  assert(!requests.Consume(1, first, 100, now + 10s));
-  auto last  = remaining;
-  last.fleet = 9;
-  assert(requests.Consume(9, last, 100, now + 10s));
+  assert(!requests.Consume(1, With(remaining, [](auto& s) { s.fleet = 1; }), 100, now + 10s));
+  assert(requests.Consume(9, With(remaining, [](auto& s) { s.fleet = 9; }), 100, now + 10s));
   requests.Clear();
   requests.Clear();
   assert(FakeHandle::live.empty());
@@ -187,16 +177,14 @@ void TestRecovery()
 
 void TestThinProtection()
 {
-  // native engage results have stable diagnostic names
-  {
-    assert(EngageResultName(0).compare("success") == 0);
-    assert(EngageResultName(1).compare("skip-target") == 0);
-    assert(EngageResultName(2).compare("stop") == 0);
-    assert(EngageResultName(-1).compare("not-attempted") == 0);
-    assert(EngageResultName(99).compare("unknown") == 0);
-  }
+  // Native engage results have stable diagnostic names.
+  static_assert(EngageResultName(0) == "success");
+  static_assert(EngageResultName(1) == "skip-target");
+  static_assert(EngageResultName(2) == "stop");
+  static_assert(EngageResultName(-1) == "not-attempted");
+  static_assert(EngageResultName(99) == "unknown");
 
-  // destroyed head processing is exact and feature gated
+  // Destroyed-head processing is exact and gated on the setting.
   {
     const auto queue = Queue(2, 101);
 
@@ -207,7 +195,7 @@ void TestThinProtection()
     assert(!ShouldProcessDestroyedHead(true, true, 0, queue));
   }
 
-  // destroyed head processing refuses active queue latches
+  // Destroyed-head processing refuses active queue latches.
   {
     auto queue = Queue(2, 101);
 
@@ -223,7 +211,7 @@ void TestThinProtection()
     assert(!ShouldProcessDestroyedHead(true, true, 101, queue));
   }
 
-  // local kill and repeated disposal are no-ops once the exact target is absent
+  // A local kill and repeated disposal are no-ops once the exact target is absent.
   {
     const auto next_head = Queue(1, 202);
     const auto empty     = Queue(0, 0);
@@ -232,7 +220,7 @@ void TestThinProtection()
     assert(!ShouldProcessDestroyedHead(true, true, 101, empty));
   }
 
-  // native prune identifies a stranded new-head resume candidate
+  // A native prune leaves a stranded new head to resume.
   {
     const auto before = Queue({101, 202, 303, 404});
     const auto after  = Queue({303, 404});
@@ -240,7 +228,7 @@ void TestThinProtection()
     assert(IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // temporary unavailability without native removal is not a candidate
+  // Temporary unavailability without a native removal is not a candidate.
   {
     const auto before = Queue({101, 202});
     const auto after  = Queue({101, 202});
@@ -248,7 +236,7 @@ void TestThinProtection()
     assert(!IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // resume requires idle state and rejects latches on the surviving suffix
+  // Resuming requires an idle fleet and rejects latches on the surviving suffix.
   {
     const auto before = Queue({101, 202, 303});
 
@@ -268,7 +256,7 @@ void TestThinProtection()
     assert(!IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // resume accepts no-target sentinels and stale latches from the removed prefix
+  // Resuming accepts no-target sentinels and stale latches from the removed prefix.
   {
     const auto before = Queue({101, 202, 303, 404});
 
@@ -282,7 +270,7 @@ void TestThinProtection()
     assert(IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // resume rejects unrelated positive native latches
+  // Resuming rejects unrelated positive native latches.
   {
     const auto before = Queue({101, 202, 303});
 
@@ -295,7 +283,7 @@ void TestThinProtection()
     assert(!IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // manual clear and repeated watchdog callbacks are no-ops
+  // A manual clear and repeated watchdog callbacks are no-ops.
   {
     const auto before = Queue({101, 202});
     const auto empty  = Queue(0, 0);
@@ -305,7 +293,7 @@ void TestThinProtection()
     assert(!IsNativePruneResumeCandidate(true, true, stable, stable));
   }
 
-  // resume fails closed on reorder truncation and fleet replacement
+  // Resuming fails closed on reordering, truncation and fleet replacement.
   {
     const auto before = Queue({101, 202, 303, 404});
 
@@ -321,7 +309,7 @@ void TestThinProtection()
     assert(!IsNativePruneResumeCandidate(true, true, before, after));
   }
 
-  // resume postcondition requires the exact same idle surviving suffix
+  // The resume postcondition requires the exact same idle surviving suffix.
   {
     const auto expected = Queue({303, 404});
 
@@ -367,83 +355,50 @@ void TestThinProtection()
 
 void TestAddressGuard()
 {
-  const Address         base{true, 0, 71088, 71237, 710};
-  const Address         system{true, 0, 925162490, 0, 710};
-  const AddressEvidence reproduced{true, true, true, true, false, 512, 1, 0, base, system, system};
+  const Address base{.valid = true, .galaxy = 0, .system = 71088, .planet = 71237, .instance = 710};
+  const Address system{.valid = true, .galaxy = 0, .system = 925162490, .planet = 0, .instance = 710};
+  // The reproduced case: an impulsing fleet reported at its starbase planet, in another system, while its deployment
+  // and its target are both still in space.
+  const AddressEvidence reproduced{.enabled            = true,
+                                   .player_state_event = true,
+                                   .owned_queue        = true,
+                                   .owned_deployment   = true,
+                                   .planning_recall    = false,
+                                   .player_state       = kFleetImpulsing,
+                                   .deployed_state     = kDeployedMoving,
+                                   .removal_reason     = 0,
+                                   .reported           = base,
+                                   .deployed           = system,
+                                   .target             = system};
   assert(UseDeployedAddress(reproduced));
-  for (int state : {1, 64, 512}) {
-    auto e         = reproduced;
-    e.player_state = state;
-    assert(UseDeployedAddress(e));
-  }
+  for (int state : {1, 64, 512})
+    assert(UseDeployedAddress(With(reproduced, [&](auto& e) { e.player_state = state; })));
   // Destruction, dock/repair, and an intentional warp must retain native clearing.
-  for (int state : {-1, 0, 2, 4, 8, 16, 32, 128, 256}) {
-    auto e         = reproduced;
-    e.player_state = state;
-    assert(!UseDeployedAddress(e));
-  }
-  for (int state : {-1, 2, 4, 5, 99}) {
-    auto e           = reproduced;
-    e.deployed_state = state;
-    assert(!UseDeployedAddress(e));
-  }
-  for (int reason : {-1, 1, 2, 3, 4, 5}) {
-    auto e           = reproduced;
-    e.removal_reason = reason;
-    assert(!UseDeployedAddress(e));
-  }
-  auto reject = [](AddressEvidence e) { assert(!UseDeployedAddress(e)); };
-  auto e      = reproduced;
-  e.enabled   = false;
-  reject(e);
-  e                    = reproduced;
-  e.player_state_event = false;
-  reject(e); // manual clear/UI path
-  e             = reproduced;
-  e.owned_queue = false;
-  reject(e);
-  e                  = reproduced;
-  e.owned_deployment = false;
-  reject(e); // wrong fleet or unknown ownership
-  e                 = reproduced;
-  e.planning_recall = true;
-  reject(e);
-  e                = reproduced;
-  e.reported.valid = false;
-  reject(e);
-  e                = reproduced;
-  e.deployed.valid = false;
-  reject(e);
-  e              = reproduced;
-  e.target.valid = false;
-  reject(e);
-  e               = reproduced;
-  e.target.system = 123;
-  reject(e); // real foreign target
-  e                 = reproduced;
-  e.target.instance = 711;
-  reject(e);
-  e               = reproduced;
-  e.target.planet = 123;
-  reject(e);
-  e                 = reproduced;
-  e.reported.planet = 0;
-  reject(e); // scope is the observed base substitution
-  e                 = reproduced;
-  e.reported.system = system.system;
-  reject(e);
-  e                   = reproduced;
-  e.reported.instance = 711;
-  reject(e);
-  e                 = reproduced;
-  e.reported.galaxy = 1;
-  reject(e);
-  e          = reproduced;
-  e.deployed = base;
-  reject(e); // own deployment really moved to base
-  e          = reproduced;
-  e.reported = system;
-  reject(e); // no wrong address to correct
+  for (int state : {-1, 0, 2, 4, 8, 16, 32, 128, 256})
+    assert(!UseDeployedAddress(With(reproduced, [&](auto& e) { e.player_state = state; })));
+  for (int state : {-1, 2, 4, 5, 99})
+    assert(!UseDeployedAddress(With(reproduced, [&](auto& e) { e.deployed_state = state; })));
+  for (int reason : {-1, 1, 2, 3, 4, 5})
+    assert(!UseDeployedAddress(With(reproduced, [&](auto& e) { e.removal_reason = reason; })));
+
+  const auto rejected = [&](auto change) { return !UseDeployedAddress(With(reproduced, change)); };
+  assert(rejected([](auto& e) { e.enabled = false; }));
+  assert(rejected([](auto& e) { e.player_state_event = false; })); // manual clear/UI path
+  assert(rejected([](auto& e) { e.owned_queue = false; }));
+  assert(rejected([](auto& e) { e.owned_deployment = false; })); // wrong fleet or unknown ownership
+  assert(rejected([](auto& e) { e.planning_recall = true; }));
+  assert(rejected([](auto& e) { e.reported.valid = false; }));
+  assert(rejected([](auto& e) { e.deployed.valid = false; }));
+  assert(rejected([](auto& e) { e.target.valid = false; }));
+  assert(rejected([](auto& e) { e.target.system = 123; })); // real foreign target
+  assert(rejected([](auto& e) { e.target.instance = 711; }));
+  assert(rejected([](auto& e) { e.target.planet = 123; }));
+  assert(rejected([](auto& e) { e.reported.planet = 0; })); // scope is the observed base substitution
+  assert(rejected([&](auto& e) { e.reported.system = system.system; }));
+  assert(rejected([](auto& e) { e.reported.instance = 711; }));
+  assert(rejected([](auto& e) { e.reported.galaxy = 1; }));
+  assert(rejected([&](auto& e) { e.deployed = base; }));   // own deployment really moved to base
+  assert(rejected([&](auto& e) { e.reported = system; })); // no wrong address to correct
 }
 } // namespace
 

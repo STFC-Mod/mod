@@ -16,12 +16,19 @@
 #include <unity/tracker.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace
 {
+// Indexed by InstantWarpConfirmation, for the log.
+constexpr std::array kInstantWarpNames{"none", "warp", "jump"};
+
+// --- Course prompt ---
+
 // The action auto-confirm takes for `fleet`: always-ask wins, then auto-jump, then auto-warp, then the default.
 InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
 {
@@ -50,7 +57,7 @@ void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromp
 
   auto*      course = context->CourseData();
   const auto action = ResolveConfirmation(course ? course->PlayerFleet() : nullptr);
-  spdlog::debug("[InstantWarp] answering the prompt with {}", static_cast<int>(action));
+  spdlog::debug("[InstantWarp] answering the prompt with {}", kInstantWarpNames[std::to_underlying(action)]);
   switch (action) {
     case InstantWarpConfirmation::kWarp:
       widget->InitiateRegularWarp();
@@ -69,7 +76,7 @@ void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromp
 // rather than another UI detour, and only overrides the label text: never the button's context, timer, resource
 // cost, or click handler.
 
-std::string CurrentText(TextLocalizer* label)
+std::string CurrentLabelText(TextLocalizer* label)
 { return il2cpp::ToUtf8(label->CurrentText()); }
 
 // The label text this file set, so it is only cleared while it still reads that.
@@ -82,11 +89,10 @@ struct OwnedLabel {
 
   void Clear()
   {
-    auto* label    = Get();
-    auto  previous = std::move(text);
+    auto*      label    = Get();
+    const auto previous = std::exchange(text, {});
     handle.Reset();
-    text.clear();
-    if (unity::Alive(label) && label->textOverride() && CurrentText(label) == previous)
+    if (unity::Alive(label) && label->textOverride() && CurrentLabelText(label) == previous)
       label->ClearTextOverride();
   }
 
@@ -105,7 +111,7 @@ struct OwnedLabel {
       if (!handle)
         return;
     }
-    const auto current = CurrentText(label);
+    const auto current = CurrentLabelText(label);
     if (!text.empty() && label->textOverride() && current != text) {
       Clear();
       return;
@@ -119,7 +125,7 @@ struct OwnedLabel {
 // Never destroyed: freeing a GC handle in a static destructor can run after the runtime has shut down.
 auto& action_label = *new OwnedLabel;
 
-void UpdateWarpLabel()
+void InstantWarpFrame()
 {
   // Ten times a second is quick enough for a label.
   static Throttle throttle(std::chrono::milliseconds(100));
@@ -127,22 +133,20 @@ void UpdateWarpLabel()
     return;
 
   // Without a default or a jump/warp filter every prompt resolves to "ask"; skip the fleet lookups.
-  const auto& ui = Config::Get().ui;
-  if (ui.auto_confirm_instant_warp == InstantWarpConfirmation::kNone && !ui.instant_warp_auto_jump.all
-      && ui.instant_warp_auto_jump.names.empty() && !ui.instant_warp_auto_warp.all
-      && ui.instant_warp_auto_warp.names.empty()) {
+  const auto& ui    = Config::Get().ui;
+  const auto  empty = [](const ShipFilter& filter) { return !filter.all && filter.names.empty(); };
+  if (ui.auto_confirm_instant_warp == InstantWarpConfirmation::kNone && empty(ui.instant_warp_auto_jump)
+      && empty(ui.instant_warp_auto_warp)) {
     action_label.Clear();
     return;
   }
 
   auto*       widget  = unity::Newest<StarNodeObjectViewerWidget>();
-  const bool  active  = unity::Alive(widget) && widget->isActiveAndEnabled();
-  auto*       button  = active ? widget->visitButton() : nullptr;
-  const bool  enabled = unity::Alive(button) && button->isActiveAndEnabled() && button->Interactable();
+  auto*       button  = unity::Alive(widget) && widget->isActiveAndEnabled() ? widget->visitButton() : nullptr;
   const char* desired = nullptr;
   // The ordinary visit path uses the currently selected fleet. The card's cached popup CourseData is only filled on
   // click, so it cannot preview. Toll and wormhole buttons confirm their own way and keep the game's text.
-  if (enabled) {
+  if (unity::Alive(button) && button->isActiveAndEnabled() && button->Interactable()) {
     auto* fleets     = FleetsManager::Instance();
     auto* deployment = DeploymentManager::Instance();
     auto* fleet      = unity::Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
@@ -186,9 +190,8 @@ void CycleInstantWarpConfirmation()
       setting = InstantWarpConfirmation::kNone;
       break;
   }
-  constexpr const char* kNames[] = {"none", "warp", "jump"};
-  spdlog::info("[InstantWarp] answering prompts with {}", kNames[static_cast<int>(setting)]);
+  spdlog::info("[InstantWarp] answering prompts with {}", kInstantWarpNames[std::to_underlying(setting)]);
 }
 
 // Always installed: its only hook answers a prompt the player asked the mod to answer.
-const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, UpdateWarpLabel};
+const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, InstantWarpFrame};

@@ -19,7 +19,7 @@ namespace
 {
 // Runs a popup's callback the way its button would. False when the callback threw: the caller then shows the
 // popup, so the action is never lost silently.
-template <typename... A> bool Answer(const char* feature, Il2CppDelegate* callback, A... args)
+template <typename... A> bool AnswerConfirmation(const char* feature, Il2CppDelegate* callback, A... args)
 {
   try {
     il2cpp::InvokeBound(callback, args...);
@@ -33,7 +33,8 @@ template <typename... A> bool Answer(const char* feature, Il2CppDelegate* callba
 // --- Message box confirmations ---
 
 // The closure `owner`.RequestAction passes as its confirmation callback, e.g.
-// "Digit.Prime.ForbiddenTech.ForbiddenTechManager/<>c__DisplayClass12_0.<RequestAction>b__0".
+// "Digit.Prime.ForbiddenTech.ForbiddenTechManager/<>c__DisplayClass12_0.<RequestAction>b__0". `owner` must be a whole
+// class name, so another class whose name ends in it does not match.
 bool IsRequestActionCallback(const Il2CppDelegate* callback, std::string_view owner)
 {
   if (!callback || !callback->target || !callback->method || callback->method->parameters_count != 1)
@@ -46,14 +47,14 @@ bool IsRequestActionCallback(const Il2CppDelegate* callback, std::string_view ow
 bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
 {
   return Config::Get().ui.auto_confirm_ft_upgrade && IsRequestActionCallback(callback, "ForbiddenTechManager")
-         && Answer("ForbiddenTechConfirm", callback, MessageBoxResult::Confirm);
+         && AnswerConfirmation("ForbiddenTechConfirm", callback, MessageBoxResult::Confirm);
 }
 
 bool ConfirmAllianceContribution(Il2CppDelegate* callback)
 {
   return Config::Get().ui.auto_confirm_alliance_contribution
          && IsRequestActionCallback(callback, "AllianceContributionViewController")
-         && Answer("ForbiddenTechConfirm", callback, MessageBoxResult::Yes);
+         && AnswerConfirmation("ForbiddenTechConfirm", callback, MessageBoxResult::Yes);
 }
 
 void GameMessageBox_Show_Hook(auto original, MessageBoxContext* context)
@@ -84,7 +85,7 @@ void MessageUtility_ShowFreeAbilityConfirmationPopup_Hook(auto original, int64_t
                                                           Il2CppDelegate* action)
 {
   if (Config::Get().ui.auto_confirm_reveal_ability && action && action->method && IsExcelsiorDecloak(ability_id)
-      && Answer("RevealConfirm", action))
+      && AnswerConfirmation("RevealConfirm", action))
     return;
   original(ability_id, cooldown, action);
 }
