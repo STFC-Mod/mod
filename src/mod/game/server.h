@@ -8,14 +8,16 @@
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
+#include <span>
 
 struct ByteString : il2cpp::Object {
   using Class = il2cpp::Class<"Google.Protobuf", "Google.Protobuf", "ByteString">;
 
   il2cpp::Array<uint8_t>* bytes()
   { return Field<"bytes", il2cpp::Array<uint8_t>*>(); }
-  int32_t Length()
-  { return Get<"Length", int32_t>(); }
+  // The payload. This client's ByteString owns its whole array (Length is bytes.Length), so that is all of it.
+  std::span<const uint8_t> Span()
+  { return il2cpp::Items(bytes()); }
 };
 
 struct EntityGroup : il2cpp::Object {

@@ -198,7 +198,7 @@ namespace
         records.push_back(Record(slot, fleet, fleet->CurrentState(), fleet->PreviousState()));
 
     if (!records.empty()) {
-      logging::debug("PROCESS", "fleets", "Fleet snapshot ({}): {} fleets", reason, records.size());
+      logging::Debug("process", "fleets", "{} snapshot of {} fleets", reason, records.size());
       Append(std::move(records), true);
     }
   }
@@ -253,19 +253,24 @@ namespace
     if (!records.empty())
       Append(std::move(records), false);
   }
-} // namespace
 
-void InstallFleetSync()
-{
-  if (!Config::Sync::Get()->options.fleets)
-    return;
-  if (!fleet_watch::Subscribe({.on_transition = OnTransition, .on_baseline = OnBaseline})) {
-    spdlog::warn("Sync: fleet state subscriber could not be installed; fleet sync disabled");
-    return;
+  // Subscribes to fleet_watch the first frame a target wants fleets, so a reload that turns them on starts the
+  // watcher. It then keeps running, and delivery filters per target as for every other category. Game thread.
+  bool FleetSyncInstalled()
+  {
+    static bool tried = false;
+    if (fleet_sync_installed || tried || !Config::Sync::Get()->options.fleets)
+      return fleet_sync_installed;
+    tried = true;
+    if (!fleet_watch::Subscribe({.on_transition = OnTransition, .on_baseline = OnBaseline})) {
+      spdlog::warn("[Sync] fleet state subscriber could not be installed; fleet sync disabled");
+      return false;
+    }
+    fleet_sync_installed = true;
+    spdlog::info("[Sync] fleet state sync enabled");
+    return true;
   }
-  fleet_sync_installed = true;
-  spdlog::info("Sync: fleet state sync enabled");
-}
+} // namespace
 
 void RequestFleetSnapshot()
 { snapshot_requested.store(true, std::memory_order_release); }
@@ -281,7 +286,7 @@ void RereadFleet(int64_t fleet_id)
 
 void UpdateFleetSync()
 {
-  if (!fleet_sync_installed)
+  if (!FleetSyncInstalled())
     return;
   fleet_watch::Tick();
   RereadDue();

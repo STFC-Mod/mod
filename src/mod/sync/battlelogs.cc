@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <spdlog/fmt/fmt.h>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -28,66 +29,6 @@ namespace data_sync
 {
 namespace
 {
-  using json  = nlohmann::json;
-  using Clock = std::chrono::steady_clock;
-
-  // Names seen in battles and profile responses, kept for [sync] resolver_cache_ttl seconds. A busy server shows
-  // a few thousand players a day; past this size, expired entries are dropped before adding more.
-  constexpr size_t kNameCacheSize = 10'000;
-
-  // Filled by the processing thread from responses the game requested and by the battle-log thread from its own
-  // requests, so it locks.
-  template <typename Key, typename Value> class NameCache
-  {
-  public:
-    std::optional<Value> Find(const Key& key, uint64_t generation)
-    {
-      std::scoped_lock lock(mutex_);
-      if (generation < generation_)
-        return std::nullopt;
-      if (generation != generation_) {
-        entries_.clear();
-        generation_ = generation;
-      }
-      const auto it = entries_.find(key);
-      if (it == entries_.end())
-        return std::nullopt;
-      if (it->second.expires_at <= Clock::now()) {
-        entries_.erase(it);
-        return std::nullopt;
-      }
-      return it->second.value;
-    }
-
-    void Store(const Key& key, Value value, uint64_t generation)
-    {
-      const auto       expires_at = Clock::now() + std::chrono::seconds(Config::Sync::Get()->resolver_cache_ttl);
-      std::scoped_lock lock(mutex_);
-      if (generation < generation_)
-        return;
-      if (generation != generation_) {
-        entries_.clear();
-        generation_ = generation;
-      }
-      if (entries_.size() >= kNameCacheSize) {
-        std::erase_if(entries_, [now = Clock::now()](const auto& entry) { return entry.second.expires_at <= now; });
-        // Everything still valid (a long TTL and a lot of browsing): start over rather than grow past the bound.
-        if (entries_.size() >= kNameCacheSize)
-          entries_.clear();
-      }
-      entries_.insert_or_assign(key, Entry{std::move(value), expires_at});
-    }
-
-  private:
-    struct Entry {
-      Value             value;
-      Clock::time_point expires_at;
-    };
-    uint64_t                       generation_ = 0;
-    std::mutex                     mutex_;
-    std::unordered_map<Key, Entry> entries_;
-  };
-
   struct Player {
     std::string name;
     int64_t     alliance = -1;
@@ -98,19 +39,34 @@ namespace
     std::string tag;
   };
 
-  // Shared with the processing thread and never destroyed, see sync.h.
+  // Shared with the processing thread. Leaked so the detached battle-log thread never sees them destroyed at exit.
   auto& players   = *new NameCache<std::string, Player>;
   auto& alliances = *new NameCache<int64_t, Alliance>;
+
+  // A journal the game server would not hand over is tried this many times, waiting 1 s and doubling up to a minute:
+  // about four minutes in all, enough to ride out a server hiccup without retrying a lost journal all session.
+  constexpr int kJournalAttempts   = 10;
+  constexpr int kJournalMaxBackoff = 60;
+
+  // A battle to fetch, with the session that reported it: its journal is fetched with that session's credentials
+  // or not at all.
   struct Battle {
-    uint64_t    id;
-    GameSession session;
+    uint64_t          id;
+    GameSession       session;
+    int               attempts = 0;
+    Clock::time_point retry_at{};
   };
-  auto& battles      = *new BoundedQueue<Battle>{"battle log", kRecentBattles};
+  // Only the recent journals are kept for targets, so a longer backlog would be fetched for nothing.
+  auto& battles = *new BoundedQueue<Battle>{"battle log", kRecentBattles};
+  // Guards `pending` and keeps it in step with `battles`. Taken before the state mutex (HasBattle), never after.
   auto& battle_mutex = *new std::mutex;
-  // Keep one fetch per journal in flight; target delivery is tracked by the canonical record owner.
+  // {generation, id} of battles queued or being fetched, so each journal is fetched once. Entries leave when the
+  // run loop finishes with a battle or the queue drops it. Delivery to targets is tracked by the record store.
   auto& pending = *new std::set<std::pair<uint64_t, uint64_t>>;
 
+  // The game client's UnityWebRequest identity, which the game server expects. Update with each client Unity bump.
   const std::string kUnityVersion = "6000.0.59f2-deadlock-fix-test";
+  const std::string kClientCurl   = "libcurl/8.10.1-DEV";
 
   std::string NewUuid()
   {
@@ -148,37 +104,38 @@ namespace
     return result;
   }
 
-  // The battle-log thread's session with the game server, set up as the game client sets up its own. It is
+  // The battle-log thread's HTTP session with the game server, set up as the game client sets up its own. It is
   // recreated when a settings reload changes the [sync] proxy or TLS check. Battle-log thread only.
-  cpr::Session& GameServer()
+  cpr::Session& GameServerHttp()
   {
-    struct Session {
+    struct Cached {
       std::unique_ptr<cpr::Session> http;
       std::string                   proxy;
       bool                          verify_ssl = true;
     };
-    static auto& session = *new Session; // never destroyed, see sync.h
+    static auto& cached  = *new Cached; // Leaked, like the thread that uses it.
     const auto   config  = Config::Sync::Get();
     const auto&  options = config->options;
-    if (session.http && options.proxy == session.proxy && options.verify_ssl == session.verify_ssl)
-      return *session.http;
+    if (cached.http && options.proxy == cached.proxy && options.verify_ssl == cached.verify_ssl)
+      return *cached.http;
 
-    session.proxy      = options.proxy;
-    session.verify_ssl = options.verify_ssl;
-    session.http       = std::make_unique<cpr::Session>();
-    auto& http         = *session.http;
+    cached.proxy      = options.proxy;
+    cached.verify_ssl = options.verify_ssl;
+    cached.http       = std::make_unique<cpr::Session>();
+    auto& http        = *cached.http;
 #ifndef _MODDBG
     http.SetConnectTimeout(cpr::ConnectTimeout{3'000});
     http.SetTimeout(cpr::Timeout{10'000});
 #endif
     http.SetAcceptEncoding(cpr::AcceptEncoding{});
     http.SetHttpVersion(cpr::HttpVersion{cpr::HttpVersionCode::VERSION_1_1});
-    spdlog::debug("scopely session: proxy='{}', verify_ssl={}", options.proxy, options.verify_ssl);
+    logging::Debug("download", "game server", "new session, proxy '{}', verify_ssl {}", options.proxy,
+                   options.verify_ssl);
     if (!options.proxy.empty())
       http.SetProxies({{"https", options.proxy}});
     if (!options.verify_ssl)
       http.SetSslOptions(cpr::Ssl(cpr::ssl::VerifyHost{false}, cpr::ssl::VerifyPeer{false}, cpr::ssl::NoRevoke{true}));
-    http.SetUserAgent("UnityPlayer/" + kUnityVersion + " (UnityWebRequest/1.0, libcurl/8.10.1-DEV)");
+    http.SetUserAgent("UnityPlayer/" + kUnityVersion + " (UnityWebRequest/1.0, " + kClientCurl + ")");
     http.SetHeader({
         {"Accept", "application/json"},
         {"Content-Type", "application/json"},
@@ -190,20 +147,20 @@ namespace
   }
 
   // POSTs to the game server as the game client would, for data the client did not request itself. Empty on
-  // error. Battle-log thread only.
+  // error, or when `session` has ended before or during the request. Battle-log thread only.
   std::string RequestGameData(const GameSession& session, const std::string& path, const std::string& body)
   {
+    // The URL and credentials are the captured session's; the version and instance headers are the latest, since
+    // the game reports them after login.
     const auto current = Session();
     if (session.generation != current.generation)
       return {};
-    auto& http    = GameServer();
+    auto& http    = GameServerHttp();
     auto& headers = http.GetHeader();
-    {
-      http.SetUrl(WithPath(session.server_url, path));
-      headers.insert_or_assign("X-AUTH-SESSION-ID", session.session_id);
-      headers.insert_or_assign("X-PRIME-VERSION", current.version);
-      headers.insert_or_assign("X-Instance-ID", fmt::format("{:03}", current.instance_id));
-    }
+    http.SetUrl(WithPath(session.server_url, path));
+    headers.insert_or_assign("X-AUTH-SESSION-ID", session.session_id);
+    headers.insert_or_assign("X-PRIME-VERSION", current.version);
+    headers.insert_or_assign("X-Instance-ID", fmt::format("{:03}", current.instance_id));
     headers.insert_or_assign("X-TRANSACTION-ID", NewUuid());
     http.SetBody(body);
 
@@ -211,15 +168,15 @@ namespace
     if (session.generation != SessionGeneration())
       return {};
     if (response.status_code == 0) {
-      logging::error("DOWNLOAD", path, "Failed to send request: {}", response.error.message);
+      logging::Error("download", path, "the request was not sent: {}", response.error.message);
       return {};
     }
     if (response.status_code < 200 || response.status_code >= 300) {
-      logging::error("DOWNLOAD", path, "Failed to communicate with server: {}", response.status_line);
+      logging::Error("download", path, "the server answered {}", response.status_line);
       return {};
     }
     const auto type = response.header.find("Content-Type");
-    logging::debug("DOWNLOAD", path, "Response: {} ({}), {:.0f} ms elapsed", response.status_line,
+    logging::Debug("download", path, "{} ({}) in {:.0f} ms", response.status_line,
                    type == response.header.end() ? "unknown" : type->second, response.elapsed * 1'000);
     return response.text;
   }
@@ -242,13 +199,11 @@ namespace
         if (const auto uid = deployed.find("uid"); uid != deployed.end() && uid->is_string())
           ids.insert(uid->get<std::string>());
     }
-    for (const char* key : {"initiator_id", "target_id"}) {
-      // NPC ids contain '_' (mar_61, npc_<id>_1); there is nothing to resolve for them.
-      if (const auto& id = journal.value(key, json());
-          id.is_string() && !id.get_ref<const std::string&>().empty()
-          && id.get_ref<const std::string&>().find('_') == std::string::npos)
-        ids.insert(id.get<std::string>());
-    }
+    // NPC ids contain '_' (mar_61, npc_<id>_1); there is nothing to resolve for them.
+    for (const char* key : {"initiator_id", "target_id"})
+      if (const auto id = journal.value(key, json()); id.is_string())
+        if (const auto& text = id.get_ref<const std::string&>(); !text.empty() && !text.contains('_'))
+          ids.insert(text);
     return ids;
   }
 
@@ -259,17 +214,18 @@ namespace
     std::unordered_map<std::string, Player> fetched;
     if (ids.empty())
       return fetched;
-    logging::trace("PROCESS", "combat log", "Fetching {} player profiles", ids.size());
+    logging::Trace("download", "battle log", "fetching {} player profiles", ids.size());
     const auto reply =
         json::parse(RequestGameData(session, "/user_profile/profiles", json{{"user_ids", ids}}.dump()), nullptr, false);
     const auto profiles = reply.is_object() ? reply.value("user_profiles", json::object()) : json::object();
     for (const auto& [id, profile] : profiles.items()) {
       try {
-        Player player{profile.at("name").get<std::string>(), profile.at("alliance_id").get<int64_t>()};
+        Player player{.name     = profile.at("name").get<std::string>(),
+                      .alliance = profile.at("alliance_id").get<int64_t>()};
         players.Store(id, player, session.generation);
         fetched.emplace(id, std::move(player));
       } catch (const json::exception& e) {
-        spdlog::error("Failed to parse user profile {}: {}", id, e.what());
+        logging::Error("process", "player profile", "skipping {}: {}", id, e.what());
       }
     }
     return fetched;
@@ -280,7 +236,7 @@ namespace
     std::unordered_map<int64_t, Alliance> fetched;
     if (ids.empty())
       return fetched;
-    logging::trace("PROCESS", "combat log", "Fetching {} alliance profiles", ids.size());
+    logging::Trace("download", "battle log", "fetching {} alliance profiles", ids.size());
     const json request{{"user_current_rank", 0}, {"alliance_id", 0}, {"alliance_ids", ids}};
     const auto reply =
         json::parse(RequestGameData(session, "/alliance/get_alliances_public_info", request.dump()), nullptr, false);
@@ -288,11 +244,11 @@ namespace
     for (const auto& [key, info] : infos.items()) {
       try {
         const auto id = info.at("id").get<int64_t>();
-        Alliance   alliance{info.at("name").get<std::string>(), info.at("tag").get<std::string>()};
+        Alliance   alliance{.name = info.at("name").get<std::string>(), .tag = info.at("tag").get<std::string>()};
         alliances.Store(id, alliance, session.generation);
         fetched.emplace(id, std::move(alliance));
       } catch (const json::exception& e) {
-        spdlog::error("Failed to parse alliance profile: {}", e.what());
+        logging::Error("process", "alliance profile", "skipping one: {}", e.what());
       }
     }
     return fetched;
@@ -327,9 +283,8 @@ namespace
 
     auto names = json::object();
     for (const auto& [id, player] : known) {
-      json       entry{{"name", player.name}, {"alliance_name", nullptr}, {"alliance_tag", nullptr}};
-      const auto alliance = known_alliances.find(player.alliance);
-      if (alliance != known_alliances.end()) {
+      json entry{{"name", player.name}, {"alliance_name", nullptr}, {"alliance_tag", nullptr}};
+      if (const auto alliance = known_alliances.find(player.alliance); alliance != known_alliances.end()) {
         entry["alliance_name"] = alliance->second.name;
         entry["alliance_tag"]  = alliance->second.tag;
       } else {
@@ -340,57 +295,62 @@ namespace
     return names;
   }
 
-  bool UploadBattle(const Battle& work)
+  // Fetches one journal and publishes it with its names. False when the game server did not hand it over.
+  bool FetchBattle(const Battle& battle)
   {
-    const auto  journal_id = work.id;
-    const auto& session    = work.session;
-    logging::trace("PROCESS", "combat log", "Fetching combat log for battle {}", journal_id);
-    const auto reply = RequestGameData(session, "/journals/get", json{{"journal_id", journal_id}}.dump());
-    if (reply.empty())
+    const auto& session = battle.session;
+    logging::Trace("download", "battle log", "fetching the journal of battle {}", battle.id);
+    const auto text = RequestGameData(session, "/journals/get", json{{"journal_id", battle.id}}.dump());
+    if (text.empty())
       return false;
-    auto battle = json::parse(reply, nullptr, false);
-    if (!battle.is_object() || !battle.contains("journal")) {
-      spdlog::error("Error parsing journal response from game server for battle {}", journal_id);
+    auto reply = json::parse(text, nullptr, false);
+    if (!reply.is_object() || !reply.contains("journal")) {
+      logging::Error("process", "battle log", "the journal of battle {} does not parse", battle.id);
       return false;
     }
-
-    auto& journal = battle["journal"];
+    auto& journal = reply["journal"];
     auto  names   = ResolveNames(session, journal);
-    Publish(Stream::kBattles, {{journal_id, {{"names", std::move(names)}, {"journal", std::move(journal)}}}},
+    Publish(Stream::kBattles, {{battle.id, {{"names", std::move(names)}, {"journal", std::move(journal)}}}},
             session.generation);
-    std::scoped_lock lock(battle_mutex);
-    pending.erase({session.generation, journal_id});
-    return session.generation == SessionGeneration();
+    return true;
   }
+} // namespace
 
-  void RunBattleLogs()
-  {
-    for (;;) {
-      const auto work    = battles.Pop();
-      bool       fetched = false;
-      if (work.session.generation == SessionGeneration() && Config::Sync::Get()->options.battlelogs) {
-        try {
-          fetched = UploadBattle(work);
-        } catch (const std::exception& e) {
-          spdlog::error("Error processing combat log {}: {}", work.id, e.what());
-        }
-        if (!fetched && work.session.generation == SessionGeneration()) {
-          // Retry at the back so one unavailable journal cannot starve all the others.
-          std::this_thread::sleep_for(std::chrono::seconds(1));
+void RunBattleLogs()
+{
+  for (;;) {
+    auto battle = battles.Pop();
+    // A battle from an older session, or one queued before battle logs were switched off, is only forgotten.
+    if (battle.session.generation == SessionGeneration() && Config::Sync::Get()->options.battlelogs) {
+      // A retried journal goes to the back of the queue, so everything queued before it has been fetched; only
+      // what arrived later waits for it.
+      if (const auto now = Clock::now(); battle.retry_at > now)
+        std::this_thread::sleep_for(battle.retry_at - now);
+      bool fetched = false;
+      try {
+        fetched = FetchBattle(battle);
+      } catch (const std::exception& e) {
+        logging::Error("process", "battle log", "battle {} failed: {}", battle.id, e.what());
+      }
+      if (!fetched) {
+        if (++battle.attempts >= kJournalAttempts) {
+          logging::Error("download", "battle log", "giving up on battle {} after {} attempts", battle.id,
+                         kJournalAttempts);
+        } else if (battle.session.generation == SessionGeneration()) {
+          battle.retry_at =
+              Clock::now() + std::chrono::seconds(std::min(1 << (battle.attempts - 1), kJournalMaxBackoff));
+          // Under the lock, like QueueNewBattles, so a battle the full queue drops leaves `pending` in the same step.
           std::scoped_lock lock(battle_mutex);
-          if (auto dropped = battles.Push(work))
+          if (auto dropped = battles.Push(battle))
             pending.erase({dropped->session.generation, dropped->id});
           continue;
         }
       }
-      if (!fetched) {
-        std::scoped_lock lock(battle_mutex);
-        pending.erase({work.session.generation, work.id});
-      }
     }
+    std::scoped_lock lock(battle_mutex);
+    pending.erase({battle.session.generation, battle.id});
   }
-
-} // namespace
+}
 
 void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation)
 {
@@ -398,6 +358,7 @@ void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation)
   if (session.generation != generation)
     return;
   std::scoped_lock lock(battle_mutex);
+  // Older sessions' entries can never match again; the run loop drops their battles without fetching.
   std::erase_if(pending, [&](const auto& entry) { return entry.first != generation; });
   for (auto id : ids | std::views::reverse) {
     if (HasBattle(id, generation) || !pending.emplace(generation, id).second)
@@ -409,28 +370,20 @@ void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation)
 
 void CachePlayerNames(const Input& input)
 {
-  Digit::PrimeServer::Models::UserProfilesResponse response;
-  if (!response.ParseFromString(input.bytes)) {
-    spdlog::error("Failed to parse user profile");
+  const auto response = Parse<Digit::PrimeServer::Models::UserProfilesResponse>(input, "player profiles");
+  if (!response)
     return;
-  }
-  for (const auto& profile : response.userprofiles())
+  for (const auto& profile : response->userprofiles())
     players.Store(profile.userid(), {profile.name(), profile.allianceid()}, input.generation);
 }
 
 void CacheAllianceNames(const Input& input)
 {
-  Digit::PrimeServer::Models::GetAllianceProfilesResponse response;
-  if (!response.ParseFromString(input.bytes)) {
-    spdlog::error("Failed to parse alliance profile");
+  const auto response = Parse<Digit::PrimeServer::Models::GetAllianceProfilesResponse>(input, "alliance profiles");
+  if (!response)
     return;
-  }
-  for (const auto& alliance : response.allianceprofiles())
+  for (const auto& alliance : response->allianceprofiles())
     if (alliance.id() > 0)
       alliances.Store(alliance.id(), {alliance.name(), alliance.tag()}, input.generation);
 }
-
-void StartBattleLogs()
-{ std::thread(RunBattleLogs).detach(); }
-
 } // namespace data_sync

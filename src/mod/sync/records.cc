@@ -1,16 +1,21 @@
-// Game responses become canonical wire records. Delivery owns comparison, removal and initial-sync state.
+// Game responses become canonical wire records, on the processing thread. Each processor parses one response kind
+// and publishes its records; Delivery (state.cc) owns comparison, removal and initial-sync state.
+
 #include "sync/sync.h"
 #include "text.h"
+
 #include <Digit.PrimePlatform.Content.pb.h>
 #include <Digit.PrimeServer.Models.pb.h>
+#include <google/protobuf/repeated_field.h>
+#include <stfc.sync.pb.h>
+
 #include <algorithm>
 #include <charconv>
 #include <chrono>
 #include <cmath>
-#include <google/protobuf/repeated_field.h>
+#include <map>
 #include <ranges>
 #include <set>
-#include <stfc.sync.pb.h>
 #include <unordered_map>
 
 NLOHMANN_JSON_NAMESPACE_BEGIN
@@ -28,7 +33,6 @@ namespace data_sync
 {
 namespace
 {
-  using json        = nlohmann::json;
   namespace pb      = Digit::PrimeServer::Models;
   namespace content = Digit::PrimePlatform::Content;
 
@@ -36,34 +40,31 @@ namespace
   template <typename Message, typename Build>
   void Read(const Input& input, Stream stream, Build build, Update mode = Update::kMerge)
   {
-    Message message;
-    if (!message.ParseFromString(input.bytes)) {
-      spdlog::error("Failed to parse {}", message.GetTypeName());
+    const auto message = Parse<Message>(input, Message::default_instance().GetTypeName());
+    if (!message)
       return;
-    }
     RecordSet records;
-    build(message, records);
+    build(*message, records);
     Publish(stream, std::move(records), input.generation, mode);
   }
+
   json Seconds(bool has, int64_t seconds)
   { return has ? json(seconds) : json(nullptr); }
 
   json AwayAssignment(const pb::AwayAssignmentInstance& instance)
   {
-    std::vector<std::pair<int64_t, int64_t>> slots(instance.officerids().begin(), instance.officerids().end());
-    std::ranges::sort(slots, {}, &std::pair<int64_t, int64_t>::first);
-    auto officers = json::array();
-    for (const auto& [slot, id] : slots)
+    // Protobuf maps are unordered; both lists go out in key order.
+    const auto& slots    = instance.officerids();
+    auto        officers = json::array();
+    for (const auto id : std::map(slots.begin(), slots.end()) | std::views::values)
       if (id)
         officers.push_back(id);
     auto traits = json::array();
     for (const auto& trait : instance.officertraits())
       traits.push_back({{"tid", trait.traitid()}, {"max_level", trait.maxlevel()}});
-    std::vector<std::pair<int64_t, int32_t>> scores(instance.parameters().criticaltraitscores().begin(),
-                                                    instance.parameters().criticaltraitscores().end());
-    std::ranges::sort(scores, {}, &std::pair<int64_t, int32_t>::first);
-    auto critical = json::array();
-    for (const auto& [id, score] : scores)
+    const auto& scores   = instance.parameters().criticaltraitscores();
+    auto        critical = json::array();
+    for (const auto& [id, score] : std::map(scores.begin(), scores.end()))
       critical.push_back({{"tid", id}, {"score", score}});
     return {{"aid", instance.id()},
             {"template_id", instance.awayassignmenttemplateid()},
@@ -101,13 +102,11 @@ namespace
   }
   void ProcessBattleHeaders(const Input& input)
   {
-    pb::BattleResultHeadersResponse response;
-    if (!response.ParseFromString(input.bytes)) {
-      spdlog::error("Failed to parse battle headers");
+    const auto response = Parse<pb::BattleResultHeadersResponse>(input, "battle headers");
+    if (!response)
       return;
-    }
     std::vector<uint64_t> ids;
-    for (const auto& header : response.headers())
+    for (const auto& header : response->headers())
       ids.push_back(static_cast<uint64_t>(header.id()));
     QueueNewBattles(ids, input.generation);
   }
@@ -117,11 +116,10 @@ namespace
         input, Stream::kBuffs,
         [](const auto& response, auto& records) {
           for (const auto& buff : response.globalactivebuffs()) {
-            const bool expires     = buff.has_activebuff() && buff.activebuff().has_expirytime();
-            records[buff.buffid()] = {
-                {"bid", buff.buffid()},
-                {"level", buff.level()},
-                {"expiry_time", Seconds(expires, expires ? buff.activebuff().expirytime().seconds() : 0)}};
+            const auto& active     = buff.activebuff();
+            records[buff.buffid()] = {{"bid", buff.buffid()},
+                                      {"level", buff.level()},
+                                      {"expiry_time", Seconds(active.has_expirytime(), active.expirytime().seconds())}};
           }
         },
         Update::kReplace);
@@ -129,17 +127,19 @@ namespace
   void ProcessAllianceGameProperties(const Input& input)
   {
     Read<pb::AllianceGamePropertiesResponse>(input, Stream::kEmerald, [](const auto& response, auto& records) {
-      for (const auto& property : response.properties())
-        if (property.propertyname() == "claimed_loyalty_tiers") {
-          int32_t level = -1;
-          for (const auto& tier : property.valuelist()) {
-            int32_t value = -1;
-            std::from_chars(tier.data(), tier.data() + tier.size(), value);
-            level = std::max(level, value);
-          }
-          records[nullptr] = {{"level", level}};
-          break;
-        }
+      const auto claimed = std::ranges::find_if(response.properties(), [](const pb::AllianceGameProperty& property) {
+        return property.propertyname() == "claimed_loyalty_tiers";
+      });
+      if (claimed == response.properties().end())
+        return;
+      // The highest claimed tier. from_chars reads a tier's leading digits, so "5x" counts as 5 and "x" as none.
+      int32_t level = -1;
+      for (const auto& tier : claimed->valuelist()) {
+        int32_t value = -1;
+        std::from_chars(tier.data(), tier.data() + tier.size(), value);
+        level = std::max(level, value);
+      }
+      records[nullptr] = {{"level", level}};
     });
   }
   void ProcessStarbaseModules(const Input& input)
@@ -157,13 +157,11 @@ namespace
   }
   void ProcessHavenBase(const Input& input)
   {
-    pb::PlanetaryBase response;
-    if (!response.ParseFromString(input.bytes)) {
-      spdlog::error("Failed to parse {}", response.GetTypeName());
+    const auto response = Parse<pb::PlanetaryBase>(input, pb::PlanetaryBase::default_instance().GetTypeName());
+    if (!response)
       return;
-    }
     RecordSet records;
-    for (const auto& [piece, count] : response.pieces())
+    for (const auto& [piece, count] : response->pieces())
       records[piece] = {{"sid", piece}, {"count", count}};
     PublishHaven(Stream::kHavenPieces, std::move(records), input.generation);
   }
@@ -178,26 +176,20 @@ namespace
   }
   void ProcessHavenMap(const Input& input)
   {
-    pb::PlanetaryMapData response;
-    if (!response.ParseFromString(input.bytes)) {
-      spdlog::error("Failed to parse {}", response.GetTypeName());
+    const auto response = Parse<pb::PlanetaryMapData>(input, pb::PlanetaryMapData::default_instance().GetTypeName());
+    if (!response)
       return;
-    }
     RecordSet records;
-    HavenBuildings(response, records);
+    HavenBuildings(*response, records);
     PublishHaven(Stream::kHaven, std::move(records), input.generation);
   }
   void ProcessHavenResponse(const Input& input)
   {
-    pb::PlanetaryMapResponse response;
-    if (!response.ParseFromString(input.bytes)) {
-      spdlog::error("Failed to parse planetary map response");
-      return;
-    }
-    if (!response.owneruserid().empty() && response.owneruserid() != input.user_id)
+    const auto response = Parse<pb::PlanetaryMapResponse>(input, "Haven map");
+    if (!response || (!response->owneruserid().empty() && response->owneruserid() != input.user_id))
       return;
     RecordSet records;
-    HavenBuildings(response.mapdata(), records);
+    HavenBuildings(response->mapdata(), records);
     PublishHaven(Stream::kHaven, std::move(records), input.generation);
   }
   void ProcessHavenProsperity(const Input& input)
@@ -273,6 +265,8 @@ namespace
   }
   void ProcessActiveMissions(const Input& input)
   {
+    // The whole list is one record, so each response replaces the last; an empty list still sends one entry with a
+    // null mid so targets can clear theirs.
     Read<pb::ActiveMissionsResponse>(input, Stream::kActiveMissions, [](const auto& response, auto& records) {
       std::set<int64_t> ids;
       for (const auto& mission : response.activemissions())
@@ -462,17 +456,20 @@ namespace
         Update::kFull);
   }
 
+  // The game's JSON response mixes categories, one section each.
   void ProcessJson(const Input& input)
   {
-    const auto  config  = Config::Sync::Get();
-    const auto& options = config->options;
-    const auto  result  = json::parse(input.bytes, nullptr, false);
+    const bool battle_logs = Config::Sync::Get()->options.battlelogs;
+    const auto result      = json::parse(input.bytes, nullptr, false);
     if (!result.is_object()) {
-      spdlog::error("Failed to parse sync JSON");
+      logging::Error("process", "JSON response", "the response does not parse");
       return;
     }
+    // The sections this response can carry, besides battle headers.
+    constexpr std::pair<std::string_view, Stream> kSections[] = {
+        {"resources", Stream::kResources}, {"starbase_modules", Stream::kBuildings}, {"ships", Stream::kShips}};
     for (const auto& [name, section] : result.items()) {
-      if (name == "battle_result_headers" && options.battlelogs) {
+      if (name == "battle_result_headers" && battle_logs) {
         std::vector<uint64_t> ids;
         for (const auto& header : section)
           if (header.is_object()) {
@@ -483,16 +480,11 @@ namespace
         QueueNewBattles(ids, input.generation);
         continue;
       }
-      Stream stream;
-      if (name == "resources")
-        stream = Stream::kResources;
-      else if (name == "starbase_modules")
-        stream = Stream::kBuildings;
-      else if (name == "ships")
-        stream = Stream::kShips;
-      else
+      const auto known = std::ranges::find(kSections, name, &std::pair<std::string_view, Stream>::first);
+      if (known == std::end(kSections))
         continue;
-      RecordSet records;
+      const auto stream = known->second;
+      RecordSet  records;
       for (const auto& [key, record] : section.items()) {
         try {
           if (stream == Stream::kResources) {
@@ -508,12 +500,14 @@ namespace
                                  record.at("components").get<std::vector<int64_t>>());
           }
         } catch (const std::exception& e) {
-          spdlog::error("Skipping malformed {} record {}: {}", name, key, e.what());
+          logging::Error("process", name, "skipping malformed record {}: {}", key, e.what());
         }
       }
+      // Skipped records are logged above; the rest still count as the full list.
       Publish(stream, std::move(records), input.generation, Update::kFull);
     }
   }
+
   const char* DeployedStateName(pb::DeployedFleetState state)
   {
     switch (state) {
@@ -595,7 +589,8 @@ namespace
   void ProcessDeployedFleets(const Input& input)
   {
     // Each changed or departed fleet is re-read on the game thread, which fills in some values from this data. The
-    // last record per fleet, for this session only, tells which ones those are. Never destroyed, see sync.h.
+    // last record per fleet, for this session only, tells which ones those are. Leaked, like the processing thread
+    // that uses it.
     static uint64_t seen_generation = 0;
     static auto&    seen            = *new std::unordered_map<int64_t, size_t>;
     if (seen_generation != input.generation) {
@@ -645,12 +640,14 @@ namespace
         Update::kReplace);
   }
 
+  // The processor for each response kind.
   struct Route {
     EntityGroup::Kind type;
     Processor         process;
-    bool              battle = false;
+    // Battle log routes only run while a target wants battle logs.
+    bool battle_logs = false;
   };
-  const Route kRoutes[] = {
+  constexpr Route kRoutes[] = {
       {EntityGroup::Kind::AwayAssignmentsList, ProcessAwayAssignments},
       {EntityGroup::Kind::AwayAssignmentsInstance, ProcessAwayAssignment},
       {EntityGroup::Kind::BattleResultHeaders, ProcessBattleHeaders, true},
@@ -706,10 +703,12 @@ namespace
   }
 } // namespace
 
+// A realtime slot update: the same record as the protobuf EntitySlot, from the realtime channel's JSON. The cases
+// follow Slot above; this channel abbreviates fleet setups and sends times as UTC timestamps.
 void ProcessRealtimeSlot(const Input& input)
 {
   try {
-    auto                                      data     = json::parse(input.bytes);
+    const auto                                data     = json::parse(input.bytes);
     const int32_t                             type     = data.at("slot_type").get<int32_t>();
     constexpr std::pair<int32_t, const char*> fields[] = {
         {pb::SLOTTYPE_CONSUMABLE, "consumable_slot_params"},
@@ -757,18 +756,19 @@ void ProcessRealtimeSlot(const Input& input)
                              item.is_null() ? json(nullptr) : json(item.get<int64_t>()), std::move(params));
     Publish(Stream::kSlots, {{id, std::move(record)}}, input.generation);
   } catch (const json::exception& e) {
-    spdlog::error("Failed to parse slots JSON: {}", e.what());
+    logging::Error("process", "realtime slot", "the payload does not parse: {}", e.what());
   }
 }
+
 // A store offers group carries whole store categories. The faction store's consumable offers are one record, which
 // targets receive again whenever it changes.
 void ProcessStoreOffers(const Input& input)
 {
-  content::Bundles response;
-  if (!response.ParseFromString(input.bytes)) {
-    spdlog::error("Failed to parse {}", response.GetTypeName());
+  const auto parsed = Parse<content::Bundles>(input, "store offers");
+  if (!parsed)
     return;
-  }
+  const auto& response = *parsed;
+
   constexpr std::string_view kCategory = "factions";
   struct Offer {
     const content::Bundle*      bundle;
@@ -815,36 +815,36 @@ void ProcessStoreOffers(const Input& input)
   Publish(Stream::kStoreOffers, std::move(records), input.generation);
 }
 
-// Only the record whose user id is the local player's is read. The server record carries level 0, so the in-memory
-// Level captured with the response is used: it lags one own-record response after a level-up.
+// UserProfiles responses also list other players; only the local player's record is read. The server record carries
+// level 0, so the in-memory Level captured with the response is used: it lags one own-record response after a
+// level-up.
 void ProcessOwnProfile(const Input& input)
 {
-  pb::UserProfilesResponse response;
-  if (!response.ParseFromString(input.bytes)) {
-    spdlog::error("Failed to parse own user profile");
+  const auto response = Parse<pb::UserProfilesResponse>(input, "own profile");
+  if (!response)
     return;
-  }
-  for (const auto& profile : response.userprofiles()) {
-    if (profile.userid() != input.user_id)
-      continue;
-    RecordSet records;
-    records[input.user_id] = {{"uid", input.user_id},
-                              {"level", input.level},
-                              {"xp", profile.xp()},
-                              {"military_might", profile.militarymight()},
-                              {"planetary_base_unlocked", profile.planetarybaseunlocked()}};
-    Publish(Stream::kProfile, std::move(records), input.generation, Update::kFull);
+  const auto& profiles = response->userprofiles();
+  const auto  own      = std::ranges::find_if(
+      profiles, [&input](const pb::UserProfile& profile) { return profile.userid() == input.user_id; });
+  if (own == profiles.end())
     return;
-  }
+  RecordSet records;
+  records[input.user_id] = {{"uid", input.user_id},
+                            {"level", input.level},
+                            {"xp", own->xp()},
+                            {"military_might", own->militarymight()},
+                            {"planetary_base_unlocked", own->planetarybaseunlocked()}};
+  Publish(Stream::kProfile, std::move(records), input.generation, Update::kFull);
 }
 
+// Every category is parsed and stored, and each target filters what it receives at delivery: a target or category
+// switched on by a settings reload then gets the current state at once, not after the next login. Battle logs are
+// the exception, because processing their headers downloads every journal.
 Processor ProcessorFor(EntityGroup::Kind kind)
 {
-  const auto  config  = Config::Sync::Get();
-  const auto& options = config->options;
-  for (const auto& route : kRoutes)
-    if (route.type == kind)
-      return !route.battle || options.battlelogs ? route.process : nullptr;
-  return nullptr;
+  const auto route = std::ranges::find(kRoutes, kind, &Route::type);
+  if (route == std::end(kRoutes))
+    return nullptr;
+  return !route->battle_logs || Config::Sync::Get()->options.battlelogs ? route->process : nullptr;
 }
 } // namespace data_sync
