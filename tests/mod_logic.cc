@@ -12,17 +12,19 @@
 #include <toml++/toml.h>
 #include <unity/input.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
 #include <set>
 #include <source_location>
+#include <utility>
 
 namespace
 {
-std::array<bool, static_cast<size_t>(unity::KeyCode::Max)> held{};
-int                                                        failures = 0;
+std::array<bool, std::to_underlying(unity::KeyCode::Max)> held{};
+int                                                       failures = 0;
 
 void Check(bool condition, const char* what, std::source_location where = std::source_location::current())
 {
@@ -36,7 +38,7 @@ void Hold(std::initializer_list<unity::KeyCode> keys)
 {
   held.fill(false);
   for (auto key : keys)
-    held[static_cast<size_t>(key)] = true;
+    held[std::to_underlying(key)] = true;
 }
 
 toml::table Load(std::string_view settings, bool extended = true, bool experimental = false)
@@ -65,7 +67,7 @@ void ShipHints()
   Check(ShipShortcutHintAction(Action::kSelectShip1, 0, [](std::size_t) { return 0; }) == Action::kCount,
         "Unavailable fleet context must not advertise a guessed ship shortcut");
   for (int index = 0; index < 8; ++index) {
-    auto action = static_cast<Action>(static_cast<int>(Action::kSelectShip1) + index);
+    const auto action = static_cast<Action>(std::to_underlying(Action::kSelectShip1) + index);
     Check(ShipShortcutHintAction(action, 8, [](std::size_t i) { return static_cast<int>(i); }) == action,
           "Contiguous eight-dock hints must keep their original shortcuts");
   }
@@ -81,7 +83,7 @@ void ShipHints()
   Check(Shortcut::Hint(ship_hint(Action::kSelectShip7)).empty(),
         "Unbound ship selection must not advertise a working shortcut");
   Shortcut::Bindings custom{};
-  custom[static_cast<size_t>(Action::kSelectShip6)].push_back(KeyChord::Parse("CTRL-F8"));
+  custom[std::to_underlying(Action::kSelectShip6)].push_back(KeyChord::Parse("CTRL-F8"));
   Shortcut::Set(std::move(custom));
   Check(Shortcut::Hint(ship_hint(Action::kSelectShip7)) == "^F8",
         "Gapped ship hint must use the actual custom binding, not a hardcoded number");
@@ -175,6 +177,7 @@ void KeyRanges()
   for (const auto name : {"F0", "F16", "F01", "F1X", "KEY00", "KEY10", "KEY", "KEY1X", "F999999999999"})
     Check(KeyChord::Parse(name).key == unity::KeyCode::None, "out-of-range and noncanonical names stay invalid");
 }
+
 void DefaultBindings()
 {
   const auto fixture = toml::parse_file(STFC_SHORTCUT_DEFAULTS);
@@ -193,6 +196,7 @@ void DefaultBindings()
     }
   }
 }
+
 void Loading()
 {
   auto parsed = Load(R"(
@@ -499,17 +503,16 @@ void Matching()
 namespace unity::Key
 {
 bool Pressed(unity::KeyCode key)
-{ return held[static_cast<size_t>(key)]; }
+{ return held[std::to_underlying(key)]; }
 bool Down(unity::KeyCode key)
 { return Pressed(key); }
 bool IsModified()
 {
-  for (auto key : {unity::KeyCode::LeftControl, unity::KeyCode::RightControl, unity::KeyCode::LeftShift,
-                   unity::KeyCode::RightShift, unity::KeyCode::LeftAlt, unity::KeyCode::RightAlt,
-                   unity::KeyCode::LeftCommand, unity::KeyCode::RightCommand})
-    if (Pressed(key))
-      return true;
-  return false;
+  return std::ranges::any_of(std::array{unity::KeyCode::LeftControl, unity::KeyCode::RightControl,
+                                        unity::KeyCode::LeftShift, unity::KeyCode::RightShift, unity::KeyCode::LeftAlt,
+                                        unity::KeyCode::RightAlt, unity::KeyCode::LeftCommand,
+                                        unity::KeyCode::RightCommand},
+                             Pressed);
 }
 } // namespace unity::Key
 
