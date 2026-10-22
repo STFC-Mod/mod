@@ -91,6 +91,7 @@ The English example tracks the current code. Translations can lag behind.
 Settings reload after you save the file. To reload manually, press `CTRL-SHIFT-F6`.
 Changes under `[patches]` require a game restart.
 Shortcuts that adjust settings during play do not save those changes to your TOML file.
+The one exception is Shift+click pinning in the ship dock, which rewrites only the `pinned_ships` line under `[ui]`.
 
 ## Fix installation problems
 
@@ -119,7 +120,8 @@ In Finder, press `Command-Shift-G` and enter:
 ```
 
 This works even when Finder hides `Library`.
-If the launcher shows game version `-1`, reinstall the game, then open the Community Mod launcher again.
+If the launcher shows **Game not installed** and game version `00`, it cannot read the game's install path or version.
+Reinstall the game with the Xsolla launcher, then open the Community Mod launcher again.
 You do not need to reinstall the mod launcher.
 
 For further help, use the [Discord server](https://discord.gg/PrpHgs7Vjs).
