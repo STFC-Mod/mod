@@ -1,3 +1,5 @@
+// Applies an Xsolla rsync delta through the C++ bridge in rsync.cc.
+
 import Foundation
 import librsync
 

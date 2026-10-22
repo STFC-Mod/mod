@@ -6,7 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <memory>
+#include <string>
 
 extern "C" int rsync_apply(const char*, const char*, const char*);
 

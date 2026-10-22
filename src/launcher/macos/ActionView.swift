@@ -1,166 +1,74 @@
-import Foundation
+// The launcher's buttons: configure the mod, update the game, and launch it through the mod's loader.
+
 import SwiftUI
 import os
 
-/// Logger for launcher actions
 private let logger = Logger(subsystem: "com.stfcmod.startrekpatch", category: "launcher")
 
-struct ActionView: View, XSollaUpdaterDelegate {
-
-  private let gameUpdater = XsollaUpdater("Star Trek Fleet Command")
-  @State private var gameVersion: Int = 0
-  @State private var gameUpdateAvailable: Bool = false
-  @State private var updating: Bool = false
-  @State private var updateAction: String = ""
-  @State private var updateSubAction: String = ""
-  @State private var updateProgress: Float = 0.0
-  @State private var gameInstalled: Bool = false
-  @State private var gameRunning: Bool = false
-  @State private var showErrorAlert: Bool = false
-  @State private var errorMessage: String = ""
-  private var model = PulsatingViewModel()
-
-  func updateProgress(progress: XsollaUpdateProgress) {
-    switch progress {
-    case .Start(let totalActions):
-      updateAction = "Updating"
-      updateSubAction = "Planning"
-      updateProgress = totalActions > 0 ? 0.0 : 1.0
-    case .Progress(let currentAction, let totalActions):
-      updateAction = "Updating \(currentAction) of \(totalActions)"
-      updateProgress = Float(currentAction) / Float(totalActions)
-      break
-    case .Extracting(_):
-      updateSubAction = "Extracting"
-      break
-    case .ExtractComplete(_):
-      break
-    case .Downloading(_):
-      updateSubAction = "Downloading"
-      break
-    case .DownloadComplete(_):
-      break
-    case .Patching(_):
-      updateSubAction = "Patching"
-      break
-    case .PatchingProgress(_, _):
-      break
-    case .PatchStepComplete:
-      break
-    case .PatchComplete:
-      break
-    case .Waiting:
-      updateSubAction = "Waiting"
-      break
-    case .ApplyVersion:
-      updateSubAction = "Applying Version"
-    case .VersionApplied:
-      updateSubAction = "Version Applied"
-    case .Finalizing:
-      updateSubAction = "Finalizing"
-      break
-    case .CleaningUp:
-      updateSubAction = "Cleaning Up"
-      break
-    case .Complete:
-      updateSubAction = "Complete"
-      updateProgress = 1.0
-      break
-    }
-  }
+struct ActionView: View {
+  private let gameUpdater = XsollaUpdater(gameName: "Star Trek Fleet Command")
+  @State private var gameVersion = 0
+  @State private var gameUpdateAvailable = false
+  @State private var updating = false
+  @State private var updateAction = ""
+  @State private var updateSubAction = ""
+  @State private var gameInstalled = false
+  @State private var gameRunning = false
+  @State private var showErrorAlert = false
+  @State private var errorMessage = ""
 
   var body: some View {
     GeometryReader { geo in
       Grid {
         GridRow {
-          Button {
-            withAnimation {
-              openConfigSite()
-            }
-          } label: {
-            commonButton(text: "Configure Mod")
-              .foregroundColor(.lcarViolet)
-          }.buttonStyle(PlainButtonStyle())
+          lcarsButton("Configure Mod", color: .lcarViolet, action: openConfigSite)
 
           if gameInstalled {
             Group {
-              Button {
-                withAnimation {
-                  if gameUpdateAvailable && !updating {
-                    Task {
-                      do {
-                        logger.info("User requested game update")
-                        updating = true
-                        updateAction = "Starting"
-                        updateSubAction = "Planning"
-                        try await gameUpdater.updateGame(delegate: self)
-                        logger.info("Game update finished successfully")
-                      } catch {
-                        logger.error("Error updating game: \(error.localizedDescription)")
-                        updateAction = "Update Failed"
-                        updateSubAction = "Failed"
-                        errorMessage = "Game update failed: \(error.localizedDescription)"
-                        showErrorAlert = true
-                      }
-                      updating = false
-                      gameVersion = gameUpdater.installedVersion()
-                      gameUpdateAvailable = await gameUpdater.checkForUpdateAvailable()
-                    }
-                  }
-                }
-              } label: {
-                if gameUpdateAvailable {
-                  commonButton(text: "Update Game!")
-                    .foregroundColor(.lcarTan)
-                } else {
-                  commonButton()
-                    .foregroundColor(.lcarTan)
-                }
-              }.buttonStyle(PlainButtonStyle())
-              Button {
-                withAnimation {
-                  launchGame()
-                }
-              } label: {
-                commonButton(text: "Engage!")
-                  .foregroundColor(.lcarOrange)
-              }.buttonStyle(PlainButtonStyle())
+              lcarsButton(gameUpdateAvailable ? "Update Game!" : "", color: .lcarTan) {
+                guard gameUpdateAvailable, !updating else { return }
+                // Set before the task starts, so a second click cannot start a second update.
+                updating = true
+                Task { await updateGame() }
+              }
+              lcarsButton("Engage!", color: .lcarOrange) {
+                withAnimation { launchGame() }
+              }
             }
             .opacity(updating || gameRunning ? 0.5 : 1.0)
             .allowsHitTesting(!updating && !gameRunning)
           } else {
             Text("Game not installed")
-              .font(.custom("HelveticaNeue-CondensedBold", size: 40))
-              .foregroundColor(.lcarTan)
+              .font(.lcars(size: 40))
+              .foregroundStyle(Color.lcarTan)
               .offset(x: -45)
           }
-
         }
       }
       .frame(width: geo.size.width, height: 150)
       .offset(x: 85, y: 20)
       .task {
+        // The update service is polled once a minute while the launcher is open.
         repeat {
           gameVersion = gameUpdater.installedVersion()
           gameInstalled = gameVersion > 0
           gameUpdateAvailable = await gameUpdater.checkForUpdateAvailable()
           try? await Task.sleep(for: .seconds(60))
         } while !Task.isCancelled
-
       }
       .overlay(alignment: .bottomTrailing) {
         Text("Game Version: \(String(format: "%02d", gameVersion))")
-          .font(.custom("HelveticaNeue-CondensedBold", size: 17))
-          .foregroundColor(.lcarTan)
+          .font(.lcars(size: 17))
+          .foregroundStyle(Color.lcarTan)
           .offset(x: -10)
       }
       .overlay(alignment: .bottomLeading) {
         if updating {
           HStack {
-            PulsatingView(viewModel: model)
+            PulsatingView()
             Text("\(updateAction) (\(updateSubAction))")
-              .font(.custom("HelveticaNeue-CondensedBold", size: 17))
-              .foregroundColor(.lcarTan)
+              .font(.lcars(size: 17))
+              .foregroundStyle(Color.lcarTan)
               .offset(x: -10)
           }
           .offset(x: 115, y: 10)
@@ -174,26 +82,25 @@ struct ActionView: View, XSollaUpdaterDelegate {
     }
   }
 
-  private func commonButton(text: String = "") -> some View {
-    RoundedRectangle(cornerRadius: 20)
-      .frame(width: 125, height: 50)
-      .overlay(alignment: .bottomTrailing) {
-        HStack {
-          Spacer()
-          Text(text.count > 0 ? text : "\(randomDigits(4))-\(randomDigits(3))")
-            .font(.custom("HelveticaNeue-CondensedBold", size: 17))
-            .foregroundColor(.black)
+  // A rounded LCARS button in `color`. Without text it shows random LCARS-style digits.
+  private func lcarsButton(_ text: String, color: Color, action: @escaping @MainActor () -> Void) -> some View {
+    Button(action: action) {
+      RoundedRectangle(cornerRadius: 20)
+        .frame(width: 125, height: 50)
+        .overlay(alignment: .bottomTrailing) {
+          HStack {
+            Spacer()
+            Text(text.isEmpty ? "\(randomDigits(4))-\(randomDigits(3))" : text)
+              .font(.lcars(size: 17))
+              .foregroundStyle(.black)
+          }
+          .scaleEffect(x: 0.7, anchor: .trailing)
+          .padding(.bottom, 5)
+          .padding(.trailing, 20)
         }
-        .scaleEffect(x: 0.7, anchor: .trailing)
-        .padding(.bottom, 5)
-        .padding(.trailing, 20)
-      }
-  }
-
-  private func randomDigits(_ count: Int) -> String {
-    (1...count)
-      .map { _ in "\(Int.random(in: 0...9))" }
-      .joined()
+        .foregroundStyle(color)
+    }
+    .buttonStyle(.plain)
   }
 
   private func openConfigSite() {
@@ -201,99 +108,126 @@ struct ActionView: View, XSollaUpdaterDelegate {
     NSWorkspace.shared.open(configSiteURL)
   }
 
+  private func showProgress(_ progress: XsollaUpdateProgress) {
+    switch progress {
+    case .start:
+      updateAction = "Updating"
+      updateSubAction = "Planning"
+    case .progress(let currentAction, let totalActions):
+      updateAction = "Updating \(currentAction) of \(totalActions)"
+    case .extracting:
+      updateSubAction = "Extracting"
+    case .downloading:
+      updateSubAction = "Downloading"
+    case .patching:
+      updateSubAction = "Patching"
+    case .waiting:
+      updateSubAction = "Waiting"
+    case .applyVersion:
+      updateSubAction = "Applying Version"
+    case .versionApplied:
+      updateSubAction = "Version Applied"
+    case .finalizing:
+      updateSubAction = "Finalizing"
+    case .cleaningUp:
+      updateSubAction = "Cleaning Up"
+    case .complete:
+      updateSubAction = "Complete"
+    }
+  }
+
+  @MainActor
+  private func updateGame() async {
+    logger.info("User requested game update")
+    updateAction = "Starting"
+    updateSubAction = "Planning"
+    do {
+      try await gameUpdater.updateGame(onProgress: showProgress)
+      logger.info("Game update finished successfully")
+    } catch {
+      logger.error("Error updating game: \(error.localizedDescription, privacy: .public)")
+      updateAction = "Update Failed"
+      updateSubAction = "Failed"
+      showError("Game update failed: \(error.localizedDescription)")
+    }
+    updating = false
+    gameVersion = gameUpdater.installedVersion()
+    gameUpdateAvailable = await gameUpdater.checkForUpdateAvailable()
+  }
+
+  private func showError(_ message: String) {
+    errorMessage = message
+    showErrorAlert = true
+  }
+
+  // A GCD thread rather than a Task: runGame blocks until the game exits, which must not tie up a Swift concurrency
+  // thread, and it waits for the entitlements panel, which needs the main thread free.
   private func launchGame() {
+    gameRunning = true
     DispatchQueue.global().async {
+      let result = Result { try runGame() }
       DispatchQueue.main.async {
-        gameRunning = true
-      }
-
-      // Ensure the game has the required entitlements before launching
-      do {
-        try ensureGameHasLoaderEntitlements()
-      } catch let error as EntitlementError {
-        logger.error("Error ensuring game entitlements: \(error.localizedDescription)")
-        DispatchQueue.main.async {
-          errorMessage = error.localizedDescription
-          showErrorAlert = true
-          gameRunning = false
-        }
-        return
-      } catch {
-        logger.error("Error ensuring game entitlements: \(error.localizedDescription)")
-        DispatchQueue.main.async {
-          errorMessage = "Failed to prepare game for launch: \(error.localizedDescription)"
-          showErrorAlert = true
-          gameRunning = false
-        }
-        return
-      }
-
-      let process = Process()
-      let helper = Bundle.main.path(forAuxiliaryExecutable: "stfc-community-mod-loader")
-      process.executableURL = URL(fileURLWithPath: helper!)
-      DispatchQueue.global().async {
-        do {
-          try process.run()
-        } catch {
-          DispatchQueue.main.async {
-            gameRunning = false
-          }
-          return
-        }
-        process.waitUntilExit()
-        DispatchQueue.main.async {
-          gameRunning = false
+        gameRunning = false
+        if case .failure(let error) = result {
+          showError(error.localizedDescription)
         }
       }
     }
   }
 }
 
-class PulsatingViewModel: ObservableObject {
-  @Published var colorIndex = 1
+private enum LaunchError: LocalizedError {
+  case loaderMissing
+  case loaderFailed(Error)
+
+  var errorDescription: String? {
+    switch self {
+    case .loaderMissing:
+      return "The mod loader is missing from the launcher. Reinstall the community mod."
+    case .loaderFailed(let error):
+      return "Could not start the game: \(error.localizedDescription)"
+    }
+  }
 }
 
+// Runs the game through the mod's loader until it exits. A free function, so it can run off the main actor.
+private func runGame() throws {
+  do {
+    try ensureGameHasLoaderEntitlements()
+  } catch {
+    logger.error("Error ensuring game entitlements: \(error.localizedDescription, privacy: .public)")
+    throw error
+  }
+
+  guard let loader = Bundle.main.path(forAuxiliaryExecutable: "stfc-community-mod-loader") else {
+    logger.error("The mod loader is missing from the launcher bundle")
+    throw LaunchError.loaderMissing
+  }
+  let process = Process()
+  process.executableURL = URL(fileURLWithPath: loader)
+  do {
+    try process.run()
+  } catch {
+    logger.error("Could not start the mod loader: \(error.localizedDescription, privacy: .public)")
+    throw LaunchError.loaderFailed(error)
+  }
+  process.waitUntilExit()
+}
+
+// The pulsing dot shown while an update runs.
 struct PulsatingView: View {
+  @State private var animate = false
 
-  @ObservedObject var viewModel: PulsatingViewModel
-
-  func colourToShow() -> Color {
-    switch viewModel.colorIndex {
-    case 0:
-      return Color.lcarOrange
-    case 1:
-      return Color.lcarTan
-    case 2:
-      return Color.lcarViolet
-    default:
-      return Color.lcarPink
-    }
-  }
-
-  @State var animate = false
   var body: some View {
-    VStack {
-      ZStack {
-        Circle().fill(colourToShow().opacity(0.25)).frame(width: 40, height: 40).scaleEffect(
-          self.animate ? 1 : 0)
-        Circle().fill(colourToShow().opacity(0.35)).frame(width: 30, height: 30).scaleEffect(
-          self.animate ? 1 : 0)
-        Circle().fill(colourToShow().opacity(0.45)).frame(width: 15, height: 15).scaleEffect(
-          self.animate ? 1 : 0)
-        Circle().fill(colourToShow()).frame(width: 16.25, height: 16.25)
-      }
-      .onAppear { self.animate = true }
-      .animation(
-        animate ? Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default,
-        value: animate
-      )
-      .onChange(of: viewModel.colorIndex) { _ in
-        self.animate = false
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-          self.animate = true
-        }
-      }
-
+    ZStack {
+      Circle().fill(Color.lcarTan.opacity(0.25)).frame(width: 40, height: 40).scaleEffect(animate ? 1 : 0)
+      Circle().fill(Color.lcarTan.opacity(0.35)).frame(width: 30, height: 30).scaleEffect(animate ? 1 : 0)
+      Circle().fill(Color.lcarTan.opacity(0.45)).frame(width: 15, height: 15).scaleEffect(animate ? 1 : 0)
+      Circle().fill(Color.lcarTan).frame(width: 16.25, height: 16.25)
     }
+    .onAppear { animate = true }
+    .animation(
+      animate ? Animation.easeInOut(duration: 1.5).repeatForever(autoreverses: true) : .default,
+      value: animate)
   }
 }

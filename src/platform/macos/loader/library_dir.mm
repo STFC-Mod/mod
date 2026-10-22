@@ -1,3 +1,5 @@
+// The loader's one Foundation call, kept in Objective-C++ so main.cc stays plain C++.
+
 #include <filesystem>
 
 #import <Foundation/Foundation.h>
