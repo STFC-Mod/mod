@@ -106,7 +106,7 @@ namespace
         out["hull_damage"] = std::llround(*damage);
     out["cargo_fill"] = fleet->CargoResourceFillLevel();
 
-    if (auto* hold = fleet->CargoHold()) {
+    if (auto* hold = fleet->CargoHoldData()) {
       if (auto* current = hold->CurrentCargo()) {
         out["cargo"]     = current->CurrentValue();
         out["cargo_max"] = current->MaxValue();
@@ -125,7 +125,7 @@ namespace
           out["node_amount"] = node->Amount();
       }
       out["mining_rate"] = fleet->GetMiningRate();
-      if (auto* timer = fleet->MiningSlotTimer())
+      if (auto* timer = fleet->miningSlotTimer())
         Put(out, "mining_due", timer->DueTime().UnixSeconds());
     }
 
@@ -160,7 +160,7 @@ namespace
     auto* hull = fleet->Hull();
     // Hull ids are 32-bit and run past 2^31 (e.g. Kumari 3005922948); take the value as unsigned before widening so
     // those never come out negative in the record.
-    const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id())) : 0;
+    const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->id())) : 0;
 
     json out = {{"fid", fleet->Id()},
                 {"slot", slot},

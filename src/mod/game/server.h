@@ -352,8 +352,8 @@ using SlotClearRtcParser =
 // Digit.Networking.RTC.CentrifugoInfo, a value type passed by value: a hook must keep it by value so the arguments
 // after it keep their ABI positions.
 struct CentrifugoInfo {
-  Il2CppString* Channel;
-  int32_t       Offset;
+  Il2CppString* channel;
+  int32_t       offset;
 };
 static_assert(sizeof(CentrifugoInfo) == 16);
 
@@ -391,7 +391,7 @@ struct IdRefs : il2cpp::Object {
 struct HullSpec : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "HullSpec">;
 
-  int64_t Id()
+  int64_t id()
   { return Field<"id_", int64_t>(); }
   // The internal key, such as "Hull_L30_Destroyer_Klingon_LIVE".
   Il2CppString* name()
@@ -557,8 +557,9 @@ struct InventoryItem : il2cpp::Object {
 
   ResourceSpec* resourceSpec()
   { return Field<"_resourceSpec", ResourceSpec*>(); }
-  ForbiddenTech* forbiddenTech()
-  { return Get<"ForbiddenTech", ForbiddenTech*>(); }
+  // Named after the property, so the type needs `::` here.
+  ::ForbiddenTech* ForbiddenTech()
+  { return Get<"ForbiddenTech", ::ForbiddenTech*>(); }
 };
 
 // The context of a cargo bar.

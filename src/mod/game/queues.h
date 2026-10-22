@@ -56,16 +56,16 @@ static_assert(sizeof(SetCourseResponse) == 24 && offsetof(SetCourseResponse, tar
 struct ActionQueueManager : MonoSingleton<ActionQueueManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Prime.ActionQueue", "ActionQueueManager">;
 
+  // One queue per dock slot, indexed by FleetPlayerData.Index; empty slots are null.
+  il2cpp::Array<ActionQueueInstance*>* battleQueue()
+  { return Field<"_battleQueue", il2cpp::Array<ActionQueueInstance*>*>(); }
+
   void ClearQueue(FleetPlayerData* playerData)
   { Call<"ClearQueue">(playerData); }
   bool IsQueueFull(FleetPlayerData* playerData)
   { return Call<"IsQueueFull", bool>(playerData); }
   bool IsQueueUnlocked()
   { return Call<"IsQueueUnlocked", bool>(); }
-
-  // One queue per dock slot, indexed by FleetPlayerData.Index; empty slots are null.
-  il2cpp::Array<ActionQueueInstance*>* battleQueue()
-  { return Field<"_battleQueue", il2cpp::Array<ActionQueueInstance*>*>(); }
   EngageResult TryPlanPathAndEngageTarget(FleetPlayerData* fleet, ActionQueueInstance* queue)
   { return Call<"TryPlanPathAndEngageTarget", EngageResult(FleetPlayerData*, ActionQueueInstance*)>(fleet, queue); }
   // Removes the target fleet from every queue that holds it, as the game does when a target goes away.

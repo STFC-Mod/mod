@@ -2,9 +2,8 @@
 
 // The login screen, the transition screen shown between sections, and their loading tips and slide shows.
 
-#include "ui.h"
-
 #include <il2cpp/il2cpp.h>
+#include <unity/ui.h>
 
 struct LoginSequence : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Login", "LoginSequence">;

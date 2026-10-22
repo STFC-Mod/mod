@@ -2,8 +2,6 @@
 
 // Haven (the planetary base): its help history. Haven's camera uses the bindings in camera.h.
 
-#include "ui.h"
-
 #include <il2cpp/il2cpp.h>
 
 struct PlanetaryHelpHistoryContext : il2cpp::Object {

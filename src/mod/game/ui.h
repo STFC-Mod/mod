@@ -9,6 +9,8 @@
 #include <unity/input.h>
 #include <unity/ui.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -52,10 +54,7 @@ struct VisibilityController : il2cpp::Object {
 
   // Shown or on its way in.
   bool IsShown()
-  {
-    const auto current = state();
-    return current == VisibilityState::Visible || current == VisibilityState::Show;
-  }
+  { return std::ranges::contains(std::array{VisibilityState::Visible, VisibilityState::Show}, state()); }
 };
 
 struct CanvasController : unity::Behaviour {
@@ -74,12 +73,15 @@ struct CanvasController : unity::Behaviour {
   static CanvasController* Of(il2cpp::Object* component)
   { return component ? component->Call<"GetComponentInParent", CanvasController*>(Class::TypeObject()) : nullptr; }
 
-  // Whether `component` is on a canvas that is currently visible.
+  // `component` is on a canvas that is currently visible.
   static bool Shows(il2cpp::Object* component)
   {
     auto* canvas = Of(component);
     return canvas && canvas->Visible();
   }
+  // `view` is active and enabled, and its canvas is visible: a hidden screen can keep active views.
+  static bool OnScreen(unity::Behaviour* view)
+  { return unity::ActiveAndEnabled(view) && Shows(view); }
 };
 
 // Digit.Client.UI.TextLocalizer: the label component that renders localized, parameterized text.
@@ -89,9 +91,6 @@ struct TextLocalizer : il2cpp::Object {
   // Declared on GraphicLocalizer<,>.
   Il2CppString* identifier()
   { return Field<"m_identifier", Il2CppString*>(); }
-  // These localizers render on every UI update, so the identifier is compared without converting it.
-  bool IdentifierIs(std::string_view name)
-  { return il2cpp::Equals(identifier(), name); }
   // The backing field, not the SignificantDecimals property.
   void SetSignificantDecimals(int32_t value)
   { SetField<"m_significantDecimals">(value); }
@@ -107,6 +106,10 @@ struct TextLocalizer : il2cpp::Object {
   { Call<"ClearTextOverride">(); }
   void OverrideLocalizedText(Il2CppString* text)
   { Call<"OverrideLocalizedText">(text); }
+
+  // These localizers render on every UI update, so the identifier is compared without converting it.
+  bool IdentifierIs(std::string_view name)
+  { return il2cpp::Equals(identifier(), name); }
 };
 
 struct ColourTextLocalizer : TextLocalizer {
@@ -241,15 +244,6 @@ struct BaseListContainer : il2cpp::Object {
 struct SelectableList : BaseListContainer {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SelectableList">;
 
-  // Regenerates the list's tiles from its current Data, through the game's SelectableListBase
-  // .ClearAndGenerateContents; `provider` is the IDataContextProvider the tiles bind to.
-  void Rebuild(il2cpp::Object* provider)
-  {
-    auto* data = Get<"Data", il2cpp::Object*>();
-    if (data)
-      Call<"ClearAndGenerateContents">(provider, data);
-  }
-
   int32_t SelectedIndex()
   { return Get<"SelectedIndex", int32_t>(); }
 
@@ -257,10 +251,16 @@ struct SelectableList : BaseListContainer {
   void RequestSelect(int32_t index, bool simulated = false)
   { Call<"RequestSelect">(index, simulated); }
 
+  // Null when `index` is outside Data.
   il2cpp::Object* DataItem(int32_t index)
+  { return il2cpp::At(Get<"Data", il2cpp::List<il2cpp::Object*>*>(), index); }
+
+  // Regenerates the list's tiles from its current Data, through the game's SelectableListBase
+  // .ClearAndGenerateContents; `provider` is the IDataContextProvider the tiles bind to.
+  void Rebuild(il2cpp::Object* provider)
   {
-    auto* list = Get<"Data", il2cpp::List<il2cpp::Object*>*>();
-    return list ? (*list)[index] : nullptr;
+    if (auto* data = Get<"Data", il2cpp::Object*>())
+      Call<"ClearAndGenerateContents">(provider, data);
   }
 };
 
@@ -286,9 +286,13 @@ struct UIFrameManager : il2cpp::Object {
 struct ScreenManager : MonoSingleton<ScreenManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "ScreenManager">;
 
-  // The canvas drawn on top; with visible_only, the top one that is shown.
-  static CanvasController* GetTopCanvas(bool visible_only)
-  { return Class::Call<"GetTopCanvas", CanvasController*>(visible_only); }
+  // Every registered canvas, visible or not.
+  il2cpp::List<CanvasController*>* screens()
+  { return Field<"_screens", il2cpp::List<CanvasController*>*>(); }
+  unity::CanvasScaler* canvasRootScaler()
+  { return Field<"m_canvasRootScaler", unity::CanvasScaler*>(); }
+  UIFrameManager* frameManager()
+  { return Field<"_frameManager", UIFrameManager*>(); }
 
   // The first live T on a visible registered canvas whose data context is a T::Context. Only the canvas that owns
   // that context is searched: the top canvas and the scene root can belong to unrelated overlays.
@@ -297,11 +301,8 @@ struct ScreenManager : MonoSingleton<ScreenManager> {
     struct Context {
       using Class = typename T::Context;
     };
-    auto*         manager = Existing();
-    auto*         screens = unity::Alive(manager) ? manager->screens() : nullptr;
-    const int32_t count   = screens ? screens->Count() : 0;
-    for (int32_t index = 0; index < count; ++index) {
-      auto* canvas  = (*screens)[index];
+    auto* manager = Existing();
+    for (auto* canvas : il2cpp::Items(unity::Alive(manager) ? manager->screens() : nullptr)) {
       auto* context = unity::Alive(canvas) ? canvas->Context() : nullptr;
       if (!context || !context->Is<Context>() || !canvas->Visible())
         continue;
@@ -311,14 +312,6 @@ struct ScreenManager : MonoSingleton<ScreenManager> {
     }
     return nullptr;
   }
-
-  // Every registered canvas, visible or not.
-  il2cpp::List<CanvasController*>* screens()
-  { return Field<"_screens", il2cpp::List<CanvasController*>*>(); }
-  unity::CanvasScaler* canvasRootScaler()
-  { return Field<"m_canvasRootScaler", unity::CanvasScaler*>(); }
-  UIFrameManager* frameManager()
-  { return Field<"_frameManager", UIFrameManager*>(); }
 };
 
 struct ShortcutsManager : MonoSingleton<ShortcutsManager> {
@@ -328,13 +321,14 @@ struct ShortcutsManager : MonoSingleton<ShortcutsManager> {
   { return Get<"ShowKeybindings", bool>(); }
   void SetShowKeybindings(bool value)
   { Set<"ShowKeybindings">(value); }
-  // Private static gate the native shortcut actions check (tutorial, modals, text input).
-  static bool CanUseShortcuts()
-  { return Class::Get<"CanUseShortcuts", bool>(); }
 
   // Runs one of the On*Action(InputAction.CallbackContext) handlers, as the game's own shortcut for it would.
   template <il2cpp::Name Action> void Run()
   { Call<Action>(unity::InputActionCallbackContext{}); }
+
+  // The private static gate the game's own shortcut actions check (tutorial, modals, text input).
+  static bool CanUseShortcuts()
+  { return Class::Get<"CanUseShortcuts", bool>(); }
 };
 
 // The badge next to a button that shows the key of one of the game's input actions.
@@ -450,10 +444,10 @@ struct ToastObserver : il2cpp::Object {
 struct AnimatedRewardsScreenViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController">;
 
-  void GoBackToLastSection()
-  { Call<"GoBackToLastSection">(); }
   bool IsActive()
   { return Call<"IsActive", bool>(); }
+  void GoBackToLastSection()
+  { Call<"GoBackToLastSection">(); }
 };
 
 // The -/+ stepper on upgrade and quantity screens.

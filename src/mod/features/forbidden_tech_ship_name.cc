@@ -43,7 +43,7 @@ void SetActive(il2cpp::Object* component, bool active)
 std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
 {
   auto* context = widget->Context();
-  auto* tech    = context ? context->forbiddenTech() : nullptr;
+  auto* tech    = context ? context->ForbiddenTech() : nullptr;
   if (!tech)
     return {};
   const auto id      = tech->Id();
@@ -56,12 +56,12 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
   EntitySlot* slot = nullptr;
   if (!manager->TryGetEntitySlotFromForbiddenTech(id, slot) || !slot)
     return {};
-  auto* params = slot->forbiddenTechSlotParams();
+  auto* params = slot->ForbiddenTechSlotParams();
   if (!params)
     return {};
   const auto owner = params->OwnerId();
 
-  auto* service = manager->fleetService();
+  auto* service = manager->FleetService();
   if (!service)
     return {};
   auto* ship = service->GetShip(owner);
@@ -70,7 +70,7 @@ std::string EquippedShipName(ForbiddenTechInventoryItemWidget* widget)
     return {};
   // Hull IDs and localisation IDs differ on many ships. Mirror FleetPlayerData.GetLocaId.
   auto*      refs    = hull->idRefs();
-  const auto loca_id = refs ? refs->locaId() : hull->Id();
+  const auto loca_id = refs ? refs->locaId() : hull->id();
   return LocalizedShipName(loca_id);
 }
 

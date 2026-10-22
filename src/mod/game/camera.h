@@ -14,10 +14,10 @@ struct FloatConstraint : il2cpp::Object {
   { return Field<"_enabled", bool>(); }
   float min()
   { return Field<"_min", float>(); }
-  float max()
-  { return Field<"_max", float>(); }
   void SetMin(float value)
   { SetField<"_min">(value); }
+  float max()
+  { return Field<"_max", float>(); }
   void SetMax(float value)
   { SetField<"_max">(value); }
 };
@@ -38,18 +38,18 @@ struct CameraFrame : il2cpp::Object {
 
   unity::Vector3 position()
   { return Field<"_position", unity::Vector3>(); }
+  void SetPosition(unity::Vector3 value)
+  { SetField<"_position">(value); }
   unity::Quaternion rotation()
   { return Field<"_rotation", unity::Quaternion>(); }
   float fov()
   { return Field<"_FOV", float>(); }
   float farPlane()
   { return Field<"_farPlane", float>(); }
-  bool orthographic()
-  { return Field<"_orthographic", bool>(); }
-  void SetPosition(unity::Vector3 value)
-  { SetField<"_position">(value); }
   void SetFarPlane(float value)
   { SetField<"_farPlane">(value); }
+  bool orthographic()
+  { return Field<"_orthographic", bool>(); }
 };
 
 struct EditableCameraFrame : CameraFrame {

@@ -67,12 +67,12 @@ struct BundleDataWidget : Widget<Bundle> {
 
   int32_t currentState()
   { return Field<"_currentState", int32_t>(); }
-  void AuxViewButtonPressedHandler()
-  { Call<"AuxViewButtonPressedHandler">(); }
-
+  inline InventoryTooltipTriggerWidget* invTooltip();
   // Set by OnDidBindContext after the card set up its tooltip.
   inline ShopListScrollerViewController* scrollerController();
-  inline InventoryTooltipTriggerWidget*  invTooltip();
+
+  void AuxViewButtonPressedHandler()
+  { Call<"AuxViewButtonPressedHandler">(); }
 };
 
 struct DrawerContext : il2cpp::Object {
@@ -262,6 +262,9 @@ struct AllianceGamesStoreContext : il2cpp::Object {
   { return TryCall<"get_IsFetchingBundlesInProgress", bool()>(); }
   int32_t BundlesCount()
   { return Get<"BundlesCount", int32_t>(); }
+  // Rebuilds the store's currency list from its bundles.
+  bool UpdateStoreCurrency()
+  { return TryCall<"UpdateStoreCurrency", void()>(); }
   // How many soft currencies the store shows.
   std::optional<int32_t> CurrencyCount()
   {
@@ -269,9 +272,6 @@ struct AllianceGamesStoreContext : il2cpp::Object {
     auto* soft       = currencies ? currencies->Get<"SoftResources", il2cpp::List<il2cpp::Object*>*>() : nullptr;
     return soft ? soft->TryCall<"get_Count", int32_t()>() : std::nullopt;
   }
-  // Rebuilds the store's currency list from its bundles.
-  bool UpdateStoreCurrency()
-  { return TryCall<"UpdateStoreCurrency", void()>(); }
 };
 
 struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController {
@@ -282,10 +282,10 @@ struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController
   { return Get<"AllianceGamesContext", AllianceGamesStoreContext*>(); }
 };
 
-ShopListScrollerViewController* BundleDataWidget::scrollerController()
-{ return Field<"_scrollerController", ShopListScrollerViewController*>(); }
 InventoryTooltipTriggerWidget* BundleDataWidget::invTooltip()
 { return Field<"_invTooltip", InventoryTooltipTriggerWidget*>(); }
+ShopListScrollerViewController* BundleDataWidget::scrollerController()
+{ return Field<"_scrollerController", ShopListScrollerViewController*>(); }
 
 // Shows the shop's reveal sequences and offer popups. Only hooked.
 using ShopSceneManager = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;
