@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "features/features.h"
+#include "file.h"
 #include "version.h"
 
 #include "game/loading.h"
@@ -13,8 +14,8 @@
 #include <spdlog/spdlog.h>
 #include <unity/ui.h>
 
+#include <algorithm>
 #include <array>
-#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <random>
@@ -44,8 +45,8 @@ void HideImage(unity::Image* image)
     image->SetColor({0.0f, 0.0f, 0.0f, 0.0f});
 }
 
-// Decodes `data` into `asset` unless it is still loaded; warns once per failed decode.
-unity::ImageAsset* Load(unity::ImageAsset& asset, const uint8_t* data, size_t size, const char* name)
+// Decodes `data` into `asset` unless it is still loaded; warns on every failed decode.
+unity::ImageAsset* LoadScreenImage(unity::ImageAsset& asset, const uint8_t* data, size_t size, const char* name)
 {
   if (asset.Load(data, size))
     return &asset;
@@ -53,7 +54,7 @@ unity::ImageAsset* Load(unity::ImageAsset& asset, const uint8_t* data, size_t si
   return nullptr;
 }
 
-struct Assets {
+struct ScreenImages {
   unity::ImageAsset background, logo, community_logo;
 
   // The configured loader_image, or the embedded one when it is unset or unreadable. Called from hooks, so it
@@ -62,25 +63,27 @@ struct Assets {
   {
     if (background.Texture())
       return &background;
-    const auto&     path = Config::Get().graphics.loader_image;
+    // loader_image is UTF-8; File::FromUtf8 keeps Windows from reading it in the ANSI code page.
+    const auto      path = File::FromUtf8(Config::Get().graphics.loader_image);
     std::error_code error;
     if (!path.empty() && std::filesystem::exists(path, error)) {
       std::ifstream        file(path, std::ios::binary);
       std::vector<uint8_t> data(std::istreambuf_iterator<char>(file), {});
-      if (!data.empty() && Load(background, data.data(), data.size(), "custom loading background"))
+      if (!data.empty() && LoadScreenImage(background, data.data(), data.size(), "custom loading background"))
         return &background;
     }
-    return Load(background, g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE, "embedded loading background");
+    return LoadScreenImage(background, g_embeddedLoadingImage, g_embeddedLoadingImage_SIZE,
+                           "embedded loading background");
   }
 
   unity::ImageAsset* Logo()
-  { return Load(logo, g_embeddedLogoImage, g_embeddedLogoImage_SIZE, "mod logo"); }
+  { return LoadScreenImage(logo, g_embeddedLogoImage, g_embeddedLogoImage_SIZE, "mod logo"); }
 
   unity::ImageAsset* CommunityLogo()
-  { return Load(community_logo, g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo"); }
+  { return LoadScreenImage(community_logo, g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo"); }
 };
 // Leaked on purpose: its GC handles must not be released by static destructors after the runtime is gone.
-Assets& assets = *new Assets;
+ScreenImages& screen_images = *new ScreenImages;
 
 unity::GameObject* CreateOverlay(const char* name, unity::ImageAsset& asset, unity::Transform* parent,
                                  unity::Vector2 anchor_min, unity::Vector2 anchor_max, bool preserve_aspect,
@@ -106,42 +109,42 @@ unity::GameObject* CreateOverlay(const char* name, unity::ImageAsset& asset, uni
   return object;
 }
 
-enum class Corner { kBottomLeft, kBottomRight };
+enum class LogoCorner { kBottomLeft, kBottomRight };
 
-// A logo in a bottom corner, sized relative to a 1920-wide screen and scaled by loader_logo_scale.
-bool CreateLogo(const char* name, unity::ImageAsset* asset, unity::Transform* parent, Corner corner)
+// A logo in a bottom corner, laid out in pixels for a 1920-wide screen, then scaled to the real width and by
+// loader_logo_scale. The overlay is placed purely by anchors, so the pixel box becomes fractions of the screen.
+bool CreateLogo(const char* name, unity::ImageAsset* asset, unity::Transform* parent, LogoCorner corner)
 {
   if (!asset || !parent)
     return false;
 
-  float width  = static_cast<float>(unity::Screen::width());
-  float height = static_cast<float>(unity::Screen::height());
-  if (width <= 0.0f)
-    width = 1334.0f;
-  if (height <= 0.0f)
-    height = 750.0f;
+  // Screen can report 0 early in startup; fall back to a phone-sized screen.
+  const auto  screen_width = unity::Screen::width(), screen_height = unity::Screen::height();
+  const float width  = screen_width > 0 ? static_cast<float>(screen_width) : 1334.0f;
+  const float height = screen_height > 0 ? static_cast<float>(screen_height) : 750.0f;
 
   const float scale       = width / 1920.0f * Config::Get().graphics.loader_logo_scale;
   const float logo_width  = 150.0f * scale;
   const float logo_height = logo_width * asset->AspectRatio();
   const float pad_x       = 30.0f * scale;
   const float pad_y       = 185.0f * scale;
-  const float left        = corner == Corner::kBottomLeft ? pad_x : width - pad_x - logo_width;
+  const float left        = corner == LogoCorner::kBottomLeft ? pad_x : width - pad_x - logo_width;
 
   return CreateOverlay(name, *asset, parent, {left / width, pad_y / height},
                        {(left + logo_width) / width, (pad_y + logo_height) / height}, true, false);
 }
 
 // The mod logo on the right, the community logo on the left.
-struct Logos {
+struct ScreenLogos {
   bool logo           = false;
   bool community_logo = false;
 
   // Creates whichever is still missing.
   void Create(unity::Transform* parent)
   {
-    logo           = logo || CreateLogo("STFCModLogo", assets.Logo(), parent, Corner::kBottomRight);
-    community_logo = community_logo || CreateLogo("STFCCCLogo", assets.CommunityLogo(), parent, Corner::kBottomLeft);
+    logo = logo || CreateLogo("STFCModLogo", screen_images.Logo(), parent, LogoCorner::kBottomRight);
+    community_logo =
+        community_logo || CreateLogo("STFCCCLogo", screen_images.CommunityLogo(), parent, LogoCorner::kBottomLeft);
   }
 };
 
@@ -155,15 +158,14 @@ unity::Image* FindLoginBackground(unity::Transform* transform, int depth, unity:
                                                 "LoginBG",    "SplashBG", "Image"};
   if (!transform || depth > 4)
     return nullptr;
-  for (int32_t i = 0; i < transform->childCount(); ++i) {
-    auto* child  = transform->GetChild(i);
+  for (auto* child : transform->Children()) {
     auto* object = child ? child->gameObject() : nullptr;
     if (!object)
       continue;
     if (auto* image = object->GetComponent<unity::Image>()) {
       if (!first)
         first = image;
-      if (std::ranges::find(kNames, object->Name()) != std::end(kNames))
+      if (std::ranges::contains(kNames, object->Name()))
         return image;
     }
     if (auto* found = FindLoginBackground(child, depth + 1, first))
@@ -178,16 +180,15 @@ void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
   if (!Config::Get().graphics.loader_enabled)
     return;
 
-  auto* background = assets.Background();
+  auto* background = screen_images.Background();
   auto* canvas     = background ? _this->mainCanvas() : nullptr;
   auto* root       = canvas ? canvas->transform() : nullptr;
   if (!root)
     return;
 
   unity::Image* first = nullptr;
-  auto*         image = FindLoginBackground(root, 0, first);
-  if (!image)
-    image = first;
+  auto*         found = FindLoginBackground(root, 0, first);
+  auto*         image = found ? found : first;
   if (!image)
     return;
 
@@ -198,17 +199,17 @@ void LoginSequence_Awake_Hook(auto original, LoginSequence* _this)
     image->SetVerticesDirty();
   }
 #endif
-  Logos{}.Create(image->transform());
+  ScreenLogos{}.Create(image->transform());
 }
 
 // --- Loading tips ---
 
-struct Tip {
+struct LoadingTip {
   const char* text;
   int         weight;
 };
 
-constexpr Tip kTips[] = {
+constexpr LoadingTip kTipTexts[] = {
     {"Did you know? You can customize zoom presets, hotkeys, and UI scale in the community mod settings file to suit "
      "your playstyle.",
      15},
@@ -228,9 +229,9 @@ constexpr Tip kTips[] = {
 
 // The first loading screen of a session gets the welcome line. After that, half the transition screens keep the
 // game's own tip and the rest get one of ours by weight, never the same one twice in a row.
-struct Tips {
+struct TipPicker {
   bool         first_screen = true;
-  size_t       last         = std::size(kTips);
+  size_t       last         = std::size(kTipTexts);
   std::mt19937 random{std::random_device{}()};
 
   const char* Next()
@@ -241,19 +242,19 @@ struct Tips {
     if (std::bernoulli_distribution(0.5)(random))
       return nullptr;
 
-    std::array<int, std::size(kTips)> weights{};
+    std::array<int, std::size(kTipTexts)> weights{};
     for (size_t i = 0; i < weights.size(); ++i)
-      weights[i] = i == last ? 0 : kTips[i].weight;
+      weights[i] = i == last ? 0 : kTipTexts[i].weight;
     last = std::discrete_distribution<size_t>(weights.begin(), weights.end())(random);
-    return kTips[last].text;
+    return kTipTexts[last].text;
   }
 
   void Reset()
   {
     first_screen = true;
-    last         = std::size(kTips);
+    last         = std::size(kTipTexts);
   }
-} tips;
+} tip_picker;
 
 void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, LoadingTipViewController* _this)
 {
@@ -261,7 +262,7 @@ void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, Load
   if (!Config::Get().graphics.loader_tip_enabled)
     return;
   auto* label = _this->textMeshPro();
-  if (const char* tip = tips.Next(); tip && label)
+  if (const char* tip = tip_picker.Next(); tip && label)
     label->SetText(tip);
 }
 
@@ -269,11 +270,11 @@ void LoadingTipViewController_SetRandomTipLocalisedText_Hook(auto original, Load
 
 // What has been done to the current TransitionViewController. Its Unity objects are looked up again on each
 // attempt rather than kept, since nothing roots them between hooks. A new controller or a reload starts over.
-struct Transition {
-  bool  customized = false;
-  bool  overlay    = false;
-  Logos logos;
-} transition;
+struct TransitionState {
+  bool        customized = false;
+  bool        overlay    = false;
+  ScreenLogos logos;
+} transition_screen;
 
 // The transition background: _staticOverride, or the Image on BGContainer's first child (whose transform is
 // returned in `box` so it can be stretched).
@@ -282,8 +283,9 @@ unity::Image* FindTransitionBackground(TransitionViewController* controller, uni
   if (auto* image = controller->staticOverride())
     return image;
   auto* root = controller->transform();
-  for (int32_t i = 0; root && i < root->childCount(); ++i) {
-    auto* child  = root->GetChild(i);
+  if (!root)
+    return nullptr;
+  for (auto* child : root->Children()) {
     auto* object = child ? child->gameObject() : nullptr;
     if (!object || object->Name() != "BGContainer")
       continue;
@@ -298,8 +300,9 @@ unity::Image* FindTransitionBackground(TransitionViewController* controller, uni
 void ArrangeTransitionLayout(TransitionViewController* controller)
 {
   auto* root = controller->transform();
-  for (int32_t i = 0; root && i < root->childCount(); ++i) {
-    auto* child  = root->GetChild(i);
+  if (!root)
+    return;
+  for (auto* child : root->Children()) {
     auto* object = child ? child->gameObject() : nullptr;
     if (!object)
       continue;
@@ -327,12 +330,12 @@ void CustomizeTransition(TransitionViewController* controller)
 
   if (!Config::Get().graphics.loader_transition_black) {
 #ifndef _USE_ORIGINAL_BG
-    if (parent && !transition.overlay)
-      if (auto* image = assets.Background())
-        transition.overlay =
+    if (parent && !transition_screen.overlay)
+      if (auto* image = screen_images.Background())
+        transition_screen.overlay =
             CreateOverlay("STFCModBG", *image, parent, {0.0f, 0.0f}, {1.0f, 1.0f}, false, true) != nullptr;
     // Keep the game's background unless the replacement is fully attached, so a failure is visible but harmless.
-    if (!transition.overlay) {
+    if (!transition_screen.overlay) {
       spdlog::warn("[TransitionScreen] the custom background is unavailable; keeping the game's");
       return;
     }
@@ -346,10 +349,10 @@ void CustomizeTransition(TransitionViewController* controller)
   }
 
   if (parent)
-    transition.logos.Create(parent);
+    transition_screen.logos.Create(parent);
   if (!Config::Get().graphics.loader_transition_black)
     ArrangeTransitionLayout(controller);
-  transition.customized = true;
+  transition_screen.customized = true;
 }
 
 void TransitionViewController_Awake_Hook(auto original, TransitionViewController* _this)
@@ -357,14 +360,14 @@ void TransitionViewController_Awake_Hook(auto original, TransitionViewController
   original(_this);
   if (!Config::Get().graphics.loader_transition)
     return;
-  transition = {};
+  transition_screen = {};
   CustomizeTransition(_this);
 }
 
 void TransitionViewController_AboutToShow_Hook(auto original, TransitionViewController* _this)
 {
   original(_this);
-  if (Config::Get().graphics.loader_transition && !transition.customized)
+  if (Config::Get().graphics.loader_transition && !transition_screen.customized)
     CustomizeTransition(_this);
 }
 
@@ -386,8 +389,8 @@ void SlideShowViewController_ShowCurrentSlide_Hook(auto original, SlideShowViewC
 // The hierarchy holding our overlays is destroyed during a reload; forget it so Awake does not touch dead objects.
 void MonoSingleton_PrepareAllForReload_Hook(auto original)
 {
-  transition = {};
-  tips.Reset();
+  transition_screen = {};
+  tip_picker.Reset();
   original();
 }
 
@@ -395,12 +398,11 @@ void MonoSingleton_PrepareAllForReload_Hook(auto original)
 // first call.
 void InstallReloadReset()
 {
-  static const bool installed = [] {
+  [[maybe_unused]] static const bool installed = [] {
     il2cpp::HookSet hooks("LoadingScreens");
     IL2CPP_STAGE(hooks, MonoSingletonBase::Method("PrepareAllForReload"), MonoSingleton_PrepareAllForReload_Hook);
     return hooks.Commit();
   }();
-  (void)installed;
 }
 
 bool InstallLoginScreen()

@@ -105,8 +105,9 @@ bool Claimed(std::string_view faction)
 
 void ShowClaimedFactionIcons(MissionViewController* controller)
 {
-  auto* toggle = controller->claimAllToggle();
-  auto* parent = toggle && toggle->transform() ? toggle->transform()->parent() : nullptr;
+  auto* toggle    = controller->claimAllToggle();
+  auto* transform = toggle ? toggle->transform() : nullptr;
+  auto* parent    = transform ? transform->parent() : nullptr;
   if (!parent)
     return;
   for (const auto& faction : kFactions) {
@@ -123,10 +124,7 @@ void ShowClaimedFactionIcons(MissionViewController* controller)
 std::string FactionOf(DailyGoal* daily)
 {
   constexpr std::string_view kPrefix = "Resource_FactionPoint_";
-  auto*                      rewards = daily ? daily->factionPointRewards() : nullptr;
-  if (!rewards)
-    return {};
-  for (auto* item : *rewards) {
+  for (auto* item : il2cpp::Items(daily ? daily->factionPointRewards() : nullptr)) {
     auto* spec = item ? item->resourceSpec() : nullptr;
     auto* id   = spec ? spec->resourceId() : nullptr;
     if (auto resource = id ? il2cpp::ToUtf8(id) : std::string(); resource.starts_with(kPrefix))

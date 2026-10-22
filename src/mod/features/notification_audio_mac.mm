@@ -16,12 +16,10 @@ bool PlayNotificationBuffer(const uint8_t* data, size_t size)
       return false;
 
     [current_sound stop];
-#if __has_feature(objc_arc)
-    current_sound = sound;
-#else
+#if !__has_feature(objc_arc)
     [current_sound release];
-    current_sound = sound;
 #endif
+    current_sound = sound;
     return [current_sound play];
   }
 }

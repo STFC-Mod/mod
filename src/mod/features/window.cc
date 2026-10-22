@@ -52,10 +52,9 @@ bool ApplyProfileTitle()
   title.resize(GetWindowTextW(window, title.data(), length + 1));
 
   const auto&  profile = File::Profile();
-  std::wstring prefix(MultiByteToWideChar(CP_UTF8, 0, profile.data(), static_cast<int>(profile.size()), nullptr, 0),
-                      L'\0');
-  MultiByteToWideChar(CP_UTF8, 0, profile.data(), static_cast<int>(profile.size()), prefix.data(),
-                      static_cast<int>(prefix.size()));
+  const auto   bytes   = static_cast<int>(profile.size());
+  std::wstring prefix(MultiByteToWideChar(CP_UTF8, 0, profile.data(), bytes, nullptr, 0), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, profile.data(), bytes, prefix.data(), static_cast<int>(prefix.size()));
   return SetWindowTextW(window, (L"[" + prefix + L"] " + title).c_str()) != 0;
 }
 
@@ -117,6 +116,8 @@ bool InstallCursor()
 }
 } // namespace
 
+// The display scale of the monitor holding the game window, cached until `refresh` or a move to another monitor: the
+// display mode's physical width over the width Windows reports to this process, 1.5 when it scales the game to 150%.
 float WindowDpiScale(bool refresh)
 {
   static HMONITOR last_monitor = nullptr;
@@ -130,8 +131,7 @@ float WindowDpiScale(bool refresh)
 
   MONITORINFOEX info{};
   info.cbSize = sizeof(info);
-  DEVMODE mode{};
-  mode.dmSize = sizeof(mode);
+  DEVMODE mode{.dmSize = sizeof(DEVMODE)};
   if (GetMonitorInfo(monitor, &info) && EnumDisplaySettings(info.szDevice, ENUM_CURRENT_SETTINGS, &mode)) {
     const auto logical_width = info.rcMonitor.right - info.rcMonitor.left;
     if (logical_width > 0)

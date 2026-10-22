@@ -11,21 +11,22 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <array>
 #include <string>
 
 namespace
 {
 // PlaySound=0, UnpauseSound=3, AdvanceSequence=16, PlayScheduled=33. Cleanup still runs with All.
 constexpr bool SuppressEvent(bool all, bool named, int32_t action)
-{ return all ? action == 0 || action == 3 || action == 16 || action == 33 : named; }
+{ return all ? std::ranges::contains(std::array{0, 3, 16, 33}, action) : named; }
 static_assert(SuppressEvent(true, false, 0));
 static_assert(!SuppressEvent(true, true, 1));
 static_assert(!SuppressEvent(true, true, 23));
 static_assert(SuppressEvent(false, true, 21));
 
 // Fabric.EventManager.PostEvent(string, EventAction, object, GameObject, InitialiseParameters, bool, OnEventNotify)
-bool AudioEventManager_PostEvent_Hook(auto original, Il2CppObject* _this, Il2CppString* event_name, int event_action,
-                                      Il2CppObject* parameter, Il2CppObject* parent_game_object,
+bool AudioEventManager_PostEvent_Hook(auto original, Il2CppObject* _this, Il2CppString* event_name,
+                                      int32_t event_action, Il2CppObject* parameter, Il2CppObject* parent_game_object,
                                       Il2CppObject* initialise_parameters, bool add_to_queue,
                                       Il2CppObject* on_event_notify)
 {
@@ -34,8 +35,7 @@ bool AudioEventManager_PostEvent_Hook(auto original, Il2CppObject* _this, Il2Cpp
     const auto event = il2cpp::ToUtf8(event_name);
     if (audio.trace_events)
       spdlog::info("[Audio] event {}", event);
-    if (SuppressEvent(audio.disable_all_events,
-                      std::ranges::find(audio.disabled_events, event) != audio.disabled_events.end(), event_action)) {
+    if (SuppressEvent(audio.disable_all_events, std::ranges::contains(audio.disabled_events, event), event_action)) {
       spdlog::debug("[Audio] muted {}", event);
       return false;
     }

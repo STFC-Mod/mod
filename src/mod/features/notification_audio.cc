@@ -4,9 +4,14 @@
 
 #include <spdlog/spdlog.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <mutex>
+#include <numbers>
+#include <span>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #if _WIN32
@@ -33,34 +38,35 @@ constexpr std::array<ToneSegment, 5> kPatterns[] = {
     {{{1046, 95}}},
     {{{440, 70}, {0, 18}, {554, 70}, {0, 18}, {740, 140}}},
 };
-static_assert(std::size(kPatterns) == static_cast<size_t>(NotificationSound::kCount));
+static_assert(std::size(kPatterns) == std::to_underlying(NotificationSound::kCount));
 
 constexpr int    kSampleRate = 44100;
-constexpr double kTwoPi      = 6.28318530717958647692;
-constexpr double kAmplitude  = 0.26;
+constexpr double kTwoPi      = 2 * std::numbers::pi;
+// Peak level, about -12 dBFS.
+constexpr double kAmplitude = 0.26;
 
+int SegmentSamples(const ToneSegment& segment)
+{ return static_cast<int>((static_cast<int64_t>(segment.duration_ms) * kSampleRate) / 1000); }
+
+// RIFF stores integers little-endian.
 void AppendU16(std::vector<uint8_t>& buffer, uint16_t value)
-{
-  buffer.push_back(static_cast<uint8_t>(value & 0xff));
-  buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
-}
+{ buffer.insert(buffer.end(), {static_cast<uint8_t>(value), static_cast<uint8_t>(value >> 8)}); }
 
 void AppendU32(std::vector<uint8_t>& buffer, uint32_t value)
 {
-  buffer.push_back(static_cast<uint8_t>(value & 0xff));
-  buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xff));
-  buffer.push_back(static_cast<uint8_t>((value >> 16) & 0xff));
-  buffer.push_back(static_cast<uint8_t>((value >> 24) & 0xff));
+  AppendU16(buffer, static_cast<uint16_t>(value));
+  AppendU16(buffer, static_cast<uint16_t>(value >> 16));
 }
 
 void AppendAscii(std::vector<uint8_t>& buffer, std::string_view value)
 { buffer.insert(buffer.end(), value.begin(), value.end()); }
 
+// A canonical 44-byte RIFF header (one PCM fmt chunk, then data) followed by the samples.
 std::vector<uint8_t> BuildWav(std::span<const ToneSegment> pattern)
 {
   uint32_t sample_count = 0;
   for (const auto& segment : pattern)
-    sample_count += static_cast<uint32_t>((static_cast<int64_t>(segment.duration_ms) * kSampleRate) / 1000);
+    sample_count += static_cast<uint32_t>(SegmentSamples(segment));
 
   constexpr uint16_t channels        = 1;
   constexpr uint16_t bits_per_sample = 16;
@@ -69,27 +75,30 @@ std::vector<uint8_t> BuildWav(std::span<const ToneSegment> pattern)
   std::vector<uint8_t> buffer;
   buffer.reserve(44 + data_bytes);
   AppendAscii(buffer, "RIFF");
-  AppendU32(buffer, 36 + data_bytes);
+  AppendU32(buffer, 36 + data_bytes); // everything after this field
   AppendAscii(buffer, "WAVE");
   AppendAscii(buffer, "fmt ");
-  AppendU32(buffer, 16);
-  AppendU16(buffer, 1);
+  AppendU32(buffer, 16); // fmt chunk size
+  AppendU16(buffer, 1);  // PCM
   AppendU16(buffer, channels);
   AppendU32(buffer, kSampleRate);
-  AppendU32(buffer, kSampleRate * channels * (bits_per_sample / 8));
-  AppendU16(buffer, channels * (bits_per_sample / 8));
+  AppendU32(buffer, kSampleRate * channels * (bits_per_sample / 8)); // bytes per second
+  AppendU16(buffer, channels * (bits_per_sample / 8));               // bytes per frame
   AppendU16(buffer, bits_per_sample);
   AppendAscii(buffer, "data");
   AppendU32(buffer, data_bytes);
 
+  // A frequency of 0 is a rest. Each tone fades in over 80 samples and out over 120 (2-3 ms), which removes the
+  // click a hard edge would make.
   double phase = 0.0;
   for (const auto& segment : pattern) {
-    const auto segment_samples = static_cast<int>((static_cast<int64_t>(segment.duration_ms) * kSampleRate) / 1000);
-    const auto step            = segment.frequency_hz > 0.0 ? kTwoPi * segment.frequency_hz / kSampleRate : 0.0;
+    const auto segment_samples = SegmentSamples(segment);
+    const bool rest            = segment.frequency_hz <= 0.0;
+    const auto step            = rest ? 0.0 : kTwoPi * segment.frequency_hz / kSampleRate;
     for (int index = 0; index < segment_samples; ++index) {
-      const auto fade_in  = std::min(1.0, static_cast<double>(index) / 80.0);
-      const auto fade_out = std::min(1.0, static_cast<double>(segment_samples - index) / 120.0);
-      const auto sample   = segment.frequency_hz > 0.0 ? std::sin(phase) * kAmplitude * fade_in * fade_out : 0.0;
+      const auto fade_in  = std::min(1.0, index / 80.0);
+      const auto fade_out = std::min(1.0, (segment_samples - index) / 120.0);
+      const auto sample   = rest ? 0.0 : std::sin(phase) * kAmplitude * fade_in * fade_out;
       AppendU16(buffer, static_cast<uint16_t>(static_cast<int16_t>(sample * 32767.0)));
       phase += step;
       if (phase > kTwoPi)
@@ -102,7 +111,7 @@ std::vector<uint8_t> BuildWav(std::span<const ToneSegment> pattern)
 
 std::span<const uint8_t> NotificationSoundBytes(NotificationSound sound)
 {
-  const auto index = static_cast<size_t>(sound);
+  const size_t index = std::to_underlying(sound);
   if (index == 0 || index >= std::size(kPatterns))
     return {};
   static std::array<std::once_flag, std::size(kPatterns)>       ready;
