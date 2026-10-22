@@ -14,9 +14,10 @@
 #include "game/ui.h"
 
 #include <il2cpp/il2cpp.h>
-#include <optional>
 #include <spdlog/spdlog.h>
 #include <unity/tracker.h>
+
+#include <optional>
 
 namespace
 {
@@ -67,10 +68,12 @@ void ShowBookmarks()
 
 void ShowCoordinateSearch()
 {
-  if (auto* bookmarks = BookmarksManager::Instance())
-    return bookmarks->ViewCoordinateSearch();
-  spdlog::warn("[ShowLookup] BookmarksManager instance not available, falling back to main bookmarks");
-  Hub::GotoSection(SectionID::Bookmarks_Main);
+  if (auto* bookmarks = BookmarksManager::Instance()) {
+    bookmarks->ViewCoordinateSearch();
+  } else {
+    spdlog::warn("[Hotkeys] no bookmarks manager for the coordinate search; opening bookmarks instead");
+    Hub::GotoSection(SectionID::Bookmarks_Main);
+  }
 }
 
 void ShowHaven()
@@ -80,9 +83,7 @@ void ShowHaven()
 template <typename Controller> bool PressButton(unity::Button* (*pick)(Controller*))
 {
   for (auto* controller : unity::Instances<Controller>()) {
-    auto* button = controller && CanvasController::Shows(controller) && controller->isActiveAndEnabled()
-                       ? pick(controller)
-                       : nullptr;
+    auto* button = controller->isActiveAndEnabled() && CanvasController::Shows(controller) ? pick(controller) : nullptr;
     if (button) {
       button->Press();
       return true;
@@ -108,15 +109,16 @@ bool PressOfficerPresetsButton()
   return PressButton<OfficerAssignmentViewController>(
       [](OfficerAssignmentViewController* controller) -> unity::Button* {
         auto* widget = controller->officerPresetsButton();
-        return widget ? widget->TheButton() : nullptr;
+        return widget ? widget->UnityButton() : nullptr;
       });
 }
 
 void OpenManageShips()
 {
   auto* fleet_bar = unity::Newest<FleetBarViewController>();
-  if (auto* fleet = fleet_bar ? fleet_bar->SelectedFleet() : nullptr)
-    fleet_bar->fleetPanelController()->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+  auto* fleet     = fleet_bar ? fleet_bar->SelectedFleet() : nullptr;
+  if (auto* panel = fleet ? fleet_bar->fleetPanelController() : nullptr)
+    panel->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
 }
 
 // Opens Manage Ships for the selected fleet, for a button that is only there. False, with a warning, without one.
@@ -124,7 +126,7 @@ bool OpenManageShipsFor(const char* what)
 {
   auto* fleet_bar = unity::Newest<FleetBarViewController>();
   if (!fleet_bar || !fleet_bar->SelectedFleet()) {
-    spdlog::warn("[Hotkeys] unable to open Manage Ships for {}", what);
+    spdlog::warn("[Hotkeys] no fleet is selected, so Manage Ships cannot open for {}", what);
     return false;
   }
   OpenManageShips();
@@ -209,9 +211,8 @@ bool StepScreen(bool left)
   if (config.ui.arrow_keys_to_select_ship && Hub::CurrentSection() == SectionID::ShipManagement_Details) {
     bool moved = false;
     for (auto* controller : unity::Instances<ShipManagementViewController>()) {
-      auto* context = controller && controller->isActiveAndEnabled() && CanvasController::Shows(controller)
-                          ? controller->Context()
-                          : nullptr;
+      auto* context =
+          controller->isActiveAndEnabled() && CanvasController::Shows(controller) ? controller->Context() : nullptr;
       if (!context)
         continue;
       const int32_t count = context->ListCount();
@@ -229,8 +230,7 @@ bool StepScreen(bool left)
   if (config.ui.arrow_keys_to_select_ship) {
     bool moved = false;
     for (auto* widget : unity::Instances<AssignShipsWidget>()) {
-      auto* list = widget && CanvasController::Shows(widget) && widget->isActiveAndEnabled() ? widget->selectableList()
-                                                                                             : nullptr;
+      auto* list = widget->isActiveAndEnabled() && CanvasController::Shows(widget) ? widget->selectableList() : nullptr;
       if (!list || list->Count() <= 0)
         continue;
       // Skip empty dock slots.
@@ -251,7 +251,7 @@ bool StepScreen(bool left)
 
   bool moved = false;
   for (auto* controller : unity::Instances<ArtifactHallDetailsViewController>()) {
-    if (!controller || !controller->isActiveAndEnabled())
+    if (!controller->isActiveAndEnabled())
       continue;
     left ? controller->PressLeftArrow() : controller->PressRightArrow();
     moved = true;
@@ -260,7 +260,7 @@ bool StepScreen(bool left)
     return true;
 
   for (auto* selector : unity::Instances<ElementSelectorViewController>()) {
-    if (!selector || !selector->isActiveAndEnabled())
+    if (!selector->isActiveAndEnabled())
       continue;
     left ? selector->PressDecrement() : selector->PressIncrement();
     moved = true;
@@ -272,8 +272,8 @@ bool StepScreen(bool left)
 bool FocusSearchBox()
 {
   const auto focus = [](auto* owner) {
-    auto* field = owner ? owner->inputField() : nullptr;
-    if (!field || !CanvasController::Shows(owner) || !owner->isActiveAndEnabled() || !field->isActiveAndEnabled())
+    auto* field = owner->inputField();
+    if (!field || !owner->isActiveAndEnabled() || !CanvasController::Shows(owner) || !field->isActiveAndEnabled())
       return false;
     field->Focus();
     return true;

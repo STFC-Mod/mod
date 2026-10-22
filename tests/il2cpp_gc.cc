@@ -1,3 +1,5 @@
+// GcHandle ownership against a fake handle table: null and failed roots, moves, resets and weak targets.
+
 #include "il2cpp_test_api.h"
 
 #include <iostream>
@@ -12,7 +14,14 @@ uintptr_t                                         next_handle     = 1;
 bool                                              fail_allocation = false;
 int                                               frees           = 0;
 bool                                              weak            = false;
+
+void Require(bool condition)
+{
+  if (!condition)
+    throw std::runtime_error("GC ownership regression");
+}
 } // namespace
+
 API(Il2CppGCHandle, il2cpp_gchandle_new, (Il2CppObject * object, bool pinned))
 {
   if (!object || pinned)
@@ -42,11 +51,7 @@ API(void, il2cpp_gchandle_free, (Il2CppGCHandle handle))
   ++frees;
 }
 END_API
-void Require(bool condition)
-{
-  if (!condition)
-    throw std::runtime_error("GC ownership regression");
-}
+
 int main()
 {
   Require(!il2cpp::GcHandle::Strong(nullptr));

@@ -32,57 +32,61 @@
 
 namespace
 {
-// Installed in this order; the log numbers them.
+// Installed in this order, which the log numbers, and their frame work runs in this order too. Grouped by file as
+// in features.h. No feature depends on another being installed first; the object tracker leads only so that every
+// tracked class is hooked before anything else is.
 constexpr const Feature* kFeatures[] = {
-    &kInteriorZoom,
-    &kChatTitles,
-    &kRevealConfirm,
+    &kObjectTracker,
     &kActionQueueRecovery,
-    &kQueueAddressGuard,
     &kThinQueueProtection,
-    &kPinnedShipClick,
-    &kDockSelection,
-    &kAbilityButtons,
-    &kUiScale,
-    &kZoom,
-    &kHavenZoom,
-    &kHavenHistory,
+    &kQueueAddressGuard,
     &kAllianceGamesStore,
-    &kFleetLabels,
-    &kPan,
+    &kAnomalyTimer,
+    &kAudio,
     &kOutOfDockPower,
     &kBuffCrashGuard,
-    &kToasts,
+    &kZoom,
+    &kPan,
+    &kInteriorZoom,
+    &kCargoFormat,
+#if _WIN32
+    &kInstantCargo,
+#endif
+    &kChat,
+    &kChatTitles,
+    &kForbiddenTechConfirm,
+    &kRevealConfirm,
+    &kPinnedShips,
+    &kPinnedShipClick,
+    &kDoubleClickAssign,
+    &kAssignOnEnter,
+    &kDockSelection,
+    &kQueueSwitch,
+    &kAbilityButtons,
+    &kFleetLabels,
+    &kForbiddenTechShipName,
+    &kGameConfigOverrides,
+    &kHavenZoom,
+    &kHavenHistory,
     &kHotkeys,
-    &kGiftsAutoOpen,
+    &kInstantWarp,
+    &kLoginScreen,
+    &kTransitionScreen,
+    &kLoadingTips,
+    &kMissionHud,
     &kDailyClaimFilter,
+    &kOfficerSort,
+    &kGiftsAutoOpen,
+    &kShopLimits,
+    &kSkipRevealSequence,
+    &kArtifactExchange,
+    &kToasts,
+    &kUiScale,
 #if _WIN32
     &kFreeResize,
     &kCursor,
 #endif
-    &kSkipRevealSequence,
-    &kGameConfigOverrides,
-    &kQueueSwitch,
-    &kShopLimits,
-    &kMissionHud,
-    &kArtifactExchange,
-    &kChat,
     &kSync,
-    &kObjectTracker,
-    &kLoginScreen,
-    &kTransitionScreen,
-    &kAnomalyTimer,
-    &kLoadingTips,
-    &kInstantCargo,
-    &kCargoFormat,
-    &kOfficerSort,
-    &kPinnedShips,
-    &kDoubleClickAssign,
-    &kAssignOnEnter,
-    &kInstantWarp,
-    &kForbiddenTechConfirm,
-    &kForbiddenTechShipName,
-    &kAudio,
 };
 
 // The per-frame work of the installed features, in install order.
@@ -119,23 +123,29 @@ void InstallFeatures(const Config& config)
   spdlog::info("Initializing code hooks:");
   for (size_t i = 0; i < std::size(kFeatures); ++i) {
     const auto& feature = *kFeatures[i];
-    const bool  enabled = !feature.group || config.patches.*feature.group;
-    spdlog::info(" {} {:>2} of {} ({})", enabled ? "+ Patching" : "x Skipping", i + 1, std::size(kFeatures),
-                 feature.name);
-    if (!enabled)
+    if (feature.group && !(config.patches.*feature.group)) {
+      spdlog::info(" x Skipping {:>2} of {} ({})", i + 1, std::size(kFeatures), feature.name);
       continue;
+    }
+    bool installed = false;
     try {
-      if (feature.install)
-        feature.install();
-      if (feature.frame)
-        frame_work.push_back(feature.frame);
+      installed = !feature.install || feature.install();
     } catch (const std::exception& error) {
       spdlog::error("{} failed to install: {}", feature.name, error.what());
     }
+    // Logged after installing, so the line says what happened; the reasons for a failure come just before it.
+    if (installed)
+      spdlog::info(" + Patching {:>2} of {} ({})", i + 1, std::size(kFeatures), feature.name);
+    else
+      spdlog::warn(" ! Not installed {:>2} of {} ({})", i + 1, std::size(kFeatures), feature.name);
+    if (installed && feature.frame)
+      frame_work.push_back(feature.frame);
   }
   // Last, so a feature never sees a frame before it is installed. Without the tick nothing polls, and the settings
   // file is only read at startup.
-  if (!IL2CPP_HOOK(ScreenManager::Class::Method("Update"), ScreenManager_Update_Hook))
+  il2cpp::HookSet hooks("FrameTick");
+  IL2CPP_STAGE(hooks, ScreenManager::Class::Method("Update"), ScreenManager_Update_Hook);
+  if (!hooks.Commit())
     spdlog::error("The frame tick is missing: shortcuts, settings reload and per-frame features will not run");
 }
 
@@ -266,7 +276,9 @@ void StartMod()
 #else
     auto il2cpp_init = dlsym(assembly, "il2cpp_init");
 #endif
-    if (!IL2CPP_DETOUR(il2cpp_init, il2cpp_init_Hook, "il2cpp_init"))
+    il2cpp::HookSet hooks("il2cpp_init");
+    IL2CPP_STAGE_AT(hooks, il2cpp_init, il2cpp_init_Hook);
+    if (!hooks.Commit())
       fprintf(stderr, "stfc-community-mod: failed to hook il2cpp_init\n");
   } catch (const std::exception& error) {
     fprintf(stderr, "stfc-community-mod: failed to hook il2cpp_init: %s\n", error.what());

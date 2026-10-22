@@ -1,5 +1,5 @@
-// Cargo labels: the precision of abbreviated totals (1.25M) and showing the real total at once instead of the
-// count-up animation.
+// Cargo labels: [ui] format_cargo_values and cargo_significant_decimals, the precision of abbreviated totals (1.25M),
+// and on Windows [ui] instant_cargo_counter, which shows the real total at once instead of the count-up animation.
 
 #include "config.h"
 #include "features/features.h"
@@ -12,6 +12,8 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <string_view>
+#include <utility>
 
 namespace
 {
@@ -22,69 +24,69 @@ int SignificantDecimals()
 { return std::clamp(Config::Get().ui.cargo_significant_decimals, 0, 6); }
 
 // m_significantDecimals is read by Localize(), which runs after SetLocalTextParameters, so set it here for good.
-void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, ColourTextLocalizer* _this, bool parseID,
+void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, ColourTextLocalizer* _this, bool parse_id,
                                                      void* args)
 {
-  if (_this && Config::Get().ui.format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
+  if (Config::Get().ui.format_cargo_values && _this->IdentifierIs(kCargoIdentifier))
     _this->SetSignificantDecimals(SignificantDecimals());
-  original(_this, parseID, args);
+  original(_this, parse_id, args);
 }
 
-#if defined(_WIN32) && defined(_M_X64)
-bool IsCargoText(LegacyComparableProgressBar* self)
+// --- Instant cargo counter ---
+//
+// TODO: Windows only. Enabling it on macOS needs SetWidgetData's prologue checked against SPUD's detour size.
+#if _WIN32
+bool IsCargoText(LegacyComparableProgressBar* bar)
 {
-  auto* label = self->currentValue_X_of_Y();
+  auto* label = bar->currentValue_X_of_Y();
   if (!label || !label->IdentifierIs(kCargoIdentifier))
     return false;
-  auto* context = self->context();
-  if (!context || context->klass != CargoProgressData::Raw()) {
-    static bool reported = false;
-    if (!reported) {
-      reported = true;
-      spdlog::warn("[InstantCargoText] cargo label has unexpected context {}; native text retained",
-                   context ? il2cpp::ClassName(context->klass) : "null");
-    }
-    return false;
-  }
-  return true;
+  auto* context = bar->context();
+  if (context && context->klass == CargoProgressData::Raw())
+    return true;
+  static bool reported = false;
+  if (!std::exchange(reported, true))
+    spdlog::warn("[InstantCargo] the cargo label shows a {}, not cargo; keeping the game's count-up",
+                 context ? il2cpp::ClassName(context->klass) : "null");
+  return false;
 }
 
-void SetWidgetData_Hook(auto original, LegacyComparableProgressBar* self)
+void LegacyComparableProgressBar_SetWidgetData_Hook(auto original, LegacyComparableProgressBar* _this)
 {
-  if (!Config::Get().ui.instant_cargo_counter || !self || !IsCargoText(self)) {
-    original(self);
-    return;
-  }
+  if (!Config::Get().ui.instant_cargo_counter || !IsCargoText(_this))
+    return original(_this);
   // Render the current total through the game's own formatting with the prefab's snap flag set, then restore
   // the flag so reward updates and interpolation carry on normally.
-  const bool previous = self->snapToValue();
-  self->SetSnapToValue(true);
-  original(self);
-  self->SetSnapToValue(previous);
-}
-#endif
-void InstallInstantCargo()
-{
-  // TODO: Windows x64 only. Enabling it on macOS needs SetWidgetData's prologue checked against SPUD's detour size.
-#if defined(_WIN32) && defined(_M_X64)
-  auto method = LegacyComparableProgressBar::Class::Method("SetWidgetData", 0);
-  // The lookup walks parents; only detour the bar's own override, never the shared Widget`1.SetWidgetData.
-  if (!method || method.Info()->klass != LegacyComparableProgressBar::Class::Raw())
-    return;
-  const bool installed = IL2CPP_HOOK(method, SetWidgetData_Hook) != nullptr;
-  spdlog::info("[InstantCargoText] native text hook {}", installed ? "installed" : "unavailable");
-#else
-  spdlog::info("[InstantCargoText] native text snap is not supported on this platform");
-#endif
+  const bool previous = _this->snapToValue();
+  _this->SetSnapToValue(true);
+  original(_this);
+  _this->SetSnapToValue(previous);
 }
 
-void InstallCargoFormat()
+bool InstallInstantCargo()
 {
-  if (IL2CPP_HOOK(ColourTextLocalizer::Class::Method("SetLocalTextParameters"),
-                  ColourTextLocalizer_SetLocalTextParameters_Hook))
-    spdlog::info("Cargo format: significant decimals = {}", SignificantDecimals());
+  auto method = LegacyComparableProgressBar::Class::Method("SetWidgetData", 0);
+  // The lookup walks parents; only detour the bar's own override, never the shared Widget`1.SetWidgetData.
+  if (method && method.Info()->klass != LegacyComparableProgressBar::Class::Raw()) {
+    spdlog::warn("[InstantCargo] the progress bar no longer overrides SetWidgetData; not hooking the shared one");
+    return false;
+  }
+  il2cpp::HookSet hooks("InstantCargo");
+  IL2CPP_STAGE(hooks, method, LegacyComparableProgressBar_SetWidgetData_Hook);
+  return hooks.Commit();
+}
+#endif
+
+bool InstallCargoFormat()
+{
+  il2cpp::HookSet hooks("CargoFormat");
+  IL2CPP_STAGE(hooks, ColourTextLocalizer::Class::Method("SetLocalTextParameters"),
+               ColourTextLocalizer_SetLocalTextParameters_Hook);
+  return hooks.Commit();
 }
 } // namespace
 
-const Feature kInstantCargo{"InstantCargo", &Config::Patches::instantcargocounterhooks, InstallInstantCargo};
 const Feature kCargoFormat{"CargoFormat", &Config::Patches::cargoformathooks, InstallCargoFormat};
+#if _WIN32
+const Feature kInstantCargo{"InstantCargo", &Config::Patches::instantcargocounterhooks, InstallInstantCargo};
+#endif

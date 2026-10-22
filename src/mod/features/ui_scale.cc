@@ -1,8 +1,8 @@
-// UI, object viewer, and system ship scaling, and the hotkeys that adjust them at runtime.
+// [graphics] ui_scale, ui_scale_viewer and ui_scale_ship: the interface, object viewer and system ship scales, and the
+// shortcuts that adjust them during play.
 
 #include "config.h"
 #include "features/features.h"
-#include "text.h"
 
 #include "game/fleet.h"
 #include "game/ui.h"
@@ -36,7 +36,7 @@ void RescaleLoadedShips(float old_multiplier, float new_multiplier)
 
   const auto ratio = new_multiplier / old_multiplier;
   for (auto* selector : unity::Instances<FleetMeshSelector>()) {
-    auto* object    = selector ? selector->LoadedObject() : nullptr;
+    auto* object    = selector->LoadedObject();
     auto* transform = object ? object->transform() : nullptr;
     if (!transform)
       continue;
@@ -45,7 +45,7 @@ void RescaleLoadedShips(float old_multiplier, float new_multiplier)
   }
 }
 
-bool SystemViewShip_TryGetShipAssetBundleResource_Hook(auto original, void* _this, float* scale,
+bool SystemViewShip_TryGetShipAssetBundleResource_Hook(auto original, il2cpp::Object* _this, float* scale,
                                                        void** asset_bundle_resource)
 {
   const auto result = original(_this, scale, asset_bundle_resource);
@@ -58,6 +58,7 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
 {
   original(_this);
 
+  // allow_cursor = false, as in window.cc: rescaling canvases makes the game set its own cursor again.
 #if _WIN32
   static auto cursor = LoadCursor(nullptr, IDC_ARROW);
   if (!Config::Get().graphics.allow_cursor)
@@ -74,27 +75,27 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
     scaler->SetScaleFactor(factor);
 }
 
-void CanvasController_Show_Hook(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
+void CanvasController_Show_Hook(auto original, CanvasController* _this, int32_t entry_point, bool instant)
 {
   const auto viewer_scale = Config::Get().graphics.ui_scale_viewer;
-  if (_this && viewer_scale != 0.0f && il2cpp::Equals(_this->name(), "ObjectViewerTemplate_Canvas")) {
+  if (viewer_scale != 0.0f && il2cpp::Equals(_this->name(), "ObjectViewerTemplate_Canvas"))
     if (auto* transform = _this->transform())
       transform->SetLocalScale({viewer_scale, viewer_scale, viewer_scale});
-  }
-  return original(_this, desiredEntryPoint, instant);
+  original(_this, entry_point, instant);
 }
 
-void InstallUiScale()
+bool InstallUiScale()
 {
-  IL2CPP_HOOK(SystemViewShip::Method("TryGetShipAssetBundleResource", 2),
-              SystemViewShip_TryGetShipAssetBundleResource_Hook);
-
-  IL2CPP_HOOK(ScreenManager::Class::Method("UpdateCanvasRootScaleFactor"),
-              ScreenManager_UpdateCanvasRootScaleFactor_Hook);
-
-  IL2CPP_HOOK(CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}), CanvasController_Show_Hook);
-
+  il2cpp::HookSet hooks("UiScale");
+  IL2CPP_STAGE(hooks, SystemViewShip::Method("TryGetShipAssetBundleResource", 2),
+               SystemViewShip_TryGetShipAssetBundleResource_Hook);
+  IL2CPP_STAGE(hooks, ScreenManager::Class::Method("UpdateCanvasRootScaleFactor"),
+               ScreenManager_UpdateCanvasRootScaleFactor_Hook);
+  IL2CPP_STAGE(hooks, CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}),
+               CanvasController_Show_Hook);
+  const bool installed = hooks.Commit();
   WindowDpiScale(true);
+  return installed;
 }
 } // namespace
 
@@ -107,8 +108,8 @@ void AdjustUiScale(bool up)
   const auto old_scale     = config.graphics.ui_scale;
   const auto new_scale     = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step;
   config.graphics.ui_scale = std::clamp(new_scale, 0.1f, 2.0f);
-  spdlog::info("UI has been scaled {}, was {}, now {} (unclamped {}) @ {} DPI Scaling", up ? "UP" : "DOWN", old_scale,
-               config.graphics.ui_scale, new_scale, WindowDpiScale(true));
+  spdlog::info("[UiScale] interface scale {} -> {} (asked {}), DPI scale {}", old_scale, config.graphics.ui_scale,
+               new_scale, WindowDpiScale(true));
 }
 
 void AdjustUiViewerScale(bool up)
@@ -121,8 +122,7 @@ void AdjustUiViewerScale(bool up)
   const auto old_scale            = config.graphics.ui_scale_viewer;
   const auto new_scale            = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step * 0.25f;
   config.graphics.ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
-  spdlog::info("UI Viewer has been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
-               config.graphics.ui_scale_viewer, new_scale);
+  spdlog::info("[UiScale] viewer scale {} -> {} (asked {})", old_scale, config.graphics.ui_scale_viewer, new_scale);
 }
 
 void AdjustUiShipScale(bool up)
@@ -131,8 +131,7 @@ void AdjustUiShipScale(bool up)
   const auto old_scale          = config.graphics.ui_scale_ship;
   const auto new_scale          = old_scale + (up ? 1.0f : -1.0f) * config.graphics.ui_scale_step;
   config.graphics.ui_scale_ship = std::clamp(new_scale, 0.1f, 20.0f);
-  spdlog::info("System ship models have been scaled {}, was {}, now {} (unclamped {})", up ? "UP" : "DOWN", old_scale,
-               config.graphics.ui_scale_ship, new_scale);
+  spdlog::info("[UiScale] ship scale {} -> {} (asked {})", old_scale, config.graphics.ui_scale_ship, new_scale);
   RescaleLoadedShips(old_scale, config.graphics.ui_scale_ship);
 }
 

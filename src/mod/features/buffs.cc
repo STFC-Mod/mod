@@ -12,13 +12,13 @@
 namespace
 {
 // Leaves out the buffs that only apply while docked at the station.
-bool BuffService_IsBuffConditionMet_Hook(auto original, void* _this, BuffCondition currentCondition,
-                                         IBuffComparer* buffComparer, IBuffData* buffToCompare,
-                                         bool excludeFactionBuffs, bool isAllianceLoyalty)
+bool BuffService_IsBuffConditionMet_Hook(auto original, il2cpp::Object* _this, BuffCondition condition,
+                                         IBuffComparer* comparer, IBuffData* buff, bool exclude_faction_buffs,
+                                         bool is_alliance_loyalty)
 {
-  if (currentCondition == BuffCondition::CondSelfAtStation && Config::Get().buffs.use_out_of_dock_power)
+  if (condition == BuffCondition::CondSelfAtStation && Config::Get().buffs.use_out_of_dock_power)
     return false;
-  return original(_this, currentCondition, buffComparer, buffToCompare, excludeFactionBuffs, isAllianceLoyalty);
+  return original(_this, condition, comparer, buff, exclude_faction_buffs, is_alliance_loyalty);
 }
 
 // List<IBuffData> in and out, read untyped so a drifted IBuffData binding cannot make every buff look null. A list
@@ -33,11 +33,19 @@ il2cpp::List<il2cpp::Object*>* BuffService_ExtractBuffsOfType_Hook(auto original
   return original(modifier, list);
 }
 
-void InstallOutOfDockPower()
-{ IL2CPP_HOOK(BuffService::Method("IsBuffConditionMet"), BuffService_IsBuffConditionMet_Hook); }
+bool InstallOutOfDockPower()
+{
+  il2cpp::HookSet hooks("OutOfDockPower");
+  IL2CPP_STAGE(hooks, BuffService::Method("IsBuffConditionMet"), BuffService_IsBuffConditionMet_Hook);
+  return hooks.Commit();
+}
 
-void InstallBuffCrashGuard()
-{ IL2CPP_HOOK(BuffService::Method("ExtractBuffsOfType"), BuffService_ExtractBuffsOfType_Hook); }
+bool InstallBuffCrashGuard()
+{
+  il2cpp::HookSet hooks("BuffCrashGuard");
+  IL2CPP_STAGE(hooks, BuffService::Method("ExtractBuffsOfType"), BuffService_ExtractBuffsOfType_Hook);
+  return hooks.Commit();
+}
 } // namespace
 
 const Feature kOutOfDockPower{"OutOfDockPower", &Config::Patches::bufffixhooks, InstallOutOfDockPower};

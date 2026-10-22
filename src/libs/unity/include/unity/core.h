@@ -37,28 +37,31 @@ struct TimeSpan {
   int64_t ticks;
 };
 
-using ObjectClass = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
+// UnityEngine.Object's static members. il2cpp::ObjectClass() is System.Object, a different class.
+struct UnityObject {
+  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
+};
 
 // Unity's bool(Object): false for null, and for objects whose native side was destroyed even while a GC handle
 // still holds the managed wrapper.
 inline bool Alive(Il2CppObject* object)
-{ return object && ObjectClass::Call<"op_Implicit", bool>(object); }
+{ return object && UnityObject::Class::Call<"op_Implicit", bool>(object); }
 
 inline void Destroy(Il2CppObject* object)
-{ ObjectClass::Call<"Destroy">(object); }
+{ UnityObject::Class::Call<"Destroy">(object); }
 
 // The first loaded object of T. Scans every loaded object; keep it off per-frame paths.
 template <typename T> T* FindObject()
 {
   auto* type = T::Class::TypeObject();
-  return type ? static_cast<T*>(ObjectClass::Call<"FindObjectOfType", Il2CppObject*>(type)) : nullptr;
+  return type ? static_cast<T*>(UnityObject::Class::Call<"FindObjectOfType", Il2CppObject*>(type)) : nullptr;
 }
 
 // Every active loaded T. Scans every loaded object; keep it off per-frame paths.
 template <typename T> il2cpp::Array<T*>* FindObjectsOfType()
 {
   auto* type = T::Class::TypeObject();
-  return type ? ObjectClass::Call<"FindObjectsOfType", il2cpp::Array<T*>*>(type) : nullptr;
+  return type ? UnityObject::Class::Call<"FindObjectsOfType", il2cpp::Array<T*>*>(type) : nullptr;
 }
 
 // Every loaded T, active or not, including prefabs and other assets. Scans every loaded object; keep it off
@@ -70,12 +73,16 @@ template <typename T> il2cpp::Array<T*>* FindObjectsOfTypeAll()
   return type ? Resources::Call<"FindObjectsOfTypeAll", il2cpp::Array<T*>*>(type) : nullptr;
 }
 
-// Behaviour.isActiveAndEnabled through its internal call, for bindings whose managed property may have drifted:
-// without the call everything counts as active.
+// Behaviour.isActiveAndEnabled for any MonoBehaviour. The getter resolves once on Behaviour itself, so bindings
+// resolved on their runtime class, such as Widget`1, can share it. It goes through the managed getter rather than an
+// internal call: Unity 6 registers only get_isActiveAndEnabled_Injected, which takes the native object pointer. False
+// when the getter is missing, like any other binding.
 inline bool ActiveAndEnabled(il2cpp::Object* behaviour)
 {
-  static const il2cpp::ICall<bool(il2cpp::Object*)> call{"UnityEngine.Behaviour::get_isActiveAndEnabled()"};
-  return !call || call(behaviour);
+  using BehaviourClass      = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Behaviour">;
+  static const auto* getter = il2cpp::detail::ResolveProperty(BehaviourClass::Raw(), "isActiveAndEnabled",
+                                                              il2cpp::detail::SlotOf<bool>(), false, false);
+  return il2cpp::detail::Invoke<bool>(getter, behaviour);
 }
 
 struct Transform;
@@ -96,6 +103,8 @@ struct GameObject : il2cpp::Object {
   static GameObject* Create(std::string_view name)
   { return il2cpp::New<GameObject>(il2cpp::NewString(name)); }
 
+  // The name converted to UTF-8. Accessors named exactly after a member, like `name()` elsewhere, return the managed
+  // value itself; capitalized helpers such as this one convert it.
   std::string Name()
   { return il2cpp::ToUtf8(Get<"name", Il2CppString*>()); }
   bool NameIs(std::string_view ascii)
@@ -168,6 +177,18 @@ struct Transform : il2cpp::Object {
     return nullptr;
   }
 
+  // The first T on this transform's GameObject or its ancestors, active or not. The walk is bounded so a cycle in
+  // a half-destroyed hierarchy cannot hang the game; real UI hierarchies are far shallower.
+  template <typename T> T* FindInParents(int32_t limit = 32)
+  {
+    auto* transform = this;
+    for (int32_t depth = 0; transform && depth < limit; ++depth, transform = transform->parent())
+      if (auto* object = transform->gameObject())
+        if (auto* found = object->GetComponent<T>())
+          return found;
+    return nullptr;
+  }
+
   // The direct child whose GameObject is called `name`.
   Transform* ChildNamed(std::string_view name)
   {
@@ -218,6 +239,14 @@ struct Component : il2cpp::Object {
   { return Get<"transform", Transform*>(); }
   GameObject* gameObject()
   { return Get<"gameObject", GameObject*>(); }
+
+  // The GameObject of this component's parent transform, or null at the root.
+  GameObject* ParentObject()
+  {
+    auto* own    = transform();
+    auto* parent = own ? own->parent() : nullptr;
+    return parent ? parent->gameObject() : nullptr;
+  }
 };
 
 // A copy of `original` (a component copies its whole GameObject) under `parent`. Uses the non-generic
@@ -225,17 +254,19 @@ struct Component : il2cpp::Object {
 // would need generic inflation.
 template <typename T> T* Instantiate(T* original, Transform* parent, bool world_position_stays = false)
 {
-  return static_cast<T*>(ObjectClass::Call<"Instantiate", il2cpp::Object*(il2cpp::Object*, Transform*, bool)>(
+  return static_cast<T*>(UnityObject::Class::Call<"Instantiate", il2cpp::Object*(il2cpp::Object*, Transform*, bool)>(
       original, parent, world_position_stays));
 }
 
+// The base of every MonoBehaviour. Bindings for MonoBehaviours derive from it and name their own Class; one without
+// a Class would bind to Behaviour's.
 struct Behaviour : Component {
   using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Behaviour">;
 
   void SetEnabled(bool value)
   { Set<"enabled">(value); }
   bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
+  { return ActiveAndEnabled(this); }
 };
 
 struct Camera : il2cpp::Object {
@@ -284,11 +315,11 @@ struct Material : il2cpp::Object {
 
 struct Renderer : Component {
   using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Renderer">;
-  il2cpp::Array<Material*>* SharedMaterials()
+  il2cpp::Array<Material*>* sharedMaterials()
   { return Get<"sharedMaterials", il2cpp::Array<Material*>*>(); }
 };
 
-struct Canvas : il2cpp::Object {
+struct Canvas : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UIModule", "UnityEngine", "Canvas">;
 };
 
@@ -301,6 +332,7 @@ struct Screen {
   { return Class::Get<"height", int32_t>(); }
 };
 
+// Only hooked, so a bare Class. Classes whose static members are called get a struct, like Screen.
 using Cursor = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Cursor">;
 
 // UnityEngine.Time through its internal calls, which skip the managed wrappers.

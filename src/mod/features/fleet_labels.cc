@@ -1,6 +1,6 @@
-// zoom_label_player_* and zoom_label_non_player_*: how much detail fleet labels in system view show. The game picks
-// each label's level of detail from the camera's zoom; these settings override that per fleet kind. The camera's own
-// hooks in camera.cc report the zoom here.
+// [graphics] zoom_label_player_* and zoom_label_non_player_*: how much detail fleet labels in system view show. The
+// game picks each label's level of detail from the camera's zoom; these settings override that per fleet kind. The
+// camera's own hooks in camera.cc report the zoom here.
 
 #include "config.h"
 #include "features/features.h"
@@ -16,12 +16,14 @@
 
 namespace
 {
-// Fleet label detail. The game picks each fleet label's LOD from the camera's zoom level; the zoom_label_*
-// settings override that per fleet kind: always expanded, always compact, or expanded below a zoom threshold.
+// The tracked fleet labels and the zoom state they follow. Each fleet kind is always expanded, always compact, or
+// expanded below a zoom threshold.
 class FleetLabels
 {
 public:
-  bool installed = false;
+  // Set once every hook is in: an untracked OnDisable would leave a freed widget in the map.
+  void MarkInstalled()
+  { installed_ = true; }
 
   static bool Enabled()
   {
@@ -81,7 +83,7 @@ public:
   // The camera `zoom` is about to show `depth`. Labels only apply in a solar system, and a new camera starts over.
   void OnDepth(NavigationZoom* zoom, NodeDepth depth)
   {
-    if (!installed)
+    if (!installed_)
       return;
     if (depth == NodeDepth::SolarSystem) {
       Follow(zoom);
@@ -93,7 +95,7 @@ public:
   // After the camera's own update: picks up the zoom level and re-applies labels when they change.
   void OnZoomed(NavigationZoom* zoom)
   {
-    if (!installed || zoom->depth() != NodeDepth::SolarSystem)
+    if (!installed_ || zoom->depth() != NodeDepth::SolarSystem)
       return;
     Follow(zoom);
     const bool was_known = zoom_known_;
@@ -173,11 +175,10 @@ private:
     player_expanded_     = player;
     non_player_expanded_ = non_player;
     ApplyAll();
-#ifdef _MODDBG
-    spdlog::info("Fleet label detail threshold state updated at normalized zoom {:.4f}", normalized_zoom_);
-#endif
+    spdlog::debug("[FleetLabels] threshold crossed at normalized zoom {:.4f}", normalized_zoom_);
   }
 
+  bool                                                       installed_ = false;
   std::unordered_map<NavigationLOD*, NavigationFleetWidget*> widgets_;
   // The system camera the zoom state below belongs to.
   NavigationZoom* camera_              = nullptr;
@@ -187,11 +188,11 @@ private:
   bool            threshold_known_     = false;
   bool            player_expanded_     = false;
   bool            non_player_expanded_ = false;
-} labels;
+} fleet_labels;
 
 void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevels level)
 {
-  const auto effective = labels.LevelFor(_this, level);
+  const auto effective = fleet_labels.LevelFor(_this, level);
   if (!effective)
     return original(_this, level);
   // The target level is set on both sides of the update so the game's own bookkeeping agrees with ours.
@@ -203,55 +204,55 @@ void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevel
 void NavigationFleetWidget_OnEnable_Hook(auto original, NavigationFleetWidget* _this)
 {
   original(_this);
-  labels.Track(_this);
+  fleet_labels.Track(_this);
 }
 
 void NavigationFleetWidget_OnDidBindContext_Hook(auto original, NavigationFleetWidget* _this)
 {
   original(_this);
-  labels.Track(_this);
+  fleet_labels.Track(_this);
 }
 
 void NavigationFleetWidget_OnDisable_Hook(auto original, NavigationFleetWidget* _this)
 {
-  labels.Untrack(_this);
+  fleet_labels.Untrack(_this);
   original(_this);
 }
 
 void NavigationFleetWidget_OnAboutToReleaseContext_Hook(auto original, NavigationFleetWidget* _this)
 {
-  labels.Untrack(_this);
+  fleet_labels.Untrack(_this);
   original(_this);
 }
 
-void InstallFleetLabels()
+bool InstallFleetLabels()
 {
   // Installed as a set, whether or not zoom_label_* is set, so labels can be switched at runtime. Missing fields
   // and properties (_lod, Context, FleetType) read as null or zero, which the hooks treat as native labels, so
-  // only the methods gate installation. The zoom reports come from camera.cc's NavigationZoom.Update hook.
-  auto update     = NavigationZoom::Class::Method("Update");
-  auto update_lod = NavigationLOD::Class::Method("UpdateLOD");
-  auto on_enable  = NavigationFleetWidget::Class::Method("OnEnable");
-  auto on_disable = NavigationFleetWidget::Class::Method("OnDisable");
-  auto on_bind    = NavigationFleetWidget::Class::Method("OnDidBindContext");
-  auto on_release = NavigationFleetWidget::Class::Method("OnAboutToReleaseContext");
-  if (!update || !update_lod || !on_enable || !on_disable || !on_bind || !on_release) {
-    spdlog::error("Fleet label detail hooks were not installed; using native fleet labels");
-    return;
-  }
-  labels.installed = true;
-  IL2CPP_HOOK(update_lod, NavigationLOD_UpdateLOD_Hook);
-  IL2CPP_HOOK(on_enable, NavigationFleetWidget_OnEnable_Hook);
-  IL2CPP_HOOK(on_disable, NavigationFleetWidget_OnDisable_Hook);
-  IL2CPP_HOOK(on_bind, NavigationFleetWidget_OnDidBindContext_Hook);
-  IL2CPP_HOOK(on_release, NavigationFleetWidget_OnAboutToReleaseContext_Hook);
+  // only the methods gate installation. The zoom reports come from camera.cc's NavigationZoom.Update hook, so it
+  // has to exist too.
+  if (!NavigationZoom::Class::Method("Update"))
+    return false;
+  il2cpp::HookSet hooks("FleetLabels");
+  IL2CPP_STAGE(hooks, NavigationLOD::Class::Method("UpdateLOD"), NavigationLOD_UpdateLOD_Hook);
+  IL2CPP_STAGE(hooks, NavigationFleetWidget::Class::Method("OnEnable"), NavigationFleetWidget_OnEnable_Hook);
+  IL2CPP_STAGE(hooks, NavigationFleetWidget::Class::Method("OnDisable"), NavigationFleetWidget_OnDisable_Hook);
+  IL2CPP_STAGE(hooks, NavigationFleetWidget::Class::Method("OnDidBindContext"),
+               NavigationFleetWidget_OnDidBindContext_Hook);
+  IL2CPP_STAGE(hooks, NavigationFleetWidget::Class::Method("OnAboutToReleaseContext"),
+               NavigationFleetWidget_OnAboutToReleaseContext_Hook);
+  // camera.cc's zoom hooks report here whether or not this installed; they only count once it has.
+  if (!hooks.Commit())
+    return false;
+  fleet_labels.MarkInstalled();
+  return true;
 }
 } // namespace
 
 void FleetLabelsFollowDepth(NavigationZoom* zoom, NodeDepth depth)
-{ labels.OnDepth(zoom, depth); }
+{ fleet_labels.OnDepth(zoom, depth); }
 
 void FleetLabelsAfterZoom(NavigationZoom* zoom)
-{ labels.OnZoomed(zoom); }
+{ fleet_labels.OnZoomed(zoom); }
 
 const Feature kFleetLabels{"FleetLabels", &Config::Patches::zoomhooks, InstallFleetLabels};

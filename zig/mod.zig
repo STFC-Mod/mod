@@ -8,7 +8,7 @@ const deps = @import("deps.zig");
 
 /// Runtime bindings: metadata lookup, typed calls, strings, GC handles and detours. Also exposes Unity's
 /// libil2cpp headers.
-pub fn il2cpp(ctx: *const Ctx) Lib {
+pub fn il2cpp(ctx: *const Ctx, spud: Lib) Lib {
     const b = ctx.b;
     const headers = Lib{
         .include_dirs = ctx.dirs(&.{ b.path("src/libs/il2cpp/include"), b.path("third_party/libil2cpp") }),
@@ -17,14 +17,21 @@ pub fn il2cpp(ctx: *const Ctx) Lib {
     };
     const module = ctx.createModule(true);
     headers.includeInto(module);
+    // hook.h builds on SPUD's detours.
+    spud.includeInto(module);
     module.addCSourceFiles(.{
         .root = b.path("src/libs/il2cpp"),
-        .files = &.{ "src/api.cc", "src/il2cpp.cc" },
+        .files = &.{ "src/api.cc", "src/hook.cc", "src/il2cpp.cc" },
         .flags = ctx.cxxFlags("c++23", &.{}),
     });
     const artifact = ctx.staticLib("il2cpp", module);
     b.step("il2cpp", "Build the IL2CPP integration static library").dependOn(&b.addInstallArtifact(artifact, .{}).step);
-    return .{ .artifact = artifact, .include_dirs = headers.include_dirs, .lib_dirs = headers.lib_dirs };
+    return .{
+        .artifact = artifact,
+        .include_dirs = headers.include_dirs,
+        .lib_dirs = headers.lib_dirs,
+        .dependencies = ctx.b.allocator.dupe(Lib, &.{spud}) catch @panic("OOM"),
+    };
 }
 
 /// Unity engine bindings over il2cpp: core types, UI, input and instance tracking. Knows nothing about the game.

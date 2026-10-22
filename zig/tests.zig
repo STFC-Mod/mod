@@ -31,12 +31,12 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
     const flags = ctx.cxxFlags("c++23", &.{});
     const mod_flags = ctx.cxxFlags("c++23", &.{"-Wno-deprecated-literal-operator"});
 
-    // Queue logic in src/mod, header-only.
-    inline for (.{ "action_queue", "thin_queue_protection", "queue_address_guard" }) |name| {
+    // The action queue decisions in src/mod, header-only.
+    {
         const module = ctx.createModule(true);
         module.addIncludePath(b.path("src/mod"));
-        module.addCSourceFile(.{ .file = b.path("tests/" ++ name ++ ".cc"), .flags = flags });
-        addFixture(ctx, steps.build, steps.mod, name ++ "-tests", module);
+        module.addCSourceFile(.{ .file = b.path("tests/action_queue.cc"), .flags = flags });
+        addFixture(ctx, steps.build, steps.mod, "action-queue-tests", module);
     }
 
     // IL2CPP bindings and GC handles against a fake runtime API.

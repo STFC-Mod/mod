@@ -1,4 +1,4 @@
-// auto_confirm_instant_warp and the instant_warp_* ship filters: answers the warp-or-jump prompt for the ship,
+// [ui] auto_confirm_instant_warp and the instant_warp_* ship filters: answers the warp-or-jump prompt for the ship,
 // previews that answer on the system card's visit button, and the shortcut that cycles the default.
 
 #include "config.h"
@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -41,14 +43,14 @@ InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
 void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromptPopupViewController* _this)
 {
   original(_this);
-  auto* widget  = _this ? _this->PopupWidget() : nullptr;
+  auto* widget  = _this->coursePromptPopupWidget();
   auto* context = widget ? widget->Context() : nullptr;
   if (!context || !context->HasInstantWarp())
     return;
 
-  auto*      course = context->GetCourseData();
+  auto*      course = context->CourseData();
   const auto action = ResolveConfirmation(course ? course->PlayerFleet() : nullptr);
-  spdlog::debug("InstantWarpConfirmation: resolved action {}", static_cast<int>(action));
+  spdlog::debug("[InstantWarp] answering the prompt with {}", static_cast<int>(action));
   switch (action) {
     case InstantWarpConfirmation::kWarp:
       widget->InitiateRegularWarp();
@@ -61,10 +63,11 @@ void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromp
   }
 }
 
-// The system card's visit button reads WARP or JUMP when auto-confirm would pick one. This runs on the frame
-// tick rather than another UI detour, and only overrides the label text: never the button's context, timer,
-// resource cost, or click handler.
-bool label_installed = false;
+// --- System card label ---
+//
+// The system card's visit button reads WARP or JUMP when auto-confirm would pick one. This runs on the frame tick
+// rather than another UI detour, and only overrides the label text: never the button's context, timer, resource
+// cost, or click handler.
 
 std::string CurrentText(TextLocalizer* label)
 { return il2cpp::ToUtf8(label->CurrentText()); }
@@ -113,15 +116,15 @@ struct OwnedLabel {
     text = desired;
   }
 };
-OwnedLabel action_label;
+// Never destroyed: freeing a GC handle in a static destructor can run after the runtime has shut down.
+auto& action_label = *new OwnedLabel;
 
-void UpdateLabel()
+void UpdateWarpLabel()
 {
-  static auto next = std::chrono::steady_clock::time_point{};
-  const auto  now  = std::chrono::steady_clock::now();
-  if (now < next)
+  // Ten times a second is quick enough for a label.
+  static Throttle throttle(std::chrono::milliseconds(100));
+  if (!throttle.Due())
     return;
-  next = now + std::chrono::milliseconds(100);
 
   // Without a default or a jump/warp filter every prompt resolves to "ask"; skip the fleet lookups.
   const auto& ui = Config::Get().ui;
@@ -160,25 +163,12 @@ void UpdateLabel()
   action_label.Apply(unity::Alive(label) ? label : nullptr, desired);
 }
 
-void InstantWarpUpdate()
+bool InstallInstantWarp()
 {
-  if (label_installed)
-    UpdateLabel();
-}
-
-void InstallInstantWarp()
-{
-  // The hook is useless without both popup actions, so skip it (and the label) when either has drifted.
-  const auto about_to_show = CoursePromptPopupViewController::Class::Method("AboutToShow", 0);
-  if (!about_to_show || !CoursePromptPopupWidget::Class::Method("InitiateRegularWarp", 0)
-      || !CoursePromptPopupWidget::Class::Method("OnInstantWarpButtonClick", 0)) {
-    return;
-  }
-
-  if (!IL2CPP_HOOK(about_to_show, CoursePromptPopupViewController_AboutToShow_Hook))
-    return;
-  label_installed = true;
-  spdlog::info("[WarpActionLabel] system-card action labels enabled");
+  il2cpp::HookSet hooks("InstantWarp");
+  IL2CPP_STAGE(hooks, CoursePromptPopupViewController::Class::Method("AboutToShow", 0),
+               CoursePromptPopupViewController_AboutToShow_Hook);
+  return hooks.Commit();
 }
 } // namespace
 
@@ -197,7 +187,8 @@ void CycleInstantWarpConfirmation()
       break;
   }
   constexpr const char* kNames[] = {"none", "warp", "jump"};
-  spdlog::info("Auto-confirm instant warp set to {}", kNames[static_cast<int>(setting)]);
+  spdlog::info("[InstantWarp] answering prompts with {}", kNames[static_cast<int>(setting)]);
 }
 
-const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, InstantWarpUpdate};
+// Always installed: its only hook answers a prompt the player asked the mod to answer.
+const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, UpdateWarpLabel};

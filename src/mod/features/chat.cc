@@ -1,6 +1,7 @@
-// Chat: the shortcuts that open it and switch channel; disable_galaxy_chat and disable_veil_chat, which grey out
-// those tabs in full-screen chat, keep the chat preview off them, and drop their messages from the preview; and
-// default_chat_width and auto_open_chat, which size side chat and open alliance side chat once per login.
+// Chat: the shortcuts that open it and switch channel; [ui] disable_galaxy_chat and disable_veil_chat, which grey
+// out those tabs in full-screen chat, keep the chat preview off them, and drop their messages from the preview;
+// [ui] show_player_title, which can hide the title row under each sender's name; and [ui] default_chat_width and
+// auto_open_chat, which size side chat and open alliance side chat once per login.
 
 #include "config.h"
 #include "features/chat_startup.h"
@@ -13,98 +14,76 @@
 
 #include <il2cpp/hook.h>
 #include <spdlog/spdlog.h>
+#include <unity/core.h>
 #include <unity/tracker.h>
 
 #include <chrono>
-#include <cmath>
-#include <stdexcept>
 
 namespace
 {
-il2cpp::GcHandle preview_handle;
-ChatStartup::Gate startup;
-bool width_applied = false;
-bool startup_failed = false;
+// --- Side chat on login ---
+//
+// Both options act once per login: the width while side chat is open, and the open once the station and chat have
+// settled. Login and AppInit start the next login over.
+
+il2cpp::GcHandle  chat_preview; // Weak: the preview the hooks last saw.
+ChatStartup::Gate chat_startup;
+bool              chat_width_applied = false;
 
 void ObserveChatPreview(ChatPreviewController* preview)
 {
-  if (!Config::Get().ui.auto_open_chat)
+  if (!Config::Get().ui.auto_open_chat || chat_preview.Get() == preview)
     return;
-  if (preview_handle && preview_handle.Get() == preview)
-    return;
-  preview_handle = il2cpp::GcHandle::Weak(preview);
-  startup.ready_since = -1;
-  spdlog::info("[ChatOptions] observed chat preview");
+  chat_preview             = il2cpp::GcHandle::Weak(preview);
+  chat_startup.ready_since = -1;
 }
 
-void UpdateChatOptions()
+void ChatFrame()
 {
-  const float configured_width = Config::Get().ui.default_chat_width;
-  const bool custom_width = std::isfinite(configured_width) && configured_width > 0;
-  if (startup_failed || (!Config::Get().ui.auto_open_chat && !custom_width))
+  const auto& ui           = Config::Get().ui;
+  const bool  custom_width = ui.default_chat_width > 0;
+  if (!ui.auto_open_chat && !custom_width)
     return;
-  try {
-    auto* sections = Hub::Sections();
-    if (!sections)
-      return;
-    const auto section = sections->CurrentSection();
-    if (section == SectionID::Login || section == SectionID::AppInit) {
-      startup = {};
-      width_applied = false;
-      // The preview may initialize while CurrentSection is still Login/AppInit.
-      // Keep its weak handle: clearing it here can lose the only AboutToShow
-      // notification. A destroyed preview naturally resolves to null.
-      return;
+  auto* sections = Hub::Sections();
+  if (!sections)
+    return;
+  const auto section = sections->CurrentSection();
+  if (section == SectionID::Login || section == SectionID::AppInit) {
+    chat_startup       = {};
+    chat_width_applied = false;
+    // The preview may initialize while the section is still Login or AppInit. Keep its weak handle: clearing it
+    // here can lose the only AboutToShow it gets. A destroyed preview reads as null.
+    return;
+  }
+  if ((!ui.auto_open_chat || chat_startup.completed) && (!custom_width || chat_width_applied))
+    return;
+  auto* chat = ChatManager::Instance();
+  if (!chat)
+    return;
+  const bool side_open = chat->IsSideChatOpen();
+  // Once per login; after that, resizing is left to the player.
+  if (side_open && custom_width && !chat_width_applied) {
+    auto* screens = ScreenManager::Instance();
+    if (auto* frames = screens ? screens->frameManager() : nullptr) {
+      frames->ResizeSideFrame(ui.default_chat_width);
+      chat_width_applied = true;
     }
-    if ((!Config::Get().ui.auto_open_chat || startup.completed) && (!custom_width || width_applied))
-      return;
-    auto* manager = ChatManager::Instance();
-    if (!manager)
-      return;
-    const bool side_open = manager->IsSideChatOpen();
-    float width = configured_width;
-    // Apply once per login, then leave manual resizing to the game.
-    if (side_open && !width_applied && std::isfinite(width) && width > 0) {
-      auto* screen = ScreenManager::Instance();
-      if (auto* frame = screen ? screen->frameManager() : nullptr) {
-        if (!frame->ResizeSideFrame(width))
-          throw std::runtime_error("side frame resize failed");
-        width_applied = true;
-      }
-    }
-    if (!Config::Get().ui.auto_open_chat || startup.completed)
-      return;
-    auto* preview = preview_handle.Get<ChatPreviewController>();
-    const bool station = section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
-    // Section completion is set by the game after its visibility refresh.
-    const bool section_ready = preview && preview->isSectionChangedCompleted();
-    const bool context_ready = manager->isContextInitialised();
-    const bool side_allowed = manager->IsSideChatAllowed();
-    const bool ready = station && section_ready && context_ready && side_allowed;
-    // Log changes only, so a pending startup identifies its exact blocking gate.
-    const int status = (station ? 1 : 0) | (preview ? 2 : 0) | (section_ready ? 4 : 0)
-                       | (context_ready ? 8 : 0) | (side_allowed ? 16 : 0) | (side_open ? 32 : 0);
-    static int last_status = -1;
-    static SectionID last_section = SectionID::AppInit;
-    if (status != last_status || section != last_section) {
-      last_status = status;
-      last_section = section;
-      spdlog::info("[ChatOptions] startup section={} station={} preview={} section_ready={} context_ready={} "
-                   "side_allowed={} side_open={}", static_cast<int>(section), station, preview != nullptr,
-                   section_ready, context_ready, side_allowed, side_open);
-    }
-    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-    if (startup.Tick(ready, side_open || Hub::IsInChat(), now)) {
-      spdlog::info("[ChatOptions] readiness settled; opening alliance side chat");
-      manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
-    } else if (startup.completed) {
-      spdlog::info("[ChatOptions] startup consumed by existing/manual chat");
-    }
-  } catch (const std::exception& error) {
-    startup_failed = true;
-    spdlog::warn("[ChatOptions] disabled after metadata/invocation failure: {}", error.what());
+  }
+  if (!ui.auto_open_chat || chat_startup.completed)
+    return;
+  auto*      preview = chat_preview.Get<ChatPreviewController>();
+  const bool station = section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
+  // The preview sets section completion after its visibility refresh.
+  const bool   ready = station && preview && preview->isSectionChangedCompleted() && chat->isContextInitialised()
+                       && chat->IsSideChatAllowed();
+  const double now   = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+  if (chat_startup.Tick(ready, side_open || Hub::IsInChat(), now)) {
+    spdlog::info("[Chat] readiness settled; opening alliance side chat");
+    chat->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
   }
 }
+
+// --- Disabled channels ---
 
 // Tab positions in both the full-screen chat and the preview. Cadet and veil chat only exist for some players,
 // and shift the tabs after them; a missing tab is -1.
@@ -177,7 +156,7 @@ void ChatPreviewController_AboutToShow_Hook(auto original, ChatPreviewController
   original(_this);
   ObserveChatPreview(_this);
   // The preview reopens on the last panel; move off it only if that channel is disabled.
-  auto*      scroller = _this ? _this->swipeScroller() : nullptr;
+  auto*      scroller = _this->swipeScroller();
   const auto tabs     = ChatTabs::Current();
   if (scroller && tabs.Disabled(scroller->currentContentIndex())) {
     _this->SetFocusedPanel(ChatChannelCategory::Alliance);
@@ -209,20 +188,85 @@ void ChatPreviewController_OnRegionalMessageReceived_Hook(auto original, ChatPre
     original(_this, message);
 }
 
-void InstallChat()
+// --- Player titles ---
+//
+// Only chat rows lose their title: the same profile widget appears on other screens.
+
+void HideChatTitle(UserProfileWidget* profile)
 {
-  spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}", Config::Get().ui.auto_open_chat,
-               Config::Get().ui.default_chat_width);
-  IL2CPP_HOOK(FullScreenChatViewController::Class::Method("AboutToShow"),
-              FullScreenChatViewController_AboutToShow_Hook);
-  IL2CPP_HOOK(FullScreenChatViewController::Class::Method("OnDidChangeSelectedTab"),
-              FullScreenChatViewController_OnDidChangeSelectedTab_Hook);
-  IL2CPP_HOOK(ChatPreviewController::Class::Method("AboutToShow"), ChatPreviewController_AboutToShow_Hook);
-  IL2CPP_HOOK(ChatPreviewController::Class::Method("OnPanelFocused"), ChatPreviewController_OnPanelFocused_Hook);
-  IL2CPP_HOOK(ChatPreviewController::Class::Method("OnGlobalMessageReceived"),
-              ChatPreviewController_OnGlobalMessageReceived_Hook);
-  IL2CPP_HOOK(ChatPreviewController::Class::Method("OnRegionalMessageReceived"),
-              ChatPreviewController_OnRegionalMessageReceived_Hook);
+  auto* title     = profile ? profile->playerTitleWidget() : nullptr;
+  auto* transform = title ? profile->transform() : nullptr;
+  if (!transform || !transform->FindInParents<ChatMessageWidget>())
+    return;
+  if (auto* object = title->gameObject())
+    object->SetActive(false);
+}
+
+// The game shows the title again on every update, so it is hidden after each one.
+void UserProfileWidget_UpdatePlayerTitle_Hook(auto original, UserProfileWidget* _this)
+{
+  original(_this);
+  if (!Config::Get().ui.show_player_title)
+    HideChatTitle(_this);
+}
+
+// SetWidgetData and OnDidBindContext both bind a title from the title widget's side; one hook serves both.
+void PlayerTitleWidget_Bind_Hook(auto original, PlayerTitleWidget* _this)
+{
+  original(_this);
+  if (Config::Get().ui.show_player_title)
+    return;
+  if (auto* transform = _this->transform())
+    HideChatTitle(transform->FindInParents<UserProfileWidget>());
+}
+
+bool InstallChat()
+{
+  il2cpp::HookSet hooks("Chat");
+  IL2CPP_STAGE(hooks, FullScreenChatViewController::Class::Method("AboutToShow"),
+               FullScreenChatViewController_AboutToShow_Hook);
+  IL2CPP_STAGE(hooks, FullScreenChatViewController::Class::Method("OnDidChangeSelectedTab"),
+               FullScreenChatViewController_OnDidChangeSelectedTab_Hook);
+  IL2CPP_STAGE(hooks, ChatPreviewController::Class::Method("AboutToShow"), ChatPreviewController_AboutToShow_Hook);
+  IL2CPP_STAGE(hooks, ChatPreviewController::Class::Method("OnPanelFocused"),
+               ChatPreviewController_OnPanelFocused_Hook);
+  IL2CPP_STAGE(hooks, ChatPreviewController::Class::Method("OnGlobalMessageReceived"),
+               ChatPreviewController_OnGlobalMessageReceived_Hook);
+  IL2CPP_STAGE(hooks, ChatPreviewController::Class::Method("OnRegionalMessageReceived"),
+               ChatPreviewController_OnRegionalMessageReceived_Hook);
+  return hooks.Commit();
+}
+
+bool InstallChatTitles()
+{
+  const auto      update = UserProfileWidget::Class::Method("UpdatePlayerTitle", 0);
+  il2cpp::HookSet hooks("ChatTitles");
+  IL2CPP_STAGE(hooks, update, UserProfileWidget_UpdatePlayerTitle_Hook);
+  // The feature is the update hook; the bind paths below only add to it.
+  const bool installed = hooks.Commit();
+  // The bind paths catch titles bound without an update, so each is a set of its own and adds to the update hook
+  // where SPUD can detour it.
+  const auto set_data = PlayerTitleWidget::Class::Method("SetWidgetData", 0);
+  const auto bind     = PlayerTitleWidget::Class::Method("OnDidBindContext", 0);
+  if (!set_data || !bind)
+    return installed;
+  // Both, or one of them and the update, often branch to one shared body, which SPUD patches in their place. One
+  // detour on it covers them all; a second would chain on it and run the hook twice, once with a receiver of the
+  // wrong class.
+  void* const update_body = il2cpp::DetourTarget(update);
+  void* const set_body    = il2cpp::DetourTarget(set_data);
+  void* const bind_body   = il2cpp::DetourTarget(bind);
+  if (set_body != update_body) {
+    il2cpp::HookSet set_hooks("ChatTitles");
+    IL2CPP_STAGE(set_hooks, set_data, PlayerTitleWidget_Bind_Hook);
+    set_hooks.Commit();
+  }
+  if (bind_body != update_body && bind_body != set_body) {
+    il2cpp::HookSet bind_hooks("ChatTitles");
+    IL2CPP_STAGE(bind_hooks, bind, PlayerTitleWidget_Bind_Hook);
+    bind_hooks.Commit();
+  }
+  return installed;
 }
 } // namespace
 
@@ -263,4 +307,5 @@ bool ChatChannelShortcuts()
   return false;
 }
 
-const Feature kChat{"Chat", &Config::Patches::chatpatches, InstallChat, UpdateChatOptions};
+const Feature kChat{"Chat", &Config::Patches::chatpatches, InstallChat, ChatFrame};
+const Feature kChatTitles{"ChatTitles", &Config::Patches::chattitledisplayhooks, InstallChatTitles};

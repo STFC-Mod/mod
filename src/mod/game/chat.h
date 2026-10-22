@@ -86,16 +86,21 @@ struct FullScreenChatViewController : il2cpp::Object {
   { return Field<"_categoriesTabBarViewController", TabBarViewController*>(); }
 };
 
-struct PlayerTitleWidget : il2cpp::Object {
+struct PlayerTitleWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget">;
 };
-struct UserProfileWidget : il2cpp::Object {
+
+// A player's name, avatar and title, on chat rows and other screens.
+struct UserProfileWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileWidget">;
+
   PlayerTitleWidget* playerTitleWidget()
   { return Field<"_playerTitleWidget", PlayerTitleWidget*>(); }
 };
-struct ChatMessageWidget : il2cpp::Object {
+
+struct ChatMessageWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Chat", "ChatMessageWidget">;
+
   UserProfileWidget* userProfileWidget()
   { return Field<"_userProfileWidget", UserProfileWidget*>(); }
 };

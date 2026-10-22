@@ -3,6 +3,8 @@
 // The game server (Digit.PrimeServer): its sessions, the entity groups and realtime messages it sends, and the
 // server models and services the mod reads, such as battle results, hull specs, buffs and events.
 
+#include "app.h"
+
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
@@ -436,10 +438,9 @@ struct UserProfile : il2cpp::Object {
   { return Get<"Level", int32_t>(); }
 };
 
-struct UserProfileManager : il2cpp::Object {
+struct UserProfileManager : MonoSingleton<UserProfileManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager">;
-  static UserProfileManager* Instance()
-  { return Class::Get<"Instance", UserProfileManager*>(); }
+
   UserProfile* GetLocalUserProfile()
   { return Call<"GetLocalUserProfile", UserProfile*>(); }
 };
@@ -475,7 +476,8 @@ struct BattleResultHeader : il2cpp::Object {
   { return static_cast<UserProfile*>(Get<"EnemyUserProfile", Il2CppObject*>()); }
   SpecService* specService()
   { return static_cast<SpecService*>(Field<"_specService", Il2CppObject*>()); }
-  BattleType BattleType()
+  // The BattleType property; named Type so it does not hide the enum.
+  ::BattleType Type()
   { return Get<"BattleType", ::BattleType>(); }
   int64_t PlayerShipHullId()
   { return Get<"PlayerShipHullId", int64_t>(); }
@@ -548,13 +550,6 @@ struct ForbiddenTechSlotParams : il2cpp::Object {
   // The ship the tech is equipped on, whether or not it has a dock.
   int64_t OwnerId()
   { return Get<"OwnerId", int64_t>(); }
-};
-
-struct EntitySlot : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
-
-  ForbiddenTechSlotParams* forbiddenTechSlotParams()
-  { return Get<"ForbiddenTechSlotParams", ForbiddenTechSlotParams*>(); }
 };
 
 struct InventoryItem : il2cpp::Object {

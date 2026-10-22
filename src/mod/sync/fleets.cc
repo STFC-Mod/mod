@@ -31,8 +31,8 @@ namespace
 
   // Fleets the server just sent new data for. The client fills in some values (mining and travel timers, damage) from
   // that data, so the game thread re-reads these fleets shortly after.
-  std::mutex                                                          reread_mutex;
-  std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> reread_at;
+  std::mutex                                                         reread_mutex;
+  std::unordered_map<int64_t, std::chrono::steady_clock::time_point> reread_at;
 
   // Set once fleet_watch accepted the subscription. Sync's frame work then drives fleet_watch, and the processing
   // thread's re-read requests are kept.
@@ -140,7 +140,7 @@ namespace
 
   // The values the client fills in late, as last sent per fleet; a re-read is only sent when they changed. Values
   // that move on their own are left out: cargo while mining, hull while repairing.
-  std::unordered_map<uint64_t, size_t> sent_late;
+  std::unordered_map<int64_t, size_t> sent_late;
 
   size_t LateFields(const json& record)
   {
@@ -220,7 +220,7 @@ namespace
 
   void RereadDue()
   {
-    std::vector<uint64_t> due;
+    std::vector<int64_t> due;
     {
       std::scoped_lock lock(reread_mutex);
       if (reread_at.empty())
@@ -270,7 +270,7 @@ void InstallFleetSync()
 void RequestFleetSnapshot()
 { snapshot_requested.store(true, std::memory_order_release); }
 
-void RereadFleet(uint64_t fleet_id)
+void RereadFleet(int64_t fleet_id)
 {
   // Deployed fleets are processed whether or not a target wants them; nothing would drain these.
   if (!fleet_sync_installed)

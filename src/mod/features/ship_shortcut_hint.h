@@ -1,5 +1,7 @@
 #pragma once
 
+// Which select-ship shortcut a fleet bar slot's keybind badge shows. Free of game types so tests can drive it.
+
 #include "shortcuts.h"
 
 #include <cstddef>

@@ -158,11 +158,12 @@ namespace
     SetInstanceId(instanceId);
   }
 
-  void Install()
+  bool Install()
   {
-    IL2CPP_HOOK(GameServerModelRegistry::Method("ProcessResultInternal"),
-                GameServerModelRegistry_ProcessResultInternal_Hook);
-    IL2CPP_HOOK(PrimeApp::Class::Method("InitPrimeServer"), PrimeApp_InitPrimeServer_Hook);
+    il2cpp::HookSet hooks("Sync");
+    IL2CPP_STAGE(hooks, GameServerModelRegistry::Method("ProcessResultInternal"),
+                 GameServerModelRegistry_ProcessResultInternal_Hook);
+    IL2CPP_STAGE(hooks, PrimeApp::Class::Method("InitPrimeServer"), PrimeApp_InitPrimeServer_Hook);
 
     // This hook only captures the game version for the X-PRIME-VERSION header, which has a fallback. It can be
     // turned off for users whose other mods detour the same method: a native and a managed detour on one prologue
@@ -170,18 +171,22 @@ namespace
     if (!Config::Get().patches.game_version)
       spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
     else
-      IL2CPP_HOOK(GameServer::Method("Initialise"), GameServer_Initialise_Hook);
+      IL2CPP_STAGE(hooks, GameServer::Method("Initialise"), GameServer_Initialise_Hook);
 
-    IL2CPP_HOOK(GameServer::Method("SetInstanceIdHeader"), GameServer_SetInstanceIdHeader_Hook);
+    IL2CPP_STAGE(hooks, GameServer::Method("SetInstanceIdHeader"), GameServer_SetInstanceIdHeader_Hook);
 
     // Each parser overrides ParseFinalPayload, so these are two distinct native methods.
-    IL2CPP_HOOK(SlotAssignRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
-    IL2CPP_HOOK(SlotClearRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
+    IL2CPP_STAGE(hooks, SlotAssignRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
+    IL2CPP_STAGE(hooks, SlotClearRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
+    // Without its hooks sync receives nothing, so its workers would only idle.
+    if (!hooks.Commit())
+      return false;
 
     FollowSettings();
     InstallFleetSync();
     StartBattleLogs();
     std::thread(RunJobs).detach();
+    return true;
   }
 
   // Frame work: settings changes reach the targets, then fleet state is polled.

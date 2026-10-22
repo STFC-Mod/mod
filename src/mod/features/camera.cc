@@ -1,12 +1,14 @@
 // The camera in system view and at the station: the extended zoom range, keyboard zoom and its presets, planet
-// sprite scaling, keyboard panning, pan momentum and the target camera lock, keyboard rotation around the station, and
-// held touches that keep panning. Fleet label detail, which follows the zoom, is in fleet_labels.cc.
+// sprite scaling, keyboard panning, pan momentum and the target camera lock, keyboard rotation around the station,
+// held touches that keep panning, and [graphics] interior_zoom_scale inside the station. Fleet label detail, which
+// follows the zoom, is in fleet_labels.cc; Haven's camera is in haven.cc.
 
 #include "config.h"
 #include "features/features.h"
 #include "shortcuts.h"
 
 #include "game/app.h"
+#include "game/camera.h"
 #include "game/navigation.h"
 #include "game/ui.h"
 
@@ -37,7 +39,7 @@ void StorePreset(const char* label, float& preset, NavigationZoom* zoom)
 {
   const auto old = preset;
   preset         = CurrentZoom(zoom);
-  spdlog::info("Changing {} from {} to {}", label, old, preset);
+  spdlog::info("[Zoom] {} set from {} to {}", label, old, preset);
 }
 
 struct Preset {
@@ -226,8 +228,7 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
                                                    float normalized)
 {
   original(_this, distance, normalized);
-  if (_this)
-    _this->FlatRenderable();
+  _this->FlatRenderable();
 }
 
 void ScaleAuthoredBackdrop(PlanetViewUtils* view)
@@ -241,7 +242,7 @@ void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, 
                                          Il2CppObject* resource, bool using_default)
 {
   original(_this, backdrop, resource, using_default);
-  if (_this && resource) {
+  if (resource) {
     ++backdrop_revision;
     ScaleAuthoredBackdrop(_this);
   }
@@ -250,10 +251,10 @@ void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, 
 void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* system, int64_t node_id,
                                    NodeDepth depth)
 {
-  auto*      previous = _this ? _this->Population() : nullptr;
+  auto*      previous = _this->popData();
   const auto revision = backdrop_revision;
   original(_this, system, node_id, depth);
-  auto* population = _this ? _this->Population() : nullptr;
+  auto* population = _this->popData();
   // Cached variation backdrops reload authored scale without calling CreateBackdrop.
   if (depth == NodeDepth::SolarSystem && population && population != previous && population->VariationCollection()
       && revision == backdrop_revision)
@@ -348,9 +349,9 @@ void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* 
   constexpr float kDegreesPerSecond = 45.0f;
   const float     step              = kDegreesPerSecond * unity::Time::deltaTime();
   if (Shortcut::IsPressed(Action::kMoveLeft))
-    _this->SetRotationAngleDelta(_this->RotationAngleDelta() - step);
+    _this->SetRotationAngleDelta(_this->rotationAngleDelta() - step);
   if (Shortcut::IsPressed(Action::kMoveRight))
-    _this->SetRotationAngleDelta(_this->RotationAngleDelta() + step);
+    _this->SetRotationAngleDelta(_this->rotationAngleDelta() + step);
 }
 
 // A held touch reports Stationary, which the game's pan ignores; report it as moving so drags keep panning.
@@ -362,34 +363,84 @@ TKTouch* TKTouch_populateWithPosition_Hook(auto original, TKTouch* _this, uintpt
   return touch;
 }
 
-void InstallZoom()
+// --- Station interior zoom ---
+//
+// The interior view blends from a fixed close frame out to an orbit pinned at one radius, so its far stop is that
+// orbit's radius. Widening the orbit's [min, max] lets the zoom go further. The same radius bounds the exterior station
+// camera, so it is widened only inside the interior and put back everywhere else.
+
+// Each radius's own range, as found before widening. Keyed by the radius constraint, not the orbit: the orbit is
+// recreated across transitions while its radius persists, so an orbit key left the exterior at a widened radius it
+// never restored. The interior has one radius, so this stays tiny; keys are compared only, never dereferenced.
+std::unordered_map<FloatConstraint*, std::pair<float, float>> native_interior_radius;
+
+void OrbitFrameProvider_UpdateConstrains_Hook(auto original, OrbitFrameProvider* _this, unity::Camera* primary_camera)
 {
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("Populate", 3), PlanetViewUtils_Populate_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method(
-                  "CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"}),
-              PlanetViewUtils_CreateBackdrop_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode",
-                                                                "SystemVariationConfigCollection", "System.Boolean"}),
-              PlanetViewUtils_CreateBackdrop_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("CameraZoomedEventHandler"),
-              PlanetViewUtils_CameraZoomedEventHandler_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("get_FlatRenderable"), PlanetViewUtils_get_FlatRenderable_Hook);
-  IL2CPP_HOOK(NavigationZoom::Class::Method("Update"), NavigationZoom_Update_Hook);
+  auto* constraint = _this->constraint();
+  if (auto* radius = constraint ? constraint->radius() : nullptr) {
+    auto*       sections = Hub::Sections();
+    const bool  interior = sections && sections->CurrentSection() == SectionID::Starbase_Interior;
+    const float scale    = Config::Get().graphics.interior_zoom_scale;
+    auto        native   = native_interior_radius.find(radius);
+    if (interior && std::isfinite(scale) && scale > 1.0f) {
+      if (native == native_interior_radius.end())
+        native = native_interior_radius.emplace(radius, std::pair{radius->min(), radius->max()}).first;
+      // Always scaled from the native range, so doing this every frame cannot compound.
+      radius->SetMin(native->second.first * scale);
+      radius->SetMax(native->second.second * scale);
+    } else if (native != native_interior_radius.end()) {
+      // Left wider, the exterior view stays zoomed out and its station labels drop out of range.
+      radius->SetMin(native->second.first);
+      radius->SetMax(native->second.second);
+    }
+  }
+  // The game clamps the camera against the widened or restored range.
+  original(_this, primary_camera);
+}
+
+bool InstallZoom()
+{
+  il2cpp::HookSet hooks("Zoom");
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("Populate", 3), PlanetViewUtils_Populate_Hook);
+  IL2CPP_STAGE(hooks,
+               PlanetViewUtils::Class::Method(
+                   "CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"}),
+               PlanetViewUtils_CreateBackdrop_Hook);
+  IL2CPP_STAGE(hooks,
+               PlanetViewUtils::Class::Method("CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode",
+                                                                 "SystemVariationConfigCollection", "System.Boolean"}),
+               PlanetViewUtils_CreateBackdrop_Hook);
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("CameraZoomedEventHandler"),
+               PlanetViewUtils_CameraZoomedEventHandler_Hook);
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("get_FlatRenderable"), PlanetViewUtils_get_FlatRenderable_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("Update"), NavigationZoom_Update_Hook);
   // TODO: SetDepth has only ever been detoured on Windows and the reason was not recorded; check its prologue
   // against SPUD's overwrite size before enabling it on macOS.
 #if _WIN32
-  IL2CPP_HOOK(NavigationZoom::Class::Method("SetDepth"), NavigationZoom_SetDepth_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("SetDepth"), NavigationZoom_SetDepth_Hook);
 #endif
-  IL2CPP_HOOK(NavigationZoom::Class::Method("SetViewParameters"), NavigationZoom_SetViewParameters_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("SetViewParameters"), NavigationZoom_SetViewParameters_Hook);
+  return hooks.Commit();
 }
 
-void InstallPan()
+bool InstallPan()
 {
-  IL2CPP_HOOK(OrbitFrameProvider::Class::Method("UpdateInputData"), OrbitFrameProvider_UpdateInputData_Hook);
-  IL2CPP_HOOK(TKTouch::Class::Method("populateWithPosition"), TKTouch_populateWithPosition_Hook);
-  IL2CPP_HOOK(NavigationPan::Class::Method("LateUpdate"), NavigationPan_LateUpdate_Hook);
+  il2cpp::HookSet hooks("Pan");
+  IL2CPP_STAGE(hooks, OrbitFrameProvider::Class::Method("UpdateInputData"), OrbitFrameProvider_UpdateInputData_Hook);
+  IL2CPP_STAGE(hooks, TKTouch::Class::Method("populateWithPosition"), TKTouch_populateWithPosition_Hook);
+  IL2CPP_STAGE(hooks, NavigationPan::Class::Method("LateUpdate"), NavigationPan_LateUpdate_Hook);
+  return hooks.Commit();
+}
+
+bool InstallInteriorZoom()
+{
+  il2cpp::HookSet hooks("InteriorZoom");
+  IL2CPP_STAGE(hooks, OrbitFrameProvider::Class::Method<void(unity::Camera*)>("UpdateConstrains"),
+               OrbitFrameProvider_UpdateConstrains_Hook);
+  return hooks.Commit();
 }
 } // namespace
 
 const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom};
 const Feature kPan{"Pan", &Config::Patches::panhooks, InstallPan};
+const Feature kInteriorZoom{"InteriorZoom", &Config::Patches::interiorzoomhooks, InstallInteriorZoom};

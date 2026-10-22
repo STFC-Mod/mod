@@ -1,8 +1,8 @@
-// [audio]: logs the game's sound events by name, and mutes the ones in disabled_events.
+// [audio] trace_events, disabled_events and disable_all_events: logs the game's sound events by name, and mutes the
+// chosen ones.
 
 #include "config.h"
 #include "features/features.h"
-#include "text.h"
 
 #include "game/app.h"
 
@@ -31,28 +31,27 @@ bool AudioEventManager_PostEvent_Hook(auto original, Il2CppObject* _this, Il2Cpp
 {
   if (const auto& audio = Config::Get().audio;
       event_name && (audio.trace_events || audio.disable_all_events || !audio.disabled_events.empty())) {
-    try {
-      const auto event = il2cpp::ToUtf8(event_name);
-      if (audio.trace_events)
-        spdlog::info("Audio event: {}", event);
-      if (SuppressEvent(audio.disable_all_events,
-                        std::ranges::find(audio.disabled_events, event) != audio.disabled_events.end(), event_action)) {
-        spdlog::debug("Suppressed audio event: {}", event);
-        return false;
-      }
-    } catch (...) {
-      // A filter failure must leave the native event path available.
+    const auto event = il2cpp::ToUtf8(event_name);
+    if (audio.trace_events)
+      spdlog::info("[Audio] event {}", event);
+    if (SuppressEvent(audio.disable_all_events,
+                      std::ranges::find(audio.disabled_events, event) != audio.disabled_events.end(), event_action)) {
+      spdlog::debug("[Audio] muted {}", event);
+      return false;
     }
   }
   return original(_this, event_name, event_action, parameter, parent_game_object, initialise_parameters, add_to_queue,
                   on_event_notify);
 }
 
-void InstallAudio()
+bool InstallAudio()
 {
-  IL2CPP_HOOK(AudioEventManager::Method<bool(Il2CppString*, int32_t, Il2CppObject*, Il2CppObject*, Il2CppObject*, bool,
-                                             Il2CppObject*)>("PostEvent"),
-              AudioEventManager_PostEvent_Hook);
+  il2cpp::HookSet hooks("Audio");
+  IL2CPP_STAGE(hooks,
+               AudioEventManager::Method<bool(Il2CppString*, int32_t, Il2CppObject*, Il2CppObject*, Il2CppObject*, bool,
+                                              Il2CppObject*)>("PostEvent"),
+               AudioEventManager_PostEvent_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

@@ -15,7 +15,7 @@
 
 #include <chrono>
 
-#ifdef _WIN32
+#if _WIN32
 #include <Windows.h>
 #endif
 
@@ -117,12 +117,12 @@ bool DispatchShortcuts()
   if (Shortcut::IsDown(Action::kDisableHotKeys)) {
     HideKeybindBadges();
     config.control.hotkeys_enabled = false;
-    spdlog::warn("Setting hotkeys to DISABLED");
+    spdlog::warn("[Hotkeys] mod hotkeys off");
     return true;
   }
   if (Shortcut::IsDown(Action::kEnableHotKeys)) {
     config.control.hotkeys_enabled = true;
-    spdlog::warn("Setting hotkeys to ENABLED");
+    spdlog::warn("[Hotkeys] mod hotkeys on");
     return true;
   }
 
@@ -141,18 +141,19 @@ bool DispatchShortcuts()
     return true;
 
   if (!typing && Shortcut::IsDown(Action::kRestart)) {
-    spdlog::info("Clearing localisation cache and restarting");
+    spdlog::info("[Hotkeys] clearing the localisation cache and restarting");
     LanguageManager::ClearCache();
     Hub::App()->Reload();
     return true;
   }
   if (!typing && Shortcut::IsDown(Action::kQuit)) {
-#ifdef _WIN32
+    // On Windows the process ends here: TerminateProcess does not return.
+#if _WIN32
     TerminateProcess(GetCurrentProcess(), 1);
 #else
     Hub::App()->Quit();
-    return true;
 #endif
+    return true;
   }
 
   if (SelectShipShortcuts())
@@ -187,17 +188,22 @@ void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _t
     original(_this);
 }
 
-void Install()
+bool InstallHotkeys()
 {
+  il2cpp::HookSet hooks("Hotkeys");
+  IL2CPP_STAGE(hooks, ShortcutsManager::Class::Method("InitializeActions"), ShortcutsManager_InitializeActions_Hook);
   // The badges only make sense when the game's own input actions are under the mod's control.
-  if (IL2CPP_HOOK(ShortcutsManager::Class::Method("InitializeActions"), ShortcutsManager_InitializeActions_Hook))
+  if (hooks.Commit())
     InstallKeybindBadges();
   InstallFleetActions();
+  // The dispatch itself needs no hook: the frame tick runs it. The hint badges and pre-scan cargo are extras whose
+  // own sets report themselves.
   hotkeys_installed = true;
+  return true;
 }
 } // namespace
 
 bool HandleShortcuts()
 { return hotkeys_installed && DispatchShortcuts(); }
 
-const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, Install};
+const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys};

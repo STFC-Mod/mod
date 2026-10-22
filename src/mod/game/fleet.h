@@ -23,6 +23,46 @@ enum class DeployedFleetType : int32_t {
   Challenge,
 };
 
+enum class DeployedFleetState : int32_t {
+  Idle      = 0,
+  Moving    = 1,
+  Warping   = 2,
+  Battling  = 3,
+  Recall    = 4,
+  Docked    = 5,
+  PreBattle = 6,
+};
+
+enum class FleetRemovalReason : int32_t {
+  None               = 0,
+  Destroyed          = 1,
+  ExitedActiveSystem = 2,
+  Recalled           = 3,
+  Hazard             = 4,
+  Summoned           = 5,
+};
+
+// A location in the galaxy, a protobuf message.
+struct NodeAddress : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "NodeAddress">;
+
+  int64_t Galaxy()
+  { return Get<"Galaxy", int64_t>(); }
+  int64_t System()
+  { return Get<"System", int64_t>(); }
+  int64_t Planet()
+  { return Get<"Planet", int64_t>(); }
+  int32_t Instance()
+  { return Get<"Instance", int32_t>(); }
+};
+
+// IDeployedFleet: the server's model behind a deployed fleet. Its class varies (DeployedFleet, DeployedFleetJSON),
+// so members resolve on the runtime class.
+struct DeployedFleetModel : il2cpp::Object {
+  int64_t FleetId()
+  { return Get<"FleetId", int64_t>(); }
+};
+
 struct FleetDeployedData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData">;
 
@@ -31,6 +71,25 @@ struct FleetDeployedData : il2cpp::Object {
   // Nonexistent when the property is missing.
   DeployedFleetType FleetType()
   { return Get<"FleetType", DeployedFleetType>(); }
+  int64_t Id()
+  { return Get<"ID", int64_t>(); }
+  DeployedFleetState CurrentState()
+  { return Get<"CurrentState", DeployedFleetState>(); }
+  FleetRemovalReason RemovalReason()
+  { return Get<"RemovalReason", FleetRemovalReason>(); }
+  bool IsDestroyed()
+  { return Get<"IsDestroyed", bool>(); }
+  bool CurrentlyBattling()
+  { return Get<"CurrentlyBattling", bool>(); }
+  bool IsPlanningRecallCourse()
+  { return Get<"IsPlanningRecallCourse", bool>(); }
+  // True for the player's own fleets.
+  bool localPlayerFleet()
+  { return Field<"_localPlayerFleet", bool>(); }
+  NodeAddress* address()
+  { return Field<"_address", NodeAddress*>(); }
+  DeployedFleetModel* deploymentFleet()
+  { return Field<"_deploymentFleet", DeployedFleetModel*>(); }
 };
 
 struct BattleTargetData : il2cpp::Object {
@@ -158,54 +217,18 @@ struct FleetPlayerData : il2cpp::Object {
   { return Get<"CurrentState", FleetState>(); }
   FleetState PreviousState()
   { return Get<"PreviousState", FleetState>(); }
-  uint64_t Id()
-  { return Get<"Id", uint64_t>(); }
+  int64_t Id()
+  { return Get<"Id", int64_t>(); }
+  NodeAddress* Address()
+  { return Get<"Address", NodeAddress*>(); }
   int64_t Level()
   { return Get<"Level", int64_t>(); }
   bool HasShip()
   { return Get<"HasShip", bool>(); }
   int64_t HullId()
   { return Get<"HullId", int64_t>(); }
-  bool HasAppliedTech()
-  {
-    struct BaseShip : il2cpp::Object {
-      using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "BaseShip">;
-      int64_t Id()
-      { return Get<"Id", int64_t>(); }
-    };
-    struct Slot : il2cpp::Object {
-      using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
-      int64_t SpecId()
-      { return Get<"SlotSpecId", int64_t>(); }
-      bool HasItem()
-      {
-        static const auto* getter = Class::Method("get_SlotItemId", 0).Info();
-        if (!getter || (getter->flags & METHOD_ATTRIBUTE_STATIC)
-            || getter->return_type->type != IL2CPP_TYPE_GENERICINST)
-          return false;
-        // Runtime invocation boxes Nullable<Int64> as null or its value, without assuming its native layout.
-        return il2cpp::detail::InvokeBoxed(getter, this, nullptr) != nullptr;
-      }
-    };
-    struct Manager : il2cpp::Object {
-      using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager">;
-      bool ActiveSlots(int64_t ship_id, il2cpp::List<Slot*>*& slots)
-      { return Call<"TryGetActiveForbiddenTechSlot", bool>(ship_id, std::ref(slots)); }
-    };
-    auto*                ship    = Get<"Ship", BaseShip*>();
-    auto*                manager = Manager::Class::Get<"Instance", Manager*>();
-    il2cpp::List<Slot*>* slots   = nullptr;
-    if (!ship || !manager || !manager->ActiveSlots(ship->Id(), slots) || !slots)
-      return false;
-    for (auto* slot : *slots) {
-      if (!slot)
-        continue;
-      const auto spec = slot->SpecId();
-      if ((spec == 3502081615 || spec == 953301906) && slot->HasItem())
-        return true;
-    }
-    return false;
-  }
+  // A forbidden tech or chaos tech item is fitted to the ship.
+  bool HasAppliedTech();
 
   // Live state, read for fleet sync.
   bool IsHome()
@@ -250,7 +273,69 @@ struct FleetPlayerData : il2cpp::Object {
   { return LocalizedShipName(Hull() ? GetLocaId() : 0); }
 };
 
-using IActionData = void*;
+// The hull a fleet flies.
+struct BaseShip : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "BaseShip">;
+
+  int64_t Id()
+  { return Get<"Id", int64_t>(); }
+};
+
+// An item slot on a ship, such as its forbidden tech slot.
+struct EntitySlot : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
+
+  // The slot specs of a ship's forbidden tech and chaos tech slots, as the game's ship tech indicators read them.
+  static constexpr int64_t kForbiddenTechSlot = 3502081615;
+  static constexpr int64_t kChaosTechSlot     = 953301906;
+
+  int64_t SlotSpecId()
+  { return Get<"SlotSpecId", int64_t>(); }
+  // Empty when nothing is fitted.
+  il2cpp::Nullable<int64_t> SlotItemId()
+  { return Get<"SlotItemId", il2cpp::Nullable<int64_t>>(); }
+  ForbiddenTechSlotParams* forbiddenTechSlotParams()
+  { return Get<"ForbiddenTechSlotParams", ForbiddenTechSlotParams*>(); }
+};
+
+struct ForbiddenTechManager : MonoSingleton<ForbiddenTechManager> {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager">;
+
+  bool TryGetActiveForbiddenTechSlot(int64_t ship_id, il2cpp::List<EntitySlot*>*& slots)
+  { return Call<"TryGetActiveForbiddenTechSlot", bool>(ship_id, std::ref(slots)); }
+  bool TryGetEntitySlotFromForbiddenTech(int64_t tech_id, EntitySlot*& slot)
+  { return Call<"TryGetEntitySlotFromForbiddenTech", bool>(tech_id, std::ref(slot)); }
+
+  // CachedService<FleetService>: a struct around the service, empty until something asks for it.
+  struct CachedService {
+    FleetService* cached_service;
+  };
+
+  // The fleet service. Until the cache holds it, the cache's Service getter looks it up and keeps it.
+  FleetService* fleetService()
+  {
+    if (auto* service = Field<"_fleetServiceCache", CachedService>().cached_service)
+      return service;
+    return CallOnField<"_fleetServiceCache", CachedService, "get_Service", FleetService*>();
+  }
+};
+
+inline bool FleetPlayerData::HasAppliedTech()
+{
+  auto*                      ship    = Get<"Ship", BaseShip*>();
+  auto*                      manager = ForbiddenTechManager::Instance();
+  il2cpp::List<EntitySlot*>* slots   = nullptr;
+  if (!ship || !manager || !manager->TryGetActiveForbiddenTechSlot(ship->Id(), slots) || !slots)
+    return false;
+  for (auto* slot : *slots) {
+    if (!slot)
+      continue;
+    const auto spec = slot->SlotSpecId();
+    if ((spec == EntitySlot::kForbiddenTechSlot || spec == EntitySlot::kChaosTechSlot) && slot->SlotItemId().has_value)
+      return true;
+  }
+  return false;
+}
 
 // Digit.PrimeServer.Models.ActionType is a struct around a flag value, not an enum, so it crosses the
 // managed boundary as a 4-byte struct.
@@ -277,14 +362,11 @@ enum class ActionBehaviour : int32_t {
   RequestConfirmation = 32,
 };
 
-struct AbilityTimeSpan {
-  int64_t ticks;
-};
-
-struct AbilityTimerDataContext : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "TimerDataContext">;
-  AbilityTimeSpan RemainingTime()
-  { return Get<"RemainingTime", AbilityTimeSpan>(); }
+// Digit.PrimeServer.Models.TimerDataContext, read on its runtime class: the mod only needs the remaining time, and
+// the class has moved between client builds.
+struct TimerDataContext : il2cpp::Object {
+  unity::TimeSpan RemainingTime()
+  { return Get<"RemainingTime", unity::TimeSpan>(); }
 };
 
 struct ShipActionPanelLocalViewController : il2cpp::Object {
@@ -293,8 +375,8 @@ struct ShipActionPanelLocalViewController : il2cpp::Object {
   { return Field<"_abilityIDs", il2cpp::Array<int64_t>*>(); }
   il2cpp::Array<GenericButtonWidget*>* buttons()
   { return Field<"_buttons", il2cpp::Array<GenericButtonWidget*>*>(); }
-  AbilityTimerDataContext* GetRemainingCooldown(int64_t abilityId)
-  { return Call<"GetRemainingCooldown", AbilityTimerDataContext*>(abilityId); }
+  TimerDataContext* GetRemainingCooldown(int64_t abilityId)
+  { return Call<"GetRemainingCooldown", TimerDataContext*>(abilityId); }
   bool HasShipAnActiveAbilityWithActiveEffect()
   { return Call<"HasShipAnActiveAbilityWithActiveEffect", bool>(); }
 };
@@ -311,7 +393,8 @@ struct FleetLocalViewController : il2cpp::Object {
   { Call<"CancelButtonClicked">(); }
 
   // callback is an Action<bool, ActionBehaviour>; null is accepted.
-  bool RequestAction(IActionData target, ActionType type, int64_t index, ActionBehaviour behaviourMask,
+  // `target` is the IActionData the action is on, such as a FleetPlayerData.
+  bool RequestAction(il2cpp::Object* target, ActionType type, int64_t index, ActionBehaviour behaviourMask,
                      void* callback = nullptr)
   { return Call<"RequestAction", bool>(target, type, index, behaviourMask, callback); }
 };
@@ -346,31 +429,22 @@ struct FleetBarViewController : il2cpp::Object {
 };
 
 struct FleetsManager : MonoSingleton<FleetsManager> {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.FleetManagement", "FleetsManager">;
+
+  // CachedService<FleetService>: a struct around the service, empty until something asks for it.
+  struct CachedService {
+    il2cpp::Object* cached_service;
+  };
+
+  // The fleet service is up. Until the cache holds it, the cache's HasService looks it up and keeps it.
   bool HasFleetService()
   {
-    static FieldInfo* const field =
-        Class::Raw() ? il2cpp_class_get_field_from_name(Class::Raw(), "_fleetServiceCache") : nullptr;
-    static const MethodInfo* const has_service =
-        field ? il2cpp_class_get_method_from_name(il2cpp_class_from_type(il2cpp_field_get_type(field)),
-                                                  "get_HasService", 0)
-              : nullptr;
-    if (!has_service) {
-      return false;
-    }
-
-    auto* cache = reinterpret_cast<char*>(this) + il2cpp_field_get_offset(field);
-    if (*reinterpret_cast<void**>(cache)) {
+    if (Field<"_fleetServiceCache", CachedService>().cached_service)
       return true;
-    }
-
-    Il2CppException* exception = nullptr;
-    auto*            result    = il2cpp_runtime_invoke(has_service, cache, nullptr, &exception);
-    return !exception && result && *static_cast<bool*>(il2cpp_object_unbox(result));
+    return CallOnField<"_fleetServiceCache", CachedService, "get_HasService", bool>();
   }
   FleetPlayerData* GetFleetPlayerData(int32_t index)
   { return Call<"GetFleetPlayerData", FleetPlayerData*>(index); }
-
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.FleetManagement", "FleetsManager">;
 
   void RequestViewFleet(FleetPlayerData* fleetData, bool showSystemInfo = false)
   { Call<"RequestViewFleet">(fleetData, showSystemInfo); }
@@ -379,51 +453,11 @@ struct FleetsManager : MonoSingleton<FleetsManager> {
   { return Call<"GetSelectedFleetData", FleetPlayerData*>(); }
 };
 
-struct ForbiddenTechManager : MonoSingleton<ForbiddenTechManager> {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager">;
-
-  bool TryGetEntitySlotFromForbiddenTech(int64_t tech_id, EntitySlot*& slot)
-  { return Call<"TryGetEntitySlotFromForbiddenTech", bool>(tech_id, std::ref(slot)); }
-
-  // _fleetServiceCache is a CachedService<FleetService> struct whose Service getter resolves the service lazily. The
-  // getter runs on a copy, so the manager's own cache is left as it was; the runtime takes the struct receiver
-  // unboxed.
-  FleetService* fleetService()
-  {
-    struct CachedService {
-      FleetService* service;
-    };
-    auto cache = Field<"_fleetServiceCache", CachedService>();
-    if (cache.service)
-      return cache.service;
-    static FieldInfo* const field =
-        Class::Raw() ? il2cpp_class_get_field_from_name(Class::Raw(), "_fleetServiceCache") : nullptr;
-    static const MethodInfo* const getter =
-        field ? il2cpp_class_get_method_from_name(il2cpp_class_from_type(il2cpp_field_get_type(field)), "get_Service",
-                                                  0)
-              : nullptr;
-    if (!getter)
-      return nullptr;
-    return reinterpret_cast<FleetService*>(il2cpp::detail::InvokeBoxed(getter, &cache, nullptr));
-  }
-};
-
 struct DeploymentManager : MonoSingleton<DeploymentManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "", "DeploymentManager">;
 
   bool HasInstantWarpAbility(FleetPlayerData* selectedFleet)
   { return Call<"HasInstantWarpAbility", bool>(selectedFleet); }
-};
-
-struct ActionQueueManager : MonoSingleton<ActionQueueManager> {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Prime.ActionQueue", "ActionQueueManager">;
-
-  void ClearQueue(FleetPlayerData* playerData)
-  { Call<"ClearQueue">(playerData); }
-  bool IsQueueFull(FleetPlayerData* playerData)
-  { return Call<"IsQueueFull", bool>(playerData); }
-  bool IsQueueUnlocked()
-  { return Call<"IsQueueUnlocked", bool>(); }
 };
 
 struct FleetMeshSelector : il2cpp::Object {
@@ -462,34 +496,28 @@ struct ShipManagementViewContext : il2cpp::Object {
   { return Field<"SortedIdleShips", il2cpp::List<FleetPlayerData*>*>(); }
 };
 
-struct ShipManagementViewController : il2cpp::Object {
+struct ShipManagementViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "ShipManagementViewController">;
 
   // m_context lives on the generic ViewController`1 base; field lookup walks the parents.
   ShipManagementViewContext* Context()
   { return Field<"m_context", ShipManagementViewContext*>(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
 };
 
-struct ShipManagementScreenStateViewController : il2cpp::Object {
+struct ShipManagementScreenStateViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "ShipManagementScreenStateViewController">;
 
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
   unity::Button* officerIconButton()
   { return Field<"_officerIconButton", unity::Button*>(); }
   unity::Button* swapShipButton()
   { return Field<"_swapShipButton", unity::Button*>(); }
 };
 
-struct AssignShipsWidget : il2cpp::Object {
+struct AssignShipsWidget : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "AssignShipsWidget">;
 
   InputFieldWidget* inputField()
   { return Field<"_inputField", InputFieldWidget*>(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
   ButtonAndContextWrapper* assignButton()
   { return Field<"_assignButton", ButtonAndContextWrapper*>(); }
   SelectableList* selectableList()
@@ -522,8 +550,10 @@ struct PlanetaryBaseManager : MonoSingleton<PlanetaryBaseManager> {
 
 struct ActivatedAbilityManager : MonoSingleton<ActivatedAbilityManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ActivatedAbilities", "ActivatedAbilityManager">;
-  static constexpr int32_t RevealHostileVgerAbilityType = 86002;
-  int32_t                  GetActivatedAbilityType(int64_t abilityId)
+  // ActivatedAbilityType.RevealHostileVger.
+  static constexpr int32_t kRevealHostileVger = 86002;
+
+  int32_t GetActivatedAbilityType(int64_t abilityId)
   { return Call<"GetActivatedAbilityType", int32_t>(abilityId); }
   bool CanUseAbility(FleetPlayerData* fleet, int64_t abilityId)
   { return Call<"CanUseAbility", bool>(fleet, abilityId); }

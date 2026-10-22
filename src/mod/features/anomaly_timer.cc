@@ -1,4 +1,4 @@
-// galactic_anomaly_timer: a countdown for the active galactic anomaly in the viewed system, under the HUD's
+// [graphics] galactic_anomaly_timer: a countdown for the active galactic anomaly in the viewed system, under the HUD's
 // Help All / Engage / Claim drawer. All Unity work runs on the frame tick; there are no detours of its own.
 
 #include "config.h"
@@ -72,14 +72,14 @@ public:
     // Remaining ticks of the active anomaly in the viewed system.
     const int64_t ticks = nav && nav->isActiveAndEnabled() && nav->CanShowGalacticAnomaly() ? RemainingTicks(nav) : 0;
     if (ticks <= 0) {
-      if (auto* label = Label())
-        label->transform()->parent()->gameObject()->SetActive(false);
+      if (auto* panel = Label() ? Label()->ParentObject() : nullptr)
+        panel->SetActive(false);
       return;
     }
     if (!Label() && !Create(nav)) {
       static bool warned = false;
       if (!std::exchange(warned, true))
-        spdlog::warn("Galactic anomaly countdown: HUD creation failed; leaving the native HUD unchanged");
+        spdlog::warn("[AnomalyTimer] could not build the countdown panel; leaving the HUD unchanged");
       DestroyPanel();
       next_update_ = now + std::chrono::seconds(5);
       return;
@@ -93,7 +93,8 @@ public:
                             : fmt::format("{:02}m {:02}s", seconds / 60, seconds % 60);
       Label()->SetText(text);
     }
-    Label()->transform()->parent()->gameObject()->SetActive(true);
+    if (auto* panel = Label()->ParentObject())
+      panel->SetActive(true);
   }
 
 private:
@@ -131,8 +132,7 @@ private:
 
   void DestroyPanel()
   {
-    if (auto* label = Label()) {
-      auto* panel = label->transform()->parent()->gameObject();
+    if (auto* panel = Label() ? Label()->ParentObject() : nullptr) {
       panel->SetActive(false);
       unity::Destroy(panel);
     }
@@ -215,20 +215,19 @@ private:
   int64_t           shown_seconds_ = -1;
 };
 
-AnomalyTimer* timer = nullptr;
-void          AnomalyTimerUpdate()
-{
-  if (timer)
-    timer->Update();
-}
+// Leaked on purpose: its GC handles must not be released by static destructors after the runtime is gone.
+AnomalyTimer* anomaly_timer = nullptr;
 
-void InstallAnomalyTimer()
+void AnomalyTimerFrame()
+{ anomaly_timer->Update(); }
+
+// No hooks: the countdown is all frame work.
+bool InstallAnomalyTimer()
 {
-  // Never destroyed: GC handles must not be released by static destructors after the runtime is gone.
-  timer = new AnomalyTimer;
-  spdlog::info("Galactic anomaly countdown enabled (below Help All / Engage / Claim)");
+  anomaly_timer = new AnomalyTimer;
+  return true;
 }
 } // namespace
 
 const Feature kAnomalyTimer{"AnomalyTimer", &Config::Patches::galacticanomalytimerhooks, InstallAnomalyTimer,
-                            AnomalyTimerUpdate};
+                            AnomalyTimerFrame};

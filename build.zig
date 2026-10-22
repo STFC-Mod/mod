@@ -40,10 +40,10 @@ pub fn build(b: *std.Build) void {
 
     // Libraries the native fixtures share with the shipped mod. None of them need networking or a platform SDK,
     // so Linux can build and run the fixtures.
-    const il2cpp = mod.il2cpp(ctx);
+    const spud = deps.spud(ctx, deps.zydis(ctx), deps.capstone(ctx));
+    const il2cpp = mod.il2cpp(ctx, spud);
     const spdlog = deps.spdlog(ctx);
     const toml = deps.tomlplusplus(ctx);
-    const spud = deps.spud(ctx, deps.zydis(ctx), deps.capstone(ctx));
     const proto_runtime = protobuf.protobufLite(ctx, protobuf.abseil(ctx));
     // A null result means Zig still has to fetch a lazy dependency; it reruns build() once it has.
     const proto = protobuf.generate(ctx, proto_runtime) orelse return;

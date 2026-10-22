@@ -5,18 +5,11 @@
 
 #include "game/app.h"
 #include "game/inventory.h"
-#include "game/native_hook_extent.h"
 
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-#include <il2cpp/method_contract.h>
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
 #include <unity/core.h>
-
-#if _WIN32
-#include <Windows.h>
-#endif
 
 #include <array>
 #include <chrono>
@@ -31,10 +24,10 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 
-bool            alliance_store_active = false;
+// The thread that installed the hooks, the game's main thread. The hooks leave calls from any other thread alone.
 std::thread::id alliance_store_thread;
 bool            StoreThread()
-{ return alliance_store_active && std::this_thread::get_id() == alliance_store_thread; }
+{ return std::this_thread::get_id() == alliance_store_thread; }
 
 struct AllianceStoreWork {
   il2cpp::GcHandle  source;
@@ -466,73 +459,44 @@ void AllianceGamesStoreFrame()
                StoreCount(currency_after), StoreCount(visible), StoreCount(position));
 }
 
-bool StoreHookFits(const MethodInfo* method)
+bool InstallAllianceGamesStore()
 {
-  if (!method || !method->methodPointer)
-    return false;
-  auto* entry = reinterpret_cast<void*>(method->methodPointer);
-#if _WIN32 && defined(_M_X64)
-  DWORD64 base     = 0;
-  auto*   function = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(entry), &base, nullptr);
-  if (!function || base + function->BeginAddress != reinterpret_cast<DWORD64>(entry)
-      || function->EndAddress <= function->BeginAddress)
-    return false;
-  const size_t extent = function->EndAddress - function->BeginAddress;
-  const auto   plan   = spud::inspect_detour(entry, spud::Arch::kHost, extent);
-  return plan.ok() && plan.resolved_target == reinterpret_cast<uintptr_t>(entry) && plan.far_jump_size != 0
-         && plan.far_required_patch_bytes >= plan.far_jump_size && plan.far_required_patch_bytes <= extent;
-#elif __APPLE__
-  return native_hooks::MacHookFits(entry);
-#else
-  return false;
-#endif
-}
-
-void InstallAllianceGamesStore()
-{
-  using il2cpp::contract::Resolve;
-  auto*            store = AllianceGamesStoreScrollerViewController::Class::Raw();
-  auto*            shop  = ShopListScrollerViewController::Class::Raw();
-  auto*            card  = BundleDataWidget::Class::Raw();
-  const std::array targets{Resolve(store, "OnDidBindCanvasContext", false, "System.Void", {}),
-                           Resolve(store, "OnAboutToReleaseCanvasContext", false, "System.Void", {}),
-                           Resolve(shop, "RegenerateSortedBundles", false, "System.Void", {"System.Boolean"}),
-                           Resolve(card, "RefreshBundle", false, "System.Void", {"Digit.PrimePlatform.Content.Bundle"}),
-                           Resolve(card, "OnAboutToReleaseContext", false, "System.Void", {}),
-                           Resolve(card, "OnDidBindContext", false, "System.Void", {})};
-  if (!AllianceGamesStoreFieldsPresent()) {
-    spdlog::warn("[AllianceGamesStore] unavailable: native field contract changed");
-    return;
-  }
+  using Store = AllianceGamesStoreScrollerViewController::Class;
+  using Shop  = ShopListScrollerViewController::Class;
+  using Card  = BundleDataWidget::Class;
+  const std::array<il2cpp::Method, 6> targets{
+      Store::Method<void()>("OnDidBindCanvasContext"),     Store::Method<void()>("OnAboutToReleaseCanvasContext"),
+      Shop::Method<void(bool)>("RegenerateSortedBundles"), Card::Method<void(Bundle*)>("RefreshBundle"),
+      Card::Method<void()>("OnAboutToReleaseContext"),     Card::Method<void()>("OnDidBindContext")};
+  const std::array owners{Store::Raw(), Store::Raw(), Shop::Raw(), Card::Raw(), Card::Raw(), Card::Raw()};
+  // Each target must be the class's own method: the lookup falls back to a base class's, and a detour there would run
+  // for every subclass. Nor may two share the body SPUD patches, or one hook would also run for the other's receiver.
+  std::array<void*, 6> bodies{};
   for (size_t i = 0; i < targets.size(); ++i) {
-    if (!StoreHookFits(targets[i])) {
-      spdlog::warn("[AllianceGamesStore] unavailable: hook signature/extent {}", i);
-      return;
+    if (!targets[i])
+      continue; // Reported by the lookup, and keeps the set out.
+    if (targets[i].Info()->klass != owners[i]) {
+      spdlog::warn("[AllianceGamesStore] unavailable: {} is inherited", targets[i].Name());
+      return false;
     }
+    bodies[i] = il2cpp::DetourTarget(targets[i]);
     for (size_t j = 0; j < i; ++j)
-      if (targets[i]->methodPointer == targets[j]->methodPointer) {
+      if (bodies[i] == bodies[j]) {
         spdlog::warn("[AllianceGamesStore] unavailable: shared hook target");
-        return;
+        return false;
       }
   }
-  // Every target is checked first; the detours are attempted once, and the hooks stay native-only unless all went
-  // in. The frame work runs from the frame tick; without the tick the hooks only record pending work.
-  const bool complete =
-      IL2CPP_DETOUR(targets[0]->methodPointer, AllianceStoreScroller_OnDidBindCanvasContext_Hook,
-                    "AllianceGamesStoreScrollerViewController.OnDidBindCanvasContext")
-      && IL2CPP_DETOUR(targets[1]->methodPointer, AllianceStoreScroller_OnAboutToReleaseCanvasContext_Hook,
-                       "AllianceGamesStoreScrollerViewController.OnAboutToReleaseCanvasContext")
-      && IL2CPP_DETOUR(targets[2]->methodPointer, ShopListScrollerViewController_RegenerateSortedBundles_Hook,
-                       "ShopListScrollerViewController.RegenerateSortedBundles")
-      && IL2CPP_DETOUR(targets[3]->methodPointer, BundleDataWidget_RefreshBundle_Hook, "BundleDataWidget.RefreshBundle")
-      && IL2CPP_DETOUR(targets[4]->methodPointer, BundleDataWidget_OnAboutToReleaseContext_Hook,
-                       "BundleDataWidget.OnAboutToReleaseContext")
-      && IL2CPP_DETOUR(targets[5]->methodPointer, BundleDataWidget_OnDidBindContext_Hook,
-                       "BundleDataWidget.OnDidBindContext");
   alliance_store_thread = std::this_thread::get_id();
-  alliance_store_active = complete;
-  if (!complete)
-    spdlog::warn("[AllianceGamesStore] unavailable: incomplete detour installation; adapters inactive");
+  // One transaction: every hook or none. The frame work runs from the frame tick; without the tick the hooks only
+  // record pending work.
+  il2cpp::HookSet hooks("AllianceGamesStore");
+  IL2CPP_STAGE(hooks, targets[0], AllianceStoreScroller_OnDidBindCanvasContext_Hook);
+  IL2CPP_STAGE(hooks, targets[1], AllianceStoreScroller_OnAboutToReleaseCanvasContext_Hook);
+  IL2CPP_STAGE(hooks, targets[2], ShopListScrollerViewController_RegenerateSortedBundles_Hook);
+  IL2CPP_STAGE(hooks, targets[3], BundleDataWidget_RefreshBundle_Hook);
+  IL2CPP_STAGE(hooks, targets[4], BundleDataWidget_OnAboutToReleaseContext_Hook);
+  IL2CPP_STAGE(hooks, targets[5], BundleDataWidget_OnDidBindContext_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

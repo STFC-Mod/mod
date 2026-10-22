@@ -1,9 +1,8 @@
-// officer_sort: brings back the "Below Deck Ability" sort option that client m93.1 removed from the officer roster
-// and the officer assignment screen, by appending it to the sort menus after the game builds them.
+// [ui] officer_sort: brings back the "Below Deck Ability" sort option that client m93.1 removed from the officer
+// roster and the officer assignment screen, by appending it to the sort menus after the game builds them.
 
 #include "config.h"
 #include "features/features.h"
-#include "text.h"
 
 #include "game/officers.h"
 
@@ -99,7 +98,7 @@ void AddBelowDeckOption(il2cpp::List<ProcessingOption*>* options, const char* ke
                         il2cpp::List<SortFunction*>* sorters = nullptr)
 {
   if (!options) {
-    spdlog::warn("[OfficerSort] sort option list is null");
+    spdlog::warn("[OfficerSort] the screen has no sort options; not adding Below Deck Ability");
     return;
   }
   if (!func_class) {
@@ -108,7 +107,8 @@ void AddBelowDeckOption(il2cpp::List<ProcessingOption*>* options, const char* ke
     auto* ascending = sort ? sort->ascending() : nullptr;
     func_class      = ascending ? ascending->klass : nullptr;
     if (!func_class) {
-      spdlog::warn("[OfficerSort] could not discover Func<object,object,int> class; skipping below-deck option");
+      spdlog::warn("[OfficerSort] no existing option shows the Func<object, object, int> class; not adding Below "
+                   "Deck Ability");
       return;
     }
   }
@@ -117,7 +117,7 @@ void AddBelowDeckOption(il2cpp::List<ProcessingOption*>* options, const char* ke
 
   auto* sort = NewSortFunction(key, roster);
   if (!sort) {
-    spdlog::warn("[OfficerSort] failed to create sort function");
+    spdlog::warn("[OfficerSort] could not create the Below Deck Ability sort function");
     return;
   }
   if (sorters)
@@ -143,17 +143,16 @@ void OfficerSortGenerators_InitializeAssignmentSorters_Hook(auto original, Offic
     AddBelowDeckOption(_this->assignmentOptions(), kAssignmentKey, false);
 }
 
-void InstallOfficerSort()
+bool InstallOfficerSort()
 {
   if (!ResolveComparers())
-    return;
-  auto roster     = OfficerSortGenerators::Class::Method("InitializeOfficerSorters", 0);
-  auto assignment = OfficerSortGenerators::Class::Method("InitializeAssignmentSorters", 0);
-  if (!roster || !assignment)
-    return;
-  IL2CPP_HOOK(roster, OfficerSortGenerators_InitializeOfficerSorters_Hook);
-  IL2CPP_HOOK(assignment, OfficerSortGenerators_InitializeAssignmentSorters_Hook);
-  spdlog::info("Officer sort: restored Below Deck Ability sort option");
+    return false;
+  il2cpp::HookSet hooks("OfficerSort");
+  IL2CPP_STAGE(hooks, OfficerSortGenerators::Class::Method("InitializeOfficerSorters", 0),
+               OfficerSortGenerators_InitializeOfficerSorters_Hook);
+  IL2CPP_STAGE(hooks, OfficerSortGenerators::Class::Method("InitializeAssignmentSorters", 0),
+               OfficerSortGenerators_InitializeAssignmentSorters_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

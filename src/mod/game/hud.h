@@ -3,6 +3,7 @@
 // The HUD around the space views: the mission buttons, the faction and system panel, the alliance drawer, and the
 // galactic anomaly the viewed system may have.
 
+#include "fleet.h"
 #include "ui.h"
 
 #include <il2cpp/il2cpp.h>
@@ -26,12 +27,8 @@ struct FactionInformation : il2cpp::Object {
   { return Field<"_systemName", il2cpp::List<unity::Component*>*>(); }
 };
 
-// Timer data contexts, galactic anomalies and navigation view data are read on their runtime classes: the mod only
-// needs a few members, and these classes have moved between client builds.
-struct TimerDataContext : il2cpp::Object {
-  unity::TimeSpan RemainingTime()
-  { return Get<"RemainingTime", unity::TimeSpan>(); }
-};
+// Galactic anomalies and navigation view data are read on their runtime classes: the mod only needs a few members,
+// and these classes have moved between client builds.
 
 // Digit.PrimeServer.Models.GalacticAnomaly
 struct GalacticAnomaly : il2cpp::Object {
@@ -41,17 +38,12 @@ struct GalacticAnomaly : il2cpp::Object {
   { return Get<"EndTimeTimerDataContext", TimerDataContext*>(); }
 };
 
-struct NodeAddress : il2cpp::Object {
-  int64_t System()
-  { return Get<"System", int64_t>(); }
-};
-
 struct NavigationViewData : il2cpp::Object {
   NodeAddress* ViewingAddress()
   { return Get<"ViewingAddress", NodeAddress*>(); }
 };
 
-struct HudNavigationViewController : unity::Component {
+struct HudNavigationViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation.UI", "HudNavigationViewController">;
   // The data context its canvas is registered with, for ScreenManager::View.
   using Context = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationViewData">;
@@ -60,8 +52,6 @@ struct HudNavigationViewController : unity::Component {
   { return Field<"_galacticAnomaliesButtonWidget", unity::Component*>(); }
   FactionInformation* factionInformationHelper()
   { return Field<"_factionInformationHelper", FactionInformation*>(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
   bool CanShowGalacticAnomaly()
   { return Call<"CanShowGalacticAnomaly", bool>(); }
   NavigationViewData* CanvasContext()

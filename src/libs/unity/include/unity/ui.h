@@ -12,7 +12,7 @@
 
 namespace unity
 {
-struct CanvasScaler : il2cpp::Object {
+struct CanvasScaler : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "CanvasScaler">;
 
   // The property, which the scaler applies on its next Update; not the managed SetScaleFactor method, which writes
@@ -22,7 +22,7 @@ struct CanvasScaler : il2cpp::Object {
 };
 
 // UnityEngine.UI.Image; color and raycastTarget come from Graphic.
-struct Image : Component {
+struct Image : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Image">;
 
   enum class Type : int32_t {
@@ -54,14 +54,14 @@ struct Image : Component {
   { Call<"SetVerticesDirty">(); }
 };
 
-struct Button : il2cpp::Object {
+struct Button : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Button">;
 
   void Press()
   { Call<"Press">(); }
 };
 
-struct EventSystem : il2cpp::Object {
+struct EventSystem : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem">;
 
   static EventSystem* current()
@@ -77,7 +77,7 @@ struct PointerEventData : il2cpp::Object {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.EventSystems", "PointerEventData">;
 };
 
-struct Toggle : Component {
+struct Toggle : Behaviour {
   using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Toggle">;
 
   bool isOn()
@@ -92,7 +92,7 @@ struct Toggle : Component {
   }
 };
 
-struct TMP_Text : Component {
+struct TMP_Text : Behaviour {
   using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_Text">;
 
   // TMPro.TextAlignmentOptions, the ones in use.
@@ -134,7 +134,7 @@ struct TextMeshProUGUI : TMP_Text {
   using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TextMeshProUGUI">;
 };
 
-struct TMP_InputField : il2cpp::Object {
+struct TMP_InputField : Behaviour {
   using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_InputField">;
 
   bool isFocused()
@@ -147,10 +147,9 @@ struct TMP_InputField : il2cpp::Object {
 // `transform` when there is none.
 inline Transform* CanvasRoot(Transform* transform)
 {
-  for (auto* current = transform; current; current = current->parent())
-    if (auto* object = current->gameObject(); object && object->GetComponent<Canvas>())
-      return current;
-  return transform;
+  auto* canvas = transform ? transform->FindInParents<Canvas>() : nullptr;
+  auto* root   = canvas ? canvas->transform() : nullptr;
+  return root ? root : transform;
 }
 
 // An inactive GameObject with a RectTransform under `parent`, for building UI. `root` keeps it alive while the

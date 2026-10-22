@@ -24,7 +24,7 @@ constexpr int64_t kSeedStabilizationMs        = 5'000;
 constexpr int64_t kSeedMaxStabilizationMs     = 30'000;
 
 struct ObservedFleet {
-  uint64_t   fleet_id = 0;
+  int64_t    fleet_id = 0;
   FleetState state    = FleetState::Unknown;
   bool       occupied = false;
 };
@@ -77,7 +77,7 @@ void reset_observation()
   s_manager_probe_slot        = 0;
 }
 
-void restart_seed(int slot, uint64_t fleet_id)
+void restart_seed(int slot, int64_t fleet_id)
 {
   spdlog::debug("[FleetWatch] fleet topology changed; restarting baseline slot={} fleet={}", slot, fleet_id);
   reset_observation();

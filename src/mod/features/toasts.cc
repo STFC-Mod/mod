@@ -1,5 +1,5 @@
-// Toast banners: hides the types listed in disabled_banner_types and mirrors the ones in notify_banner_types to
-// Windows notifications, with a readable body for battle results.
+// Toast banners: [ui] disabled_banner_types hides banner types, [ui] notify_banner_types mirrors them to Windows
+// notifications with a readable body for battle results, and [audio] alert_* plays a cue for battle results.
 
 #include "config.h"
 #include "features/features.h"
@@ -190,7 +190,7 @@ std::string BattleBody(BattleResultHeader* header)
         enemy = std::move(name);
     }
   });
-  Guarded("the battle type", [&] { pvp = Contains(kPvpBattles, header->BattleType()); });
+  Guarded("the battle type", [&] { pvp = Contains(kPvpBattles, header->Type()); });
   Guarded("the player hull",
           [&] { player_ship = toast_text::TitleCase(HullName(header, header->PlayerShipHullId())); });
   Guarded("the enemy hull", [&] { enemy_ship = toast_text::TitleCase(HullName(header, header->EnemyShipHullId())); });
@@ -239,9 +239,8 @@ std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameter
   for (il2cpp_array_size_t i = 0; parameters && i < parameters->size(); ++i) {
     auto*         element = (*parameters)[i];
     Il2CppString* text    = nullptr;
-    if (element) {
+    if (element)
       Guarded("a text parameter", [&] { text = il2cpp::ToString(static_cast<il2cpp::Object*>(element)); });
-    }
     values.push_back(il2cpp::ToUtf8(text));
   }
   return values;
@@ -253,7 +252,7 @@ std::string FormatToastText(const std::string& text, Toast* toast)
   if (auto* parameters = toast->TextParameters(); parameters && parameters->size() > 0)
     return FormatPlaceholders(text, ParameterValues(parameters));
   if (text.find('{') != std::string::npos)
-    spdlog::warn("[Notify] TextParameters unavailable; placeholders unresolved in template: \"{}\"", text);
+    spdlog::warn("[Toasts] TextParameters unavailable; placeholders unresolved in template: \"{}\"", text);
   return text;
 }
 
@@ -262,7 +261,7 @@ std::string ToastText(Toast* toast)
 {
   auto* context = toast->TextLocaleTextContext();
   if (!context) {
-    spdlog::debug("[Notify] No TextLocaleTextContext for toast state {}", static_cast<int>(toast->State()));
+    spdlog::debug("[Toasts] No TextLocaleTextContext for toast state {}", static_cast<int>(toast->State()));
     return {};
   }
 
@@ -275,7 +274,7 @@ std::string ToastText(Toast* toast)
   Il2CppString* text    = nullptr;
   auto*         manager = LanguageManager::Instance();
   if (!manager || !manager->Localize(text, context) || !text) {
-    spdlog::debug("[Notify] toast state {} could not be localized", static_cast<int>(toast->State()));
+    spdlog::debug("[Toasts] toast state {} could not be localized", static_cast<int>(toast->State()));
     return {};
   }
   return FormatToastText(il2cpp::ToUtf8(text), toast);
@@ -319,10 +318,10 @@ void ShowWindowsNotification(const char* title, const std::string& body)
     try {
       winrt::init_apartment(winrt::apartment_type::single_threaded);
     } catch (const winrt::hresult_error& e) {
-      spdlog::warn("[Notify] Windows notification service failed: {:#x} {}", static_cast<unsigned long>(e.code()),
+      spdlog::warn("[Toasts] Windows notification service failed: {:#x} {}", static_cast<unsigned long>(e.code()),
                    winrt::to_string(e.message()));
     } catch (...) {
-      spdlog::warn("[Notify] Windows notification service failed (unknown error)");
+      spdlog::warn("[Toasts] Windows notification service failed (unknown error)");
     }
     return true;
   }();
@@ -335,9 +334,9 @@ void ShowWindowsNotification(const char* title, const std::string& body)
     nodes.Item(1).InnerText(winrt::to_hstring(body));
     ToastNotificationManager::CreateToastNotifier(L"Star Trek Fleet Command").Show(ToastNotification(xml));
   } catch (const winrt::hresult_error& e) {
-    spdlog::warn("[Notify] WinRT notification failed: {}", winrt::to_string(e.message()));
+    spdlog::warn("[Toasts] WinRT notification failed: {}", winrt::to_string(e.message()));
   } catch (...) {
-    spdlog::warn("[Notify] WinRT notification failed (unknown error)");
+    spdlog::warn("[Toasts] WinRT notification failed (unknown error)");
   }
 }
 #endif
@@ -352,7 +351,7 @@ void Notify(Toast* toast)
     return;
   const auto title = std::ranges::find(kTitles, state, &std::pair<ToastState, const char*>::first);
   if (title == std::end(kTitles)) {
-    spdlog::debug("[Notify] No title mapping for toast state {}, skipping", static_cast<int>(state));
+    spdlog::debug("[Toasts] No title mapping for toast state {}, skipping", static_cast<int>(state));
     return;
   }
   ShowWindowsNotification(title->second, NotificationBody(toast));
@@ -405,11 +404,12 @@ void ToastObserver_EnqueueOrCombineToast_Hook(auto original, ToastObserver* _thi
     original(_this, toast, compare);
 }
 
-void InstallToasts()
+bool InstallToasts()
 {
-
-  IL2CPP_HOOK(ToastObserver::Class::Method("EnqueueToast"), ToastObserver_EnqueueToast_Hook);
-  IL2CPP_HOOK(ToastObserver::Class::Method("EnqueueOrCombineToast"), ToastObserver_EnqueueOrCombineToast_Hook);
+  il2cpp::HookSet hooks("Toasts");
+  IL2CPP_STAGE(hooks, ToastObserver::Class::Method("EnqueueToast"), ToastObserver_EnqueueToast_Hook);
+  IL2CPP_STAGE(hooks, ToastObserver::Class::Method("EnqueueOrCombineToast"), ToastObserver_EnqueueOrCombineToast_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

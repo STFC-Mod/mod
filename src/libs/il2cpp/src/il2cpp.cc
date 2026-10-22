@@ -1,29 +1,41 @@
-// Owns metadata lookup and signature checks for typed bindings, and their diagnostics.
+// Owns metadata lookup, signature checks and their diagnostics for typed bindings, plus managed string conversion
+// and delegate construction.
 
 #include <il2cpp/il2cpp.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstdio>
+#include <format>
+#include <functional>
 #include <mutex>
+#include <ranges>
+#include <span>
 #include <string>
 #include <unordered_set>
+#include <utility>
 
 namespace il2cpp
 {
-std::string ClassName(Il2CppClass* klass)
-{
-  if (!klass)
-    return "<null>";
-  if (auto* outer = il2cpp_class_get_declaring_type(klass))
-    return ClassName(outer) + "/" + il2cpp_class_get_name(klass);
-  std::string name = il2cpp_class_get_namespace(klass);
-  return name.empty() ? il2cpp_class_get_name(klass) : name + "." + il2cpp_class_get_name(klass);
-}
-
 namespace
 {
   std::atomic<void (*)(std::string_view)> error_handler = nullptr;
+
+  std::span<const Il2CppType* const> Parameters(const MethodInfo* method)
+  { return {method->parameters, method->parameters_count}; }
+
+  // "a, b, c" from each item's text.
+  std::string Join(auto&& items, auto text)
+  {
+    std::string joined;
+    for (auto&& item : items) {
+      if (!joined.empty())
+        joined += ", ";
+      joined += text(item);
+    }
+    return joined;
+  }
 
   std::string TypeName(const Il2CppType* type)
   {
@@ -35,31 +47,24 @@ namespace
   }
 
   std::string Describe(const MethodInfo* method)
-  {
-    std::string text = TypeName(method->return_type) + " " + method->name + "(";
-    for (uint8_t i = 0; i < method->parameters_count; ++i)
-      text += (i ? ", " : "") + TypeName(method->parameters[i]);
-    return text + ")";
-  }
+  { return std::format("{} {}({})", TypeName(method->return_type), method->name, Join(Parameters(method), TypeName)); }
 
   std::string Describe(const detail::Slot& slot)
   {
-    using Kind       = detail::Slot::Kind;
-    std::string text = slot.byref ? "ref " : "";
+    using Kind        = detail::Slot::Kind;
+    const auto* byref = slot.byref ? "ref " : "";
     if (slot.kind == Kind::kVoid)
-      return text + "void";
+      return std::format("{}void", byref);
     if (slot.kind == Kind::kValue)
-      return text + std::to_string(slot.size) + "-byte value";
+      return std::format("{}{}-byte value", byref, slot.size);
     auto* expected = slot.klass ? slot.klass() : nullptr;
-    return text + (expected ? ClassName(expected) : "reference");
+    return std::format("{}{}", byref, expected ? ClassName(expected) : "reference");
   }
 
   std::string Describe(const detail::Signature& signature)
   {
-    std::string text = Describe(signature.result) + " (";
-    for (size_t i = 0; i < signature.params.size(); ++i)
-      text += (i ? ", " : "") + Describe(signature.params[i]);
-    return text + ")";
+    return std::format("{} ({})", Describe(signature.result),
+                       Join(signature.params, [](const detail::Slot& slot) { return Describe(slot); }));
   }
 
   bool IsIntegral(Il2CppTypeEnum type)
@@ -105,13 +110,9 @@ namespace
 
   bool Matches(const MethodInfo* method, const detail::Signature& signature)
   {
-    if (method->parameters_count != signature.params.size() || !Matches(method->return_type, signature.result))
-      return false;
-    for (size_t i = 0; i < signature.params.size(); ++i) {
-      if (!Matches(method->parameters[i], signature.params[i]))
-        return false;
-    }
-    return true;
+    return method->parameters_count == signature.params.size() && Matches(method->return_type, signature.result)
+           && std::ranges::equal(Parameters(method), signature.params,
+                                 [](const Il2CppType* type, const detail::Slot& slot) { return Matches(type, slot); });
   }
 
   bool IsStatic(const MethodInfo* method)
@@ -122,19 +123,25 @@ namespace
   bool Callable(const MethodInfo* method)
   { return !method->is_generic; }
 
-  // Constructors are not inherited, so they are only looked up on the class itself.
-  template <typename Visit> void ForEachMethod(Il2CppClass* klass, std::string_view name, Visit visit)
+  // Abstract methods and generic definitions only have shared stubs, which must never be detoured.
+  bool Detourable(const MethodInfo* method)
+  { return Callable(method) && !(method->flags & METHOD_ATTRIBUTE_ABSTRACT); }
+
+  // The first method called `name` that `accept` takes, searching the class before its bases. Constructors are not
+  // inherited, so they are only looked up on the class itself.
+  const MethodInfo* FirstMethod(Il2CppClass* klass, std::string_view name, auto accept)
   {
     const bool inherited = name != ".ctor" && name != ".cctor";
     for (; klass; klass = inherited ? il2cpp_class_get_parent(klass) : nullptr) {
       void* iter = nullptr;
-      while (const auto* method = il2cpp_class_get_methods(klass, &iter)) {
-        if (name == method->name && !visit(method))
-          return;
-      }
+      while (const auto* method = il2cpp_class_get_methods(klass, &iter))
+        if (name == method->name && accept(method))
+          return method;
     }
+    return nullptr;
   }
 
+  // Parameter names are "Namespace.Type", or just "Type" for any namespace.
   bool TypeNamed(const Il2CppType* type, std::string_view expected)
   {
     auto* klass = type ? il2cpp_class_from_type(type) : nullptr;
@@ -145,6 +152,15 @@ namespace
       return expected == il2cpp_class_get_name(klass);
     return expected.substr(0, dot) == il2cpp_class_get_namespace(klass)
            && expected.substr(dot + 1) == il2cpp_class_get_name(klass);
+  }
+
+  Il2CppClass* NestedClass(Il2CppClass* outer, std::string_view name)
+  {
+    void* iter = nullptr;
+    while (auto* candidate = il2cpp_class_get_nested_types(outer, &iter))
+      if (name == il2cpp_class_get_name(candidate))
+        return candidate;
+    return nullptr;
   }
 } // namespace
 
@@ -159,8 +175,19 @@ void Report(std::string_view message)
     std::fprintf(stderr, "%.*s\n", static_cast<int>(message.size()), message.data());
 }
 
+std::string ClassName(Il2CppClass* klass)
+{
+  if (!klass)
+    return "<null>";
+  if (auto* outer = il2cpp_class_get_declaring_type(klass))
+    return std::format("{}/{}", ClassName(outer), il2cpp_class_get_name(klass));
+  const std::string_view namespaze = il2cpp_class_get_namespace(klass);
+  return namespaze.empty() ? il2cpp_class_get_name(klass)
+                           : std::format("{}.{}", namespaze, il2cpp_class_get_name(klass));
+}
+
 std::string Method::Name() const
-{ return info_ ? ClassName(info_->klass) + "." + info_->name : "<missing method>"; }
+{ return info_ ? std::format("{}.{}", ClassName(info_->klass), info_->name) : "<missing method>"; }
 
 Il2CppClass* ObjectClass()
 {
@@ -173,15 +200,17 @@ std::string ToUtf8(const Il2CppString* str)
   std::string result;
   if (!str)
     return result;
-  result.reserve(static_cast<size_t>(str->length));
-  const auto* chars = str->chars;
-  for (int32_t i = 0; i < str->length; ++i) {
+  const std::span<const Il2CppChar> chars(str->chars, static_cast<size_t>(str->length));
+  result.reserve(chars.size());
+  const auto in = [](uint32_t c, uint32_t low, uint32_t high) { return c >= low && c <= high; };
+  for (size_t i = 0; i < chars.size(); ++i) {
     uint32_t c = chars[i];
     // A surrogate pair is one code point; a lone surrogate becomes U+FFFD.
-    if (c >= 0xD800 && c <= 0xDBFF && i + 1 < str->length && chars[i + 1] >= 0xDC00 && chars[i + 1] <= 0xDFFF)
+    if (in(c, 0xD800, 0xDBFF) && i + 1 < chars.size() && in(chars[i + 1], 0xDC00, 0xDFFF))
       c = 0x10000 + ((c - 0xD800) << 10) + (chars[++i] - 0xDC00);
-    else if (c >= 0xD800 && c <= 0xDFFF)
+    else if (in(c, 0xD800, 0xDFFF))
       c = 0xFFFD;
+
     if (c < 0x80) {
       result += static_cast<char>(c);
     } else if (c < 0x800) {
@@ -204,7 +233,7 @@ std::string ToUtf8(const Il2CppString* str)
 namespace detail
 {
   void ReportMissingICall(const char* name)
-  { Report(std::string("[IL2CPP] missing internal call ") + name); }
+  { Report(std::format("[IL2CPP] missing internal call {}", name)); }
 
   Il2CppClass* StringClass()
   {
@@ -220,59 +249,46 @@ namespace detail
 
   Il2CppClass* PrimitiveClass(Il2CppTypeEnum type)
   {
-    static constexpr std::pair<Il2CppTypeEnum, const char*> kNames[] = {
+    using Entry                     = std::pair<Il2CppTypeEnum, const char*>;
+    static constexpr Entry kNames[] = {
         {IL2CPP_TYPE_BOOLEAN, "Boolean"}, {IL2CPP_TYPE_CHAR, "Char"}, {IL2CPP_TYPE_I1, "SByte"},
         {IL2CPP_TYPE_U1, "Byte"},         {IL2CPP_TYPE_I2, "Int16"},  {IL2CPP_TYPE_U2, "UInt16"},
         {IL2CPP_TYPE_I4, "Int32"},        {IL2CPP_TYPE_U4, "UInt32"}, {IL2CPP_TYPE_I8, "Int64"},
         {IL2CPP_TYPE_U8, "UInt64"},       {IL2CPP_TYPE_R4, "Single"}, {IL2CPP_TYPE_R8, "Double"},
     };
     static std::array<std::atomic<Il2CppClass*>, std::size(kNames)> classes{};
-    for (size_t i = 0; i < std::size(kNames); ++i) {
-      if (kNames[i].first != type)
-        continue;
-      auto* klass = classes[i].load();
-      if (!klass) {
-        klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", kNames[i].second);
-        classes[i].store(klass);
-      }
-      return klass;
+    const auto* entry = std::ranges::find(kNames, type, &Entry::first);
+    if (entry == std::end(kNames))
+      return nullptr;
+    auto& cached = classes[entry - std::begin(kNames)];
+    auto* klass  = cached.load();
+    if (!klass) {
+      klass = il2cpp_class_from_name(il2cpp_get_corlib(), "System", entry->second);
+      cached.store(klass);
     }
-    return nullptr;
+    return klass;
   }
 
   void ReportFault(const char* what)
-  { Report(std::string("[IL2CPP] access violation while reading ") + what); }
-
-  void ReportDetourFailure(std::string_view target, const char* error)
-  { Report("[IL2CPP] could not detour " + std::string(target) + ": " + error); }
+  { Report(std::format("[IL2CPP] access violation while reading {}", what)); }
 
   Il2CppClass* FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name)
   {
-    const std::string assembly_name(assembly), namespace_name(namespaze);
+    const std::string namespace_name(namespaze);
     auto*             domain = il2cpp_domain_get();
-    auto*             loaded = domain ? il2cpp_domain_assembly_open(domain, assembly_name.c_str()) : nullptr;
+    auto*             loaded = domain ? il2cpp_domain_assembly_open(domain, std::string(assembly).c_str()) : nullptr;
     auto*             image  = loaded ? il2cpp_assembly_get_image(loaded) : nullptr;
 
     // Nested types are reached through their declaring type: "Outer/Inner".
-    const auto   slash = name.find('/');
-    const auto   outer = std::string(name.substr(0, slash));
-    Il2CppClass* klass = image ? il2cpp_class_from_name(image, namespace_name.c_str(), outer.c_str()) : nullptr;
-    for (auto rest = slash; klass && rest != std::string_view::npos;) {
-      const auto next   = name.find('/', rest + 1);
-      const auto nested = name.substr(rest + 1, next == std::string_view::npos ? next : next - rest - 1);
-      void*      iter   = nullptr;
-      auto*      parent = std::exchange(klass, nullptr);
-      while (auto* candidate = il2cpp_class_get_nested_types(parent, &iter)) {
-        if (nested == il2cpp_class_get_name(candidate)) {
-          klass = candidate;
-          break;
-        }
-      }
-      rest = next;
-    }
+    const auto slash = name.find('/');
+    auto*      klass =
+        image ? il2cpp_class_from_name(image, namespace_name.c_str(), std::string(name.substr(0, slash)).c_str())
+              : nullptr;
+    if (slash != std::string_view::npos)
+      for (const auto nested : name.substr(slash + 1) | std::views::split('/'))
+        klass = klass ? NestedClass(klass, std::string_view(nested.begin(), nested.end())) : nullptr;
     if (!klass)
-      Report("[IL2CPP] missing class " + assembly_name + ":" + (namespace_name.empty() ? "" : namespace_name + ".")
-             + std::string(name));
+      Report(std::format("[IL2CPP] missing class {}:{}{}{}", assembly, namespaze, namespaze.empty() ? "" : ".", name));
     return klass;
   }
 
@@ -280,18 +296,12 @@ namespace detail
   {
     if (!klass)
       return {};
-    // Abstract methods and generic definitions only have shared stubs, which must never be detoured.
-    const MethodInfo* found = nullptr;
-    ForEachMethod(klass, name, [&](const MethodInfo* method) {
-      if (!Callable(method) || (method->flags & METHOD_ATTRIBUTE_ABSTRACT)
-          || (count >= 0 && method->parameters_count != count))
-        return true;
-      found = method;
-      return false;
+    const auto* found = FirstMethod(klass, name, [count](const MethodInfo* method) {
+      return Detourable(method) && (count < 0 || method->parameters_count == count);
     });
     if (!found)
-      Report("[IL2CPP] missing method " + ClassName(klass) + "." + std::string(name)
-             + (count >= 0 ? " with " + std::to_string(count) + " parameters" : ""));
+      Report(std::format("[IL2CPP] missing method {}.{}{}", ClassName(klass), name,
+                         count >= 0 ? std::format(" with {} parameters", count) : ""));
     return Method(found);
   }
 
@@ -299,54 +309,39 @@ namespace detail
   {
     if (!klass)
       return {};
-    const MethodInfo* found = nullptr;
-    ForEachMethod(klass, name, [&](const MethodInfo* method) {
-      if (!Callable(method) || (method->flags & METHOD_ATTRIBUTE_ABSTRACT) || method->parameters_count != params.size())
-        return true;
-      size_t index = 0;
-      for (auto param : params) {
-        if (!TypeNamed(method->parameters[index++], param))
-          return true;
-      }
-      found = method;
-      return false;
+    const auto* found = FirstMethod(klass, name, [params](const MethodInfo* method) {
+      return Detourable(method) && std::ranges::equal(Parameters(method), params, TypeNamed);
     });
-    if (!found) {
-      std::string list;
-      for (auto param : params)
-        list += (list.empty() ? "" : ", ") + std::string(param);
-      Report("[IL2CPP] missing method " + ClassName(klass) + "." + std::string(name) + "(" + list + ")");
-    }
+    if (!found)
+      Report(std::format("[IL2CPP] missing method {}.{}({})", ClassName(klass), name, Join(params, std::identity{})));
     return Method(found);
   }
 
-  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature, bool is_static)
+  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature, bool is_static,
+                                  bool initialize)
   {
     if (!klass)
       return nullptr;
     // The most derived match wins; virtual calls still dispatch on the receiver.
-    const MethodInfo* found = nullptr;
-    std::string       candidates;
-    ForEachMethod(klass, name, [&](const MethodInfo* method) {
+    std::string candidates;
+    const auto* found = FirstMethod(klass, name, [&](const MethodInfo* method) {
       if (!Callable(method) || IsStatic(method) != is_static)
-        return true;
-      if (Matches(method, signature)) {
-        found = method;
         return false;
-      }
+      if (Matches(method, signature))
+        return true;
       candidates += "\n  " + Describe(method);
-      return true;
+      return false;
     });
     if (found) {
-      if (is_static)
+      if (is_static && initialize)
         il2cpp_runtime_class_init(found->klass);
       return found;
     }
-    const auto member = ClassName(klass) + "." + std::string(name);
     if (candidates.empty())
-      Report("[IL2CPP] missing " + std::string(is_static ? "static " : "") + "method " + member);
+      Report(std::format("[IL2CPP] missing {}method {}.{}", is_static ? "static " : "", ClassName(klass), name));
     else
-      Report("[IL2CPP] no overload of " + member + " matches " + Describe(signature) + "; found:" + candidates);
+      Report(std::format("[IL2CPP] no overload of {}.{} matches {}; found:{}", ClassName(klass), name,
+                         Describe(signature), candidates));
     return nullptr;
   }
 
@@ -356,7 +351,7 @@ namespace detail
     if (!klass)
       return nullptr;
     const std::string property_name(name);
-    const auto        member   = ClassName(klass) + "." + property_name;
+    const auto        member   = std::format("{}.{}", ClassName(klass), name);
     const auto*       property = il2cpp_class_get_property_from_name(klass, property_name.c_str());
     if (!property) {
       Report("[IL2CPP] missing property " + member);
@@ -364,30 +359,27 @@ namespace detail
     }
     // An override may redeclare only one accessor; the other is inherited from a base property.
     const MethodInfo* method = nullptr;
-    for (; property; property = property->parent && il2cpp_class_get_parent(property->parent)
-                                    ? il2cpp_class_get_property_from_name(il2cpp_class_get_parent(property->parent),
-                                                                          property_name.c_str())
-                                    : nullptr) {
-      method = setter ? il2cpp_property_get_set_method(const_cast<PropertyInfo*>(property))
-                      : il2cpp_property_get_get_method(const_cast<PropertyInfo*>(property));
-      if (method)
+    while (property) {
+      auto* raw = const_cast<PropertyInfo*>(property);
+      if ((method = setter ? il2cpp_property_get_set_method(raw) : il2cpp_property_get_get_method(raw)))
         break;
+      auto* base = property->parent ? il2cpp_class_get_parent(property->parent) : nullptr;
+      property   = base ? il2cpp_class_get_property_from_name(base, property_name.c_str()) : nullptr;
     }
     if (!method) {
-      Report("[IL2CPP] property " + member + " has no " + (setter ? "setter" : "getter"));
+      Report(std::format("[IL2CPP] property {} has no {}", member, setter ? "setter" : "getter"));
       return nullptr;
     }
     if (IsStatic(method) != is_static) {
-      Report("[IL2CPP] property " + member + (is_static ? " is not static" : " is static"));
+      Report(std::format("[IL2CPP] property {} {}", member, is_static ? "is not static" : "is static"));
       return nullptr;
     }
-    const Slot void_slot;
     const bool matches = setter ? method->parameters_count == 1 && Matches(method->parameters[0], value)
-                                      && Matches(method->return_type, void_slot)
+                                      && Matches(method->return_type, Slot{})
                                 : method->parameters_count == 0 && Matches(method->return_type, value);
     if (!matches) {
-      Report("[IL2CPP] property " + member + " is " + TypeName(setter ? method->parameters[0] : method->return_type)
-             + ", binding expects " + Describe(value));
+      Report(std::format("[IL2CPP] property {} is {}, binding expects {}", member,
+                         TypeName(setter ? method->parameters[0] : method->return_type), Describe(value)));
       return nullptr;
     }
     if (is_static)
@@ -399,28 +391,37 @@ namespace detail
   {
     if (!klass)
       return nullptr;
-    const std::string field_name(name);
-    const auto        member = ClassName(klass) + "." + field_name;
-    auto*             field  = il2cpp_class_get_field_from_name(klass, field_name.c_str());
+    const auto member = std::format("{}.{}", ClassName(klass), name);
+    auto*      field  = il2cpp_class_get_field_from_name(klass, std::string(name).c_str());
     if (!field) {
       Report("[IL2CPP] missing field " + member);
       return nullptr;
     }
     if (((field->type->attrs & FIELD_ATTRIBUTE_STATIC) != 0) != is_static) {
-      Report("[IL2CPP] field " + member + (is_static ? " is not static" : " is static"));
+      Report(std::format("[IL2CPP] field {} {}", member, is_static ? "is not static" : "is static"));
       return nullptr;
     }
     if (field->offset == THREAD_STATIC_FIELD_OFFSET) {
-      Report("[IL2CPP] field " + member + " is thread-static");
+      Report(std::format("[IL2CPP] field {} is thread-static", member));
       return nullptr;
     }
     if (!Matches(field->type, value)) {
-      Report("[IL2CPP] field " + member + " is " + TypeName(field->type) + ", binding expects " + Describe(value));
+      Report(
+          std::format("[IL2CPP] field {} is {}, binding expects {}", member, TypeName(field->type), Describe(value)));
       return nullptr;
     }
     if (is_static)
       il2cpp_runtime_class_init(field->parent);
     return field;
+  }
+
+  Method Hookable(const MethodInfo* method)
+  {
+    if (method && (method->has_full_generic_sharing_signature || (method->flags & METHOD_ATTRIBUTE_ABSTRACT))) {
+      Report("[IL2CPP] cannot hook shared or abstract method " + Method(method).Name());
+      return {};
+    }
+    return Method(method);
   }
 
   void ReportException(const MethodInfo* method, Il2CppException* exception)
@@ -429,17 +430,16 @@ namespace detail
     static std::mutex                            mutex;
     static std::unordered_set<const MethodInfo*> reported;
     {
-      std::lock_guard lock(mutex);
+      std::scoped_lock lock(mutex);
       if (!reported.insert(method).second)
         return;
     }
-    std::string message = "[IL2CPP] " + ClassName(method->klass) + "." + method->name + " threw";
-    if (exception) {
-      char text[512]{};
-      il2cpp_format_exception(exception, text, sizeof(text));
-      message += std::string(": ") + text;
-    }
-    Report(message + " (further exceptions from this method are not logged)");
+    // The runtime copies with strncpy, which leaves a full buffer unterminated. Keep the last byte NUL.
+    char text[512]{};
+    if (exception)
+      il2cpp_format_exception(exception, text, sizeof(text) - 1);
+    Report(std::format("[IL2CPP] {}.{} threw{}{} (further exceptions from this method are not logged)",
+                       ClassName(method->klass), method->name, exception ? ": " : "", text));
   }
 
   Il2CppObject* InvokeBoxed(const MethodInfo* method, void* target, void** args)
@@ -462,15 +462,12 @@ Il2CppObject* NewDelegate(Il2CppClass* delegate_class, Method target, Il2CppMeth
     return nullptr;
   // Delegate(object target, IntPtr method). Runtime invocation rejects static targets for this
   // constructor; its generated invoker accepts a null target and a MethodInfo address.
-  const MethodInfo* ctor = nullptr;
-  ForEachMethod(delegate_class, ".ctor", [&](const MethodInfo* method) {
-    if (method->parameters_count == 2 && method->parameters[0]->type == IL2CPP_TYPE_OBJECT
-        && method->parameters[1]->type == IL2CPP_TYPE_I && method->invoker_method)
-      ctor = method;
-    return ctor == nullptr;
+  const auto* ctor = FirstMethod(delegate_class, ".ctor", [](const MethodInfo* method) {
+    return method->parameters_count == 2 && method->parameters[0]->type == IL2CPP_TYPE_OBJECT
+           && method->parameters[1]->type == IL2CPP_TYPE_I && method->invoker_method;
   });
   if (!ctor) {
-    Report("[IL2CPP] " + ClassName(delegate_class) + " has no (object, IntPtr) delegate constructor");
+    Report(std::format("[IL2CPP] {} has no (object, IntPtr) delegate constructor", ClassName(delegate_class)));
     return nullptr;
   }
   auto* delegate = il2cpp_object_new(delegate_class);

@@ -115,7 +115,7 @@ struct WaveDefenseObjectViewerWidget : ObjectViewerBaseWidget {
       return;
     }
     auto* context  = widget->Context();
-    auto* listener = widget->SemaphoreListener();
+    auto* listener = widget->semaphoreButtonListener();
     if (context && context->Interactable() && listener) {
       listener->Press();
     }

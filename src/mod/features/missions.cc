@@ -1,4 +1,4 @@
-// Missions: the hud_* settings, which force mission HUD buttons always shown or never shown, and
+// Missions: the [ui] hud_* settings, which force mission HUD buttons always shown or never shown, and
 // daily_bulk_claim_factions and daily_bulk_claim_toggle_default_on, which limit the missions screen's Claim All to
 // the chosen factions' dailies, show only their icons next to the toggle, and can switch the toggle on.
 
@@ -12,10 +12,13 @@
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
+#include <unity/core.h>
 #include <unity/ui.h>
 
 #include <algorithm>
+#include <array>
 #include <string>
+#include <string_view>
 
 namespace
 {
@@ -38,13 +41,10 @@ constexpr ButtonSetting kButtons[] = {
     {&Config::Ui::hud_missions, HudButton<"_missionsButton">},
 };
 
-// The game decides visibility here; the hud_* settings are applied on top every time it does.
-bool hud_ready = false;
-
+// The game decides visibility in each hooked path; the hud_* settings are applied on top every time it does. A
+// missing path would let the game's choice show through, so the paths install as one set: all of them or none.
 void ApplyHudVisibility(MissionsHudViewController* _this)
 {
-  if (!hud_ready)
-    return;
   const auto& ui = Config::Get().ui;
   for (const auto& button : kButtons) {
     const auto visibility = ui.*button.visibility;
@@ -115,7 +115,7 @@ void ShowClaimedFactionIcons(MissionViewController* controller)
     if (object)
       object->SetActive(Claimed(faction.name));
     else
-      spdlog::debug("[DailyFactionBulkClaim] icon '{}' not found", faction.icon);
+      spdlog::debug("[DailyClaimFilter] no {} icon next to Claim All", faction.icon);
   }
 }
 
@@ -150,7 +150,7 @@ DailyGoalList* MissionViewController_GetClaimableDailiesList_Hook(auto original,
     if (main && !Claimed(faction))
       list->RemoveAt(i);
   }
-  spdlog::debug("[DailyFactionBulkClaim] claiming {} of {} dailies", list->Count(), total);
+  spdlog::debug("[DailyClaimFilter] claiming {} of {} dailies", list->Count(), total);
   return list;
 }
 
@@ -158,34 +158,37 @@ DailyGoalList* MissionViewController_GetClaimableDailiesList_Hook(auto original,
 // away, so the frame tick keeps trying while the missions screen is open, for at most kMaxToggleAttempts frames.
 constexpr int kMaxToggleAttempts = 300;
 
-MissionViewController* shown_controller = nullptr;
-bool                   toggle_done      = false;
-int                    toggle_attempts  = 0;
+// Weak, and checked before use: the screen can be destroyed without AboutToHide. Never destroyed: freeing a GC
+// handle in a static destructor can run after the runtime has shut down.
+auto& shown_missions_screen = *new il2cpp::GcHandle;
+bool  toggle_done           = false;
+int   toggle_attempts       = 0;
 
 void MissionViewController_AboutToShow_Hook(auto original, MissionViewController* _this)
 {
   original(_this);
   ShowClaimedFactionIcons(_this);
-  shown_controller = _this;
+  shown_missions_screen = il2cpp::GcHandle::Weak(_this);
 }
 
 void MissionViewController_AboutToHide_Hook(auto original, MissionViewController* _this)
 {
-  if (shown_controller == _this)
-    shown_controller = nullptr;
+  if (shown_missions_screen.Get() == _this)
+    shown_missions_screen.Reset();
   original(_this);
 }
 
-void MissionsUpdate()
+void DailyClaimFilterFrame()
 {
-  if (!shown_controller || toggle_done || !Config::Get().ui.daily_bulk_claim_toggle_default_on)
+  if (toggle_done || !shown_missions_screen || !Config::Get().ui.daily_bulk_claim_toggle_default_on)
     return;
-  auto* toggle = shown_controller->claimAllToggle();
+  auto* controller = shown_missions_screen.Get<MissionViewController>();
+  auto* toggle     = unity::Alive(controller) ? controller->claimAllToggle() : nullptr;
   if (!toggle)
     return;
   if (!toggle->isOn()) {
     if (++toggle_attempts > kMaxToggleAttempts) {
-      spdlog::warn("[DailyFactionBulkClaim] Claim All toggle never became interactable; not switching it on");
+      spdlog::warn("[DailyClaimFilter] the Claim All toggle never became usable; leaving it off");
       toggle_done = true;
       return;
     }
@@ -194,40 +197,34 @@ void MissionsUpdate()
   toggle_done = toggle->isOn();
 }
 
-void InstallMissionHud()
+bool InstallMissionHud()
 {
   using Controller = MissionsHudViewController::Class;
-  const std::array methods{
-      Controller::Method<void()>("OnEnable"), Controller::Method<void()>("SetupAchievementsButton"),
-      Controller::Method<void(bool)>("SetupChallengesButton"), Controller::Method<void(bool)>("SetupOutpostsButton"),
-      Controller::Method<void()>("HandleOutpostsAndChallengesHUD")};
-  // The lifecycle paths must all be distinct and available before any preference is applied.
-  for (size_t i = 0; i < methods.size(); ++i) {
-    if (!methods[i])
-      return;
-    for (size_t j = 0; j < i; ++j)
-      if (methods[i].Pointer() == methods[j].Pointer()) {
-        spdlog::error("Mission HUD refresh paths share a native target; overrides disabled");
-        return;
-      }
-  }
-  const bool enabled      = IL2CPP_HOOK(methods[0], MissionsHudViewController_OnEnable_Hook);
-  const bool achievements = IL2CPP_HOOK(methods[1], MissionsHudViewController_SetupAchievementsButton_Hook);
-  const bool challenges   = IL2CPP_HOOK(methods[2], MissionsHudViewController_SetupChallengesButton_Hook);
-  const bool outposts     = IL2CPP_HOOK(methods[3], MissionsHudViewController_SetupOutpostsButton_Hook);
-  const bool combined     = IL2CPP_HOOK(methods[4], MissionsHudViewController_HandleOutpostsAndChallengesHUD_Hook);
-  hud_ready               = enabled && achievements && challenges && outposts && combined;
+  il2cpp::HookSet hooks("MissionHud");
+  IL2CPP_STAGE(hooks, Controller::Method<void()>("OnEnable"), MissionsHudViewController_OnEnable_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method<void()>("SetupAchievementsButton"),
+               MissionsHudViewController_SetupAchievementsButton_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method<void(bool)>("SetupChallengesButton"),
+               MissionsHudViewController_SetupChallengesButton_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method<void(bool)>("SetupOutpostsButton"),
+               MissionsHudViewController_SetupOutpostsButton_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method<void()>("HandleOutpostsAndChallengesHUD"),
+               MissionsHudViewController_HandleOutpostsAndChallengesHUD_Hook);
+  return hooks.Commit();
 }
 
-void InstallDailyClaimFilter()
+bool InstallDailyClaimFilter()
 {
   using Controller = MissionViewController::Class;
-  IL2CPP_HOOK(Controller::Method("GetClaimableDailiesList", 0), MissionViewController_GetClaimableDailiesList_Hook);
-  IL2CPP_HOOK(Controller::Method("AboutToShow", 0), MissionViewController_AboutToShow_Hook);
-  IL2CPP_HOOK(Controller::Method("AboutToHide", 0), MissionViewController_AboutToHide_Hook);
+  il2cpp::HookSet hooks("DailyClaimFilter");
+  IL2CPP_STAGE(hooks, Controller::Method("GetClaimableDailiesList", 0),
+               MissionViewController_GetClaimableDailiesList_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method("AboutToShow", 0), MissionViewController_AboutToShow_Hook);
+  IL2CPP_STAGE(hooks, Controller::Method("AboutToHide", 0), MissionViewController_AboutToHide_Hook);
+  return hooks.Commit();
 }
 } // namespace
 
 const Feature kMissionHud{"MissionHud", &Config::Patches::missionhudtweakshooks, InstallMissionHud};
 const Feature kDailyClaimFilter{"DailyClaimFilter", &Config::Patches::dailyfactionbulkclaimhooks,
-                                InstallDailyClaimFilter, MissionsUpdate};
+                                InstallDailyClaimFilter, DailyClaimFilterFrame};

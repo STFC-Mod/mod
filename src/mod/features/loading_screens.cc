@@ -1,5 +1,5 @@
-// The mod's loading screens: the login background and logos, the transition screen between sections, and the
-// loading tips. They share the embedded images and reset together when the game reloads.
+// The mod's loading screens, from [graphics] loader_*: the login background and logos, the transition screen between
+// sections, and the loading tips. They share the embedded images and reset together when the game reloads.
 
 #include "config.h"
 #include "features/features.h"
@@ -49,7 +49,7 @@ unity::ImageAsset* Load(unity::ImageAsset& asset, const uint8_t* data, size_t si
 {
   if (asset.Load(data, size))
     return &asset;
-  spdlog::warn("[LS] failed to load {} texture", name);
+  spdlog::warn("[LoadingScreens] could not load the {} image", name);
   return nullptr;
 }
 
@@ -79,7 +79,7 @@ struct Assets {
   unity::ImageAsset* CommunityLogo()
   { return Load(community_logo, g_embeddedCCLogoImage, g_embeddedCCLogoImage_SIZE, "community logo"); }
 };
-// Never destroyed: its GC handles must not be freed by static destructors after the runtime is gone.
+// Leaked on purpose: its GC handles must not be released by static destructors after the runtime is gone.
 Assets& assets = *new Assets;
 
 unity::GameObject* CreateOverlay(const char* name, unity::ImageAsset& asset, unity::Transform* parent,
@@ -333,7 +333,7 @@ void CustomizeTransition(TransitionViewController* controller)
             CreateOverlay("STFCModBG", *image, parent, {0.0f, 0.0f}, {1.0f, 1.0f}, false, true) != nullptr;
     // Keep the game's background unless the replacement is fully attached, so a failure is visible but harmless.
     if (!transition.overlay) {
-      spdlog::warn("[LS] custom transition background unavailable; preserving game background");
+      spdlog::warn("[TransitionScreen] the custom background is unavailable; keeping the game's");
       return;
     }
     HideImage(background);
@@ -391,36 +391,47 @@ void MonoSingleton_PrepareAllForReload_Hook(auto original)
   original();
 }
 
-// Shared by the login, tip and transition installs, whichever of them run.
+// Shared by the login, tip and transition installs, whichever of them run, so it is its own set, installed on the
+// first call.
 void InstallReloadReset()
 {
-  static bool installed = false;
-  if (std::exchange(installed, true))
-    return;
-  IL2CPP_HOOK(MonoSingletonBase::Method("PrepareAllForReload"), MonoSingleton_PrepareAllForReload_Hook);
+  static const bool installed = [] {
+    il2cpp::HookSet hooks("LoadingScreens");
+    IL2CPP_STAGE(hooks, MonoSingletonBase::Method("PrepareAllForReload"), MonoSingleton_PrepareAllForReload_Hook);
+    return hooks.Commit();
+  }();
+  (void)installed;
 }
 
-void InstallLoginScreen()
+bool InstallLoginScreen()
 {
   InstallReloadReset();
-  IL2CPP_HOOK(LoginSequence::Class::Method("Awake"), LoginSequence_Awake_Hook);
+  il2cpp::HookSet hooks("LoginScreen");
+  IL2CPP_STAGE(hooks, LoginSequence::Class::Method("Awake"), LoginSequence_Awake_Hook);
+  return hooks.Commit();
 }
 
-void InstallTransitionScreen()
+bool InstallTransitionScreen()
 {
   InstallReloadReset();
-  IL2CPP_HOOK(TransitionViewController::Class::Method("Awake"), TransitionViewController_Awake_Hook);
-  IL2CPP_HOOK(TransitionViewController::Class::Method("AboutToShow"), TransitionViewController_AboutToShow_Hook);
-  IL2CPP_HOOK(TransitionViewController::Class::Method("AboutToHide"), TransitionViewController_AboutToHide_Hook);
-  IL2CPP_HOOK(SlideShowViewController::Class::Method("ShowCurrentSlide"),
-              SlideShowViewController_ShowCurrentSlide_Hook);
+  il2cpp::HookSet hooks("TransitionScreen");
+  IL2CPP_STAGE(hooks, TransitionViewController::Class::Method("Awake"), TransitionViewController_Awake_Hook);
+  IL2CPP_STAGE(hooks, TransitionViewController::Class::Method("AboutToShow"),
+               TransitionViewController_AboutToShow_Hook);
+  IL2CPP_STAGE(hooks, TransitionViewController::Class::Method("AboutToHide"),
+               TransitionViewController_AboutToHide_Hook);
+  IL2CPP_STAGE(hooks, SlideShowViewController::Class::Method("ShowCurrentSlide"),
+               SlideShowViewController_ShowCurrentSlide_Hook);
+  return hooks.Commit();
 }
 
-void InstallLoadingTips()
+bool InstallLoadingTips()
 {
   InstallReloadReset();
-  IL2CPP_HOOK(LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"),
-              LoadingTipViewController_SetRandomTipLocalisedText_Hook);
+  il2cpp::HookSet hooks("LoadingTips");
+  IL2CPP_STAGE(hooks, LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"),
+               LoadingTipViewController_SetRandomTipLocalisedText_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

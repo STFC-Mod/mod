@@ -1,20 +1,21 @@
-// The game window on Windows: free resizing, the -ccm profile in the title bar, allow_cursor, and the monitor's DPI
-// scale.
+// The game window on Windows: [graphics] free_resize, the -ccm profile in the title bar, [graphics] allow_cursor, and
+// the monitor's DPI scale.
 
 #include "features/features.h"
 
 #if _WIN32
 #include "config.h"
 #include "file.h"
+
 #include "game/app.h"
-#include <unity/ui.h>
 
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-
-#include <Windows.h>
+#include <unity/core.h>
 
 #include <string>
+
+#include <Windows.h>
 
 namespace
 {
@@ -58,12 +59,13 @@ bool ApplyProfileTitle()
   return SetWindowTextW(window, (L"[" + prefix + L"] " + title).c_str()) != 0;
 }
 
-// TODO: the old hook also stretched a 1024x768 fullscreen fallback to the monitor, but only once a window
-// handle captured by a SetWindowLongW detour was set, and that detour was never installed. Bring it back
-// with a tested trigger if the fallback is still seen.
 // With free_resize the original is skipped: the game's per-frame aspect-ratio enforcement is what would snap the
 // window back.
-void AspectRatioConstraintHandler_Update_Hook(auto original, void* _this)
+//
+// TODO: the old hook also stretched a 1024x768 fullscreen fallback to the monitor, but only once a window handle
+// captured by a SetWindowLongW detour was set, and that detour was never installed. Bring it back with a tested
+// trigger if the fallback is still seen.
+void AspectRatioConstraintHandler_Update_Hook(auto original, il2cpp::Object* _this)
 {
   static bool title_pending = !File::Profile().empty();
   if (title_pending && ApplyProfileTitle())
@@ -72,41 +74,47 @@ void AspectRatioConstraintHandler_Update_Hook(auto original, void* _this)
     original(_this);
 }
 
-// allow_cursor = false: the plain arrow, never clipped to the window.
-void Cursor_SetCursor_Hook(auto original, void* _this, ptrdiff_t texture, unity::Vector2* hotspot, int mode)
+// allow_cursor = false: the plain arrow, never clipped to the window. SetCursor_Injected is static; the trailing
+// MethodInfo is passed through unchanged. The UI scale hook applies the same cursor when canvases rescale, since the
+// game sets its own cursor again then.
+void Cursor_SetCursor_Injected_Hook(auto original, intptr_t texture, const unity::Vector2* hotspot, int32_t mode,
+                                    const MethodInfo* method)
 {
   if (Config::Get().graphics.allow_cursor)
-    return original(_this, texture, hotspot, mode);
-  SetCursor(LoadCursor(NULL, IDC_ARROW));
+    return original(texture, hotspot, mode, method);
+  SetCursor(LoadCursor(nullptr, IDC_ARROW));
   ClipCursor(nullptr);
 }
 
-intptr_t AspectRatioConstraintHandler_WndProc_Hook(auto original, HWND hWnd, uint32_t msg, intptr_t wParam,
-                                                   intptr_t lParam)
+intptr_t AspectRatioConstraintHandler_WndProc_Hook(auto original, HWND window, uint32_t message, intptr_t w_param,
+                                                   intptr_t l_param)
 {
   // Skip the game's aspect-ratio clamp and hand the message straight to Unity. The message arrives in the form of
   // the window's current procedure (the game's, installed through its own P/Invoke), and the A and W calls each
   // convert from their own form; the wrong one garbles non-ASCII text such as chat input.
   if (Config::Get().graphics.free_resize) {
-    const auto forward = IsWindowUnicode(hWnd) ? CallWindowProcW : CallWindowProcA;
-    return forward(reinterpret_cast<WNDPROC>(AspectRatioConstraintHandler::unityWndProc()), hWnd, msg, wParam, lParam);
+    const auto forward = IsWindowUnicode(window) ? CallWindowProcW : CallWindowProcA;
+    return forward(reinterpret_cast<WNDPROC>(AspectRatioConstraintHandler::unityWndProc()), window, message, w_param,
+                   l_param);
   }
-  return original(hWnd, msg, wParam, lParam);
+  return original(window, message, w_param, l_param);
 }
 
-void InstallFreeResize()
+bool InstallFreeResize()
 {
-  auto update  = AspectRatioConstraintHandler::Class::Method("Update");
-  auto wndproc = AspectRatioConstraintHandler::Class::Method("WndProc");
-  if (!update || !wndproc)
-    return;
-
-  IL2CPP_HOOK(update, AspectRatioConstraintHandler_Update_Hook);
-  IL2CPP_HOOK(wndproc, AspectRatioConstraintHandler_WndProc_Hook);
+  il2cpp::HookSet hooks("FreeResize");
+  IL2CPP_STAGE(hooks, AspectRatioConstraintHandler::Class::Method("Update"), AspectRatioConstraintHandler_Update_Hook);
+  IL2CPP_STAGE(hooks, AspectRatioConstraintHandler::Class::Method("WndProc"),
+               AspectRatioConstraintHandler_WndProc_Hook);
+  return hooks.Commit();
 }
 
-void InstallCursor()
-{ IL2CPP_HOOK(unity::Cursor::Method("SetCursor_Injected"), Cursor_SetCursor_Hook); }
+bool InstallCursor()
+{
+  il2cpp::HookSet hooks("Cursor");
+  IL2CPP_STAGE(hooks, unity::Cursor::Method("SetCursor_Injected"), Cursor_SetCursor_Injected_Hook);
+  return hooks.Commit();
+}
 } // namespace
 
 float WindowDpiScale(bool refresh)

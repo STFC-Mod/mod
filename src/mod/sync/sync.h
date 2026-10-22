@@ -258,5 +258,5 @@ void UpdateFleetSync();
 // Asks the game thread for a full fleet snapshot, sent as a first sync. Any thread.
 void RequestFleetSnapshot();
 // Asks the game thread to re-read a fleet a second from now and resend it if its late values changed. Any thread.
-void RereadFleet(uint64_t fleet_id);
+void RereadFleet(int64_t fleet_id);
 } // namespace data_sync

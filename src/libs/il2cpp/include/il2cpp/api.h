@@ -1,6 +1,8 @@
 #pragma once
 
-#ifdef _WIN32
+// The raw IL2CPP runtime API, for the libraries. Mod code goes through the typed bindings instead.
+
+#if _WIN32
 #pragma comment(lib, "GameAssembly.lib")
 #endif
 
@@ -9,9 +11,7 @@
 #include <il2cpp-config.h>
 #include <il2cpp-object-internals.h>
 
-#if defined(__cplusplus)
 extern "C" {
-#endif // __cplusplus
 #if _WIN32
 #define DO_API(r, n, p) IL2CPP_IMPORT r n p;
 #define DO_API_NO_RETURN(r, n, p) IL2CPP_IMPORT NORETURN r n p;
@@ -24,9 +24,7 @@ extern "C" {
 #include "il2cpp-api-functions.h"
 #undef DO_API
 #undef DO_API_NO_RETURN
-#if defined(__cplusplus)
 }
-#endif // __cplusplus
 
 namespace il2cpp
 {

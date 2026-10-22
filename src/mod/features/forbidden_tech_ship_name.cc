@@ -227,26 +227,25 @@ void ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook(auto original, Forbid
   original(_this);
 }
 
-void InstallForbiddenTechShipName()
+bool InstallForbiddenTechShipName()
 {
-  auto method = ForbiddenTechInventoryItemWidget::Class::Method("SetWidgetData", 0);
-  auto clear  = ForbiddenTechInventoryItemWidget::Class::Method("ClearWidgetData", 0);
-  // Both methods perform substantive native UI updates, rather than forwarding through tiny wrappers.
-  // Only the widget's own overrides qualify; the Widget`1 base versions run for every widget.
-  const auto own = [](il2cpp::Method info) {
-    return info && info.Info()->klass == ForbiddenTechInventoryItemWidget::Class::Raw();
+  auto refresh = ForbiddenTechInventoryItemWidget::Class::Method("SetWidgetData", 0);
+  auto clear   = ForbiddenTechInventoryItemWidget::Class::Method("ClearWidgetData", 0);
+  // Both methods perform substantive native UI updates, rather than forwarding through tiny wrappers. The lookups
+  // walk parents; only detour the widget's own overrides, never the Widget`1 base versions that run for every widget.
+  const auto inherited = [](const il2cpp::Method& method) {
+    return method && method.Info()->klass != ForbiddenTechInventoryItemWidget::Class::Raw();
   };
-  if (!own(method) || !own(clear)) {
-    spdlog::warn("[ForbiddenTechShipName] widget refresh unavailable; native display retained");
-    return;
+  if (inherited(refresh) || inherited(clear)) {
+    spdlog::warn("[ForbiddenTechShipName] the widget no longer overrides SetWidgetData and ClearWidgetData; not "
+                 "hooking the shared ones");
+    return false;
   }
-  // Install cleanup first; failure leaves the native panel entirely untouched.
-  if (!IL2CPP_HOOK(clear, ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook)) {
-    spdlog::warn("[ForbiddenTechShipName] widget cleanup hook unavailable; native display retained");
-    return;
-  }
-  const bool installed = IL2CPP_HOOK(method, ForbiddenTechInventoryItemWidget_SetWidgetData_Hook) != nullptr;
-  spdlog::info("[ForbiddenTechShipName] widget refresh hook {}", installed ? "installed" : "unavailable");
+  // One set: the refresh never runs without the cleanup, so a failure leaves the native panel untouched.
+  il2cpp::HookSet hooks("ForbiddenTechShipName");
+  IL2CPP_STAGE(hooks, clear, ForbiddenTechInventoryItemWidget_ClearWidgetData_Hook);
+  IL2CPP_STAGE(hooks, refresh, ForbiddenTechInventoryItemWidget_SetWidgetData_Hook);
+  return hooks.Commit();
 }
 } // namespace
 

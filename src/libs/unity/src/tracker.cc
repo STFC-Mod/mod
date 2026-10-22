@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -132,14 +131,13 @@ namespace
                                         "GameAssembly.dylib");
 #endif
     if (matches.empty()) {
-      il2cpp::Report("[Unity] GC_register_finalizer_inner not found; tracked objects are only dropped on OnDestroy "
-                     "and Unity's liveness pass");
+      il2cpp::Report("[Unity] GC_register_finalizer_inner not found; an object the GC frees without OnDestroy "
+                     "stays tracked, and can be read after it is freed");
       return nullptr;
     }
     return reinterpret_cast<RegisterFinalizer>(matches.front().address());
   }
 
-  std::unordered_set<void*> detoured;
 } // namespace
 
 void Constructed(Il2CppObject* object)
@@ -159,15 +157,14 @@ void Destroyed(Il2CppObject* object)
   Untrack(object);
 }
 
-bool FirstDetour(void* native)
-{ return detoured.insert(native).second; }
-
 void StartTracking()
 {
   static bool started = false;
   if (std::exchange(started, true))
     return;
-  IL2CPP_DETOUR(il2cpp_unity_liveness_finalize, LivenessFinalize_Hook, "il2cpp_unity_liveness_finalize");
+  il2cpp::HookSet hooks("object tracking");
+  IL2CPP_STAGE_AT(hooks, il2cpp_unity_liveness_finalize, LivenessFinalize_Hook);
+  hooks.Commit();
   register_finalizer = FindRegisterFinalizer();
 }
 

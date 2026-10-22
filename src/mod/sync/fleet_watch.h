@@ -6,7 +6,7 @@ namespace fleet_watch
 {
 struct Snapshot {
   int        slot     = -1;
-  uint64_t   fleet_id = 0;
+  int64_t    fleet_id = 0;
   FleetState state    = FleetState::Unknown;
 };
 

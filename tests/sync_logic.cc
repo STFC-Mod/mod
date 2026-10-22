@@ -21,11 +21,11 @@ namespace game = Digit::PrimeServer::Models;
 namespace
 {
 using namespace data_sync;
-RecordStore           store;
-auto                  settings = std::make_shared<Config::Sync>();
-std::vector<uint64_t> rereads;
-Clock::time_point     now{};
-SyncTargetConfig      Options()
+RecordStore          store;
+auto                 settings = std::make_shared<Config::Sync>();
+std::vector<int64_t> rereads;
+Clock::time_point    now{};
+SyncTargetConfig     Options()
 {
   SyncTargetConfig config;
   config.url = "http://example.invalid";
@@ -563,7 +563,7 @@ void DeployedFleets()
           == json::parse(
               R"([{"type":"fleet","fid":5,"src":"server","server_state":5,"server_state_name":"OnNode","node_id":77,"hull_id":3005922948,"system_id":1234,"hull_hp":750,"hull_max":1000,"cargo_cap":1500,"strength":14.364,"pursued_by":2}])"),
       "server fleet wire fixture");
-  Check(rereads == std::vector<uint64_t>{5}, "a changed deployed fleet is re-read");
+  Check(rereads == std::vector<int64_t>{5}, "a changed deployed fleet is re-read");
   Process(EntityGroup::Kind::MyDeployedFleets, response);
   Check(!target.Next(store, now) && rereads.size() == 1, "an unchanged deployed fleet is neither sent nor re-read");
   damage = 400;
@@ -598,7 +598,7 @@ void RepairJobs()
           == json::parse(
               R"([{"type":"job","job_type":5,"uuid":"repair-1","start_time":100,"duration":30,"reduction":0,"fid":5}])"),
       "repair job wire fixture");
-  Check(rereads == std::vector<uint64_t>{5}, "a repair job re-reads its fleet");
+  Check(rereads == std::vector<int64_t>{5}, "a repair job re-reads its fleet");
 }
 } // namespace
 std::shared_ptr<const Config::Sync> Config::Sync::Get()
@@ -614,7 +614,7 @@ void Publish(Stream stream, RecordSet records, uint64_t generation, Update mode)
 void QueueNewBattles(const std::vector<uint64_t>&, uint64_t) {}
 void CachePlayerNames(const Input&) {}
 void CacheAllianceNames(const Input&) {}
-void RereadFleet(uint64_t fleet_id)
+void RereadFleet(int64_t fleet_id)
 { rereads.push_back(fleet_id); }
 } // namespace data_sync
 int main()
