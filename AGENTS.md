@@ -14,7 +14,7 @@ Before changing bindings or hooks, read the [IL2CPP reference](docs/IL2CPP.md).
 
 ## Build and check
 
-The project uses **Zig 0.16.0** and **C++23**.
+The project uses **Zig 0.16 or 0.17** and **C++23**. Keep build changes working on both; `zig/compat.zig` holds the differences.
 Build definitions are in `build.zig` and `zig/`. Dependency URLs and hashes are pinned in `build.zig.zon`.
 Windows uses the MSVC ABI and static CRT.
 

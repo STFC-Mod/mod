@@ -1,6 +1,7 @@
 //! Native test fixtures. They link the same libraries as the shipped mod, and run without the game.
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("compat.zig");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const deps = @import("deps.zig");
@@ -177,7 +178,7 @@ pub fn addDependencySmoke(ctx: *const Ctx, libs: []const Lib) void {
     module.addCSourceFile(.{ .file = b.path("tests/dependency_smoke.cc"), .flags = ctx.cxxFlags("c++23", &.{}) });
     const exe = ctx.executable("dependency-smoke", module);
     const run = b.addRunArtifact(exe);
-    if (b.args) |args| run.addArgs(args);
+    compat.addPassthruArgs(run);
     b.step("test-deps", "Run protobuf, zlib and HTTPS backend checks; optionally pass a test URL and CA file")
         .dependOn(&run.step);
     const build_step = b.step("build-dependency-test", "Cross-compile the dependency smoke executable");
@@ -213,5 +214,5 @@ fn addFixture(
 
 /// `path` from the repository root as a C string literal.
 fn quotedPath(b: *std.Build, path: []const u8) []const u8 {
-    return std.json.Stringify.valueAlloc(b.allocator, b.pathFromRoot(path), .{}) catch @panic("OOM");
+    return std.json.Stringify.valueAlloc(b.allocator, compat.pathFromRoot(b, path), .{}) catch @panic("OOM");
 }

@@ -1,7 +1,7 @@
 # Contribute to STFC Community Mod
 
 Send pull requests to **`dev`**.
-Use **Zig 0.16.0** and run commands from the repository root.
+Use **Zig 0.16.0 or 0.17.0** and run commands from the repository root. `build.zig.zon` names 0.16.0, which version managers such as anyzig pick by default.
 Zig downloads dependencies and checks the hashes in `build.zig.zon`. No submodules or XMake installation are needed.
 
 ## Build for your platform
@@ -85,7 +85,7 @@ Windows release builds enable link-time optimization. Disable it with `-Dlto=fal
 The Swift launcher compiles as one module and links after the native archives are ready.
 macOS `ReleaseFast` builds batch feature sources to share header parsing; sync sources compile separately.
 A batch is one translation unit, so it is also the only build that catches two features with the same file-scope name.
-Zig 0.16 does not support Mach-O LTO, so macOS builds use ordinary optimized compilation.
+Zig does not support Mach-O LTO, so macOS builds use ordinary optimized compilation.
 
 | Option | Effect |
 | --- | --- |
@@ -272,6 +272,7 @@ Windows build-identity options have matching environment fallbacks:
 | `stfc_build_channel` | `STFC_BUILD_CHANNEL` |
 
 Prefix options with `-D`, as in `-Dstfc_build_channel=local`.
+Zig 0.17 cannot track environment variables in its configure cache, so reading a fallback configures the build again on every run.
 Values accept 1 to 160 ASCII letters, digits, or `._:+/-`.
 The DLL version resource contains the same values.
 Keep CI artifact names compatible with the upstream Windows attestation and macOS release jobs.

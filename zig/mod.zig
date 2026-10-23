@@ -1,8 +1,10 @@
 //! First-party code: the IL2CPP and Unity libraries, the mod, its platform entry points, and the macOS loader.
 const std = @import("std");
+const compat = @import("compat.zig");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const Options = @import("ctx.zig").Options;
+const OptimizeMode = @import("ctx.zig").OptimizeMode;
 const macos_min = @import("ctx.zig").macos_min;
 const globFiles = @import("ctx.zig").globFiles;
 const hostTool = @import("ctx.zig").hostTool;
@@ -112,7 +114,7 @@ pub fn add(ctx: *const Ctx, libs: []const Lib) void {
 fn addModSources(ctx: *const Ctx, module: *std.Build.Module, flags: []const []const u8) void {
     const b = ctx.b;
     const root = b.path("src/mod");
-    if (ctx.isMacos() and ctx.optimize == .ReleaseFast) {
+    if (ctx.isMacos() and ctx.optimize == OptimizeMode.ReleaseFast) {
         // Release builds on macOS spend most of their time parsing game headers. Batches of four features share
         // that work; the heavy sync units stay separate so they keep compiling in parallel.
         //
@@ -147,14 +149,14 @@ fn addBuildIdentity(ctx: *const Ctx, module: *std.Build.Module) []const []const 
     }, 0..) |field, i| {
         const option, const env, const default = field;
         const value = b.option([]const u8, option, "Build identity value") orelse
-            b.graph.environ_map.get(env) orelse default;
+            compat.getEnv(b, env) orelse default;
         // Values land inside C and RC string literals; keep them to characters that need no escaping.
         if (value.len == 0 or value.len > 160) std.debug.panic("{s} must contain 1–160 characters", .{option});
         for (value) |char| if (!std.ascii.isAlphanumeric(char) and std.mem.indexOfScalar(u8, "._:+/-", char) == null)
             std.debug.panic("{s} contains unsupported identity characters", .{option});
         defines[i] = .{ env, value };
     }
-    const mode = if (ctx.options.moddbg) "releasedbg" else if (ctx.optimize == .Debug) "debug" else "release";
+    const mode = if (ctx.options.moddbg) "releasedbg" else if (ctx.isDebug()) "debug" else "release";
     defines[4] = .{ "STFC_BUILD_MODE", mode };
 
     var rc_flags: std.ArrayList([]const u8) = .empty;
@@ -174,17 +176,17 @@ fn embedImages(ctx: *const Ctx, module: *std.Build.Module) void {
     // Header, symbol, and source image. Built-in images resolve from the repository, so the build runs from any
     // directory; a custom -Dbg_image stays relative to where the user ran it.
     const custom_bg = ctx.options.bg_image;
-    const bg_image = if (custom_bg.len == 0) b.pathFromRoot("assets/loadingscreen.png") else custom_bg;
-    const table = [_][3][]const u8{
+    const bg_image: std.Build.LazyPath =
+        if (custom_bg.len == 0) b.path("assets/loadingscreen.png") else .{ .cwd_relative = custom_bg };
+    const Image = struct { []const u8, []const u8, std.Build.LazyPath };
+    const table = [_]Image{
         .{ "embedded_loading_image.h", "g_embeddedLoadingImage", bg_image },
-        .{ "embedded_logo_image.h", "g_embeddedLogoImage", b.pathFromRoot("assets/stfc-mod-logo.png") },
-        .{ "embedded_cc_logo_image.h", "g_embeddedCCLogoImage", b.pathFromRoot("assets/official-cc-logo.png") },
+        .{ "embedded_logo_image.h", "g_embeddedLogoImage", b.path("assets/stfc-mod-logo.png") },
+        .{ "embedded_cc_logo_image.h", "g_embeddedCCLogoImage", b.path("assets/official-cc-logo.png") },
     };
-    const limit: std.Io.Limit = .limited(64 * 1024 * 1024);
     for (table) |entry| {
         const header, const symbol, const path = entry;
-        const data = std.Io.Dir.cwd().readFileAlloc(b.graph.io, path, b.allocator, limit) catch |err|
-            std.debug.panic("unable to read embedded image {s}: {t}", .{ path, err });
+        const data = compat.readFile(b, path, .limited(64 * 1024 * 1024));
         var out: std.Io.Writer.Allocating = .init(b.allocator);
         // Adjacent string literals of \x escapes. An initializer list of one expression per byte costs Clang far
         // more time and memory. The literal adds a null byte, so _SIZE carries the real length.

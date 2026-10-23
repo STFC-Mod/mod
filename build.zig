@@ -1,6 +1,7 @@
 //! Build graph for the mod, its native test fixtures, and the macOS launcher.
 //!
 //!   zig/ctx.zig         per-target compile rules (Ctx), library handles (Lib), shared options
+//!   zig/compat.zig      std.Build differences between Zig 0.16 and 0.17
 //!   zig/toolchains.zig  pinned SDKs: fetch-toolchains and sysroot lookup
 //!   zig/deps.zig        third-party C and C++ libraries
 //!   zig/protobuf.zig    protobuf-lite, Abseil, and generated game messages
@@ -10,6 +11,7 @@
 //!   zig/tools/          host programs the build runs
 const std = @import("std");
 const builtin = @import("builtin");
+const compat = @import("zig/compat.zig");
 const Ctx = @import("zig/ctx.zig").Ctx;
 const Options = @import("zig/ctx.zig").Options;
 const globFiles = @import("zig/ctx.zig").globFiles;
@@ -21,8 +23,9 @@ const tests = @import("zig/tests.zig");
 const toolchains = @import("zig/toolchains.zig");
 
 comptime {
-    if (builtin.zig_version.order(.{ .major = 0, .minor = 16, .patch = 0 }) != .eq)
-        @compileError("This build is pinned to Zig 0.16.0");
+    const version = builtin.zig_version;
+    if (version.major != 0 or version.minor < 16 or version.minor > 17)
+        @compileError("This build supports Zig 0.16 and 0.17");
 }
 
 pub fn build(b: *std.Build) void {
@@ -84,5 +87,5 @@ fn addFormatStep(b: *std.Build) void {
     inline for (.{ "src", "tests" }) |dir|
         for (globFiles(b, b.path(""), dir, &.{ ".cc", ".h" }, &.{})) |file| clang_format.addFileArg(b.path(file));
     step.dependOn(&clang_format.step);
-    step.dependOn(&b.addFmt(.{ .paths = &.{ "build.zig", "build.zig.zon", "zig" } }).step);
+    step.dependOn(&compat.addFmt(b, &.{ "build.zig", "build.zig.zon", "zig" }).step);
 }
