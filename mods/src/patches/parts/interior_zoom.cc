@@ -12,20 +12,12 @@
 #include <cstring>
 #include <unordered_map>
 
-// Station-interior zoom-out.
-//
-// The interior view is a BlendFrameProvider between a StaticFrameProvider (zoomed-in) and an
-// OrbitFrameProvider pinned at a fixed radius (zoomed-out, min==max); zoom slides the blend ratio, so
-// the far stop is that orbit endpoint's radius. We push that pinned radius outward to extend zoom-out.
-// That same OrbitFrameProvider instance IS the exterior station camera (the interior's fully-zoomed-out
-// end is the exterior view), so the hook widens it only while the section is Starbase_Interior and
-// restores the native radius otherwise -- leaving the exterior view (and its component-level labels)
-// stock. See fix_pan.cc, which drives the same provider for the exterior arrow-key rotate.
-//
-// graphics.interior_zoom_scale is a multiplier of the native endpoint (1.0 = native), not an absolute
-// distance like zoom/haven_zoom: the native stop is a single pinned radius, so a factor is
-// resolution-independent and self-heals if the game changes that radius. The config-knob and
-// Constraint.FloatData field-resolution pattern follow haven_zoom.cc.
+// Station-interior zoom-out: the interior view's far stop is an OrbitFrameProvider pinned at a fixed
+// radius that is also the exterior station camera, so the hook pushes that radius out while the section
+// is Starbase_Interior and restores native otherwise (see fix_pan.cc, which drives the same provider).
+// graphics.interior_zoom_scale multiplies that native radius (1.0 = native) rather than setting an
+// absolute distance like zoom/haven_zoom, so it stays resolution-independent; field resolution follows
+// haven_zoom.cc.
 namespace
 {
 FieldInfo *provider_constraint = nullptr; // AbstractOrbitFrameProvider._constraint -> OrbitConstraint
@@ -38,9 +30,11 @@ bool       fields_ok           = false;
 struct NativeRange {
   float min, max;
 };
-// Native (pre-widen) radius range per live interior OrbitFrameProvider. The pointer is ONLY a map key,
-// never dereferenced from the stored entry, so a retired scene instance cannot cause a stale-object
-// access. Keyed by provider; the interior has a single orbit endpoint so this stays tiny.
+// Native (pre-widen) radius range, keyed by the Constraint.FloatData radius object, NOT the provider:
+// the provider is recreated across transitions while the radius it drives persists and is shared with the
+// exterior camera, so provider-keying stranded the exterior at a widened radius it never restored. The
+// pointer is only a map key (the stored value is plain floats), so a retired object cannot cause a
+// stale-object access.
 std::unordered_map<Il2CppObject *, NativeRange> g_native;
 bool                                            g_reported = false;
 
@@ -73,13 +67,13 @@ void OrbitFrameProvider_UpdateConstrains_Hook(auto original, Il2CppObject *provi
   const float scale = InteriorScale();
 
   if (in_interior && scale > 1.0f) {
-    // Capture the native range once (before any widening), keyed by this provider.
-    auto it = g_native.find(provider);
+    // Capture the native range once (before any widening), keyed by this radius object.
+    auto it = g_native.find(radius);
     if (it == g_native.end()) {
       NativeRange nr{0.0f, 0.0f};
       il2cpp_field_get_value(radius, radius_min, &nr.min);
       il2cpp_field_get_value(radius, radius_max, &nr.max);
-      it = g_native.emplace(provider, nr).first;
+      it = g_native.emplace(radius, nr).first;
       if (!g_reported) {
         bool enabled = false;
         if (radius_enabled) {
@@ -99,10 +93,9 @@ void OrbitFrameProvider_UpdateConstrains_Hook(auto original, Il2CppObject *provi
     il2cpp_field_set_value(radius, radius_min, &new_min);
     il2cpp_field_set_value(radius, radius_max, &new_max);
   } else {
-    // Not the interior (or feature off): the far endpoint is SHARED with the exterior station view, so
-    // restore the native radius on any provider we previously widened. Without this the exterior stays
-    // zoomed out and its component-level labels drop out of LOD range.
-    auto it = g_native.find(provider);
+    // Not the interior (or feature off): the far endpoint is SHARED with the exterior view, so restore
+    // native on any radius we widened, else the exterior stays zoomed out and its labels drop out of LOD.
+    auto it = g_native.find(radius);
     if (it != g_native.end()) {
       float native_min = it->second.min, native_max = it->second.max;
       il2cpp_field_set_value(radius, radius_min, &native_min);
