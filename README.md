@@ -25,6 +25,7 @@ This project is maintained solely at my own cost of time, energy and money. Any 
 
 ## Features
 
+- Change preferences and shortcuts in the game's **Settings → Mod Settings**; see [in-game settings](docs/MOD_SETTINGS.md).
 - Set system UI scale + adjustment factor
 - Set viewer UI scale
 - Set system zoom

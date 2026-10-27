@@ -1,7 +1,8 @@
 // Link against the built mods library. Only Unity-dependent Key operations are stubbed;
 // MapKey parsing, ModifierKey parsing, binding detection, and hint caching are production code.
-#include "patches/mapkey.h"
 #include "defaultconfig.h"
+#include "patches/mapkey.h"
+#include "patches/optional_shortcuts.h"
 #include "patches/ship_shortcut_hint.h"
 #include <array>
 
@@ -142,6 +143,53 @@ int main()
   MapKey::AddMappedKey(toggle, MapKey::Parse("CTRL-DOWN"));
   Check(MapKey::IsDown(toggle) && claimed == KeyCode::DownArrow, "Other chord lost directional ownership");
   held.fill(false);
+  // Editing metadata includes NONE actions; replacing bindings publishes one
+  // complete list and refreshes its first hint without changing dispatch rules.
+  MapKey::RegisterAction(galaxy, "show_galaxy", "F8");
+  MapKey::RegisterAction(GameFunction::ShowResearch, "show_research", "NONE");
+  Check(MapKey::Definition(galaxy).key == "show_galaxy"
+            && MapKey::Definition(GameFunction::ShowResearch).defaultBinding == "NONE",
+        "Editor registration lost a canonical key or unbound default");
+  Check(MapKey::ReplaceBindings(galaxy, {MapKey::Parse("F8"), MapKey::Parse("CTRL-G")})
+            && MapKey::Bindings(galaxy).size() == 2 && MapKey::GetShortcutHint(galaxy) == "F8",
+        "Replacing bindings did not atomically refresh the first hint");
+  Check(!MapKey::ReplaceBindings(galaxy, {MapKey::Parse("INVALID")}) && MapKey::GetShortcuts(galaxy) == "F8 | CTRL-G",
+        "Invalid replacement damaged existing bindings");
+  Check(MapKey::SameBinding(MapKey::Parse("CTRL-SHIFT-G"), MapKey::Parse("SHIFT-CTRL-G"))
+            && !MapKey::SameBinding(MapKey::Parse("CTRL-G"), MapKey::Parse("SHIFT-G")),
+        "Binding identity must ignore modifier order but retain modifier requirements");
+  Check(MapKey::MayOverlap(MapKey::Parse("CTRL-G"), MapKey::Parse("SHIFT-G"))
+            && MapKey::MayOverlap(MapKey::Parse("G"), MapKey::Parse("G"))
+            && !MapKey::MayOverlap(MapKey::Parse("G"), MapKey::Parse("SHIFT-G"))
+            && !MapKey::MayOverlap(MapKey::Parse("CTRL-F8"), MapKey::Parse("CTRL-G")),
+        "Overlap advice differs from the existing physical minimum-modifier matcher");
+  Check(MapKey::ReplaceBindings(galaxy, {}) && !MapKey::HasBinding(galaxy) && MapKey::GetShortcutHint(galaxy).empty(),
+        "Removing all alternatives did not unbind the action");
+  // Exercise the exact optional startup catalog in all flag combinations.
+  for (const bool extended : {false, true})
+    for (const bool experimental : {false, true}) {
+      held.fill(false);
+      held[static_cast<int>(KeyCode::F7)] = true;
+      unsigned count                      = 0;
+      shortcut_options::LoadAll(extended, experimental, [&](const auto& definition, bool enabled) {
+        ++count;
+        MapKey::RegisterAction(definition.action, definition.key, definition.default_binding);
+        Check(MapKey::ReplaceBindings(definition.action, {MapKey::Parse("F7")}), "startup binding load failed");
+        MapKey::SetActionEnabled(definition.action, enabled);
+        Check(MapKey::Definition(definition.action).key == definition.key
+                  && MapKey::Bindings(definition.action).size() == 1,
+              "inactive shortcut metadata/bindings disappeared");
+        Check(enabled == (extended && (!definition.experimental || experimental)),
+              "startup flags misclassified action");
+        Check(MapKey::IsDown(definition.action) == enabled && MapKey::IsPressed(definition.action) == enabled,
+              "disabled optional action reached dispatch");
+        if (!enabled) {
+          Check(!MapKey::ReplaceBindings(definition.action, {}), "inactive action admitted editor mutation");
+          Check(MapKey::GetShortcutHint(definition.action).empty(), "inactive action advertised a working hint");
+        }
+      });
+      Check(count == 21, "optional shortcut catalog coverage drift");
+    }
   std::cout << "Shortcut hint and movement binding tests passed\n";
 
 }

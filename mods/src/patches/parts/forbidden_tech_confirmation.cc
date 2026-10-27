@@ -13,6 +13,7 @@ constexpr int32_t ConfirmButtonResult = 1;
 constexpr int32_t YesButtonResult     = 3;
 
 const FieldInfo* on_selection_field = nullptr;
+bool             controls_available = false;
 
 bool IsForbiddenTechConfirmation(const Il2CppDelegate* callback)
 {
@@ -103,6 +104,9 @@ void MessageBox_ShowWithCallback_Hook(auto original, void* context, Il2CppDelega
 }
 } // namespace
 
+bool ForbiddenTechControlsAvailable()
+{ return controls_available; }
+
 void InstallForbiddenTechConfirmationHooks()
 {
   auto message_box_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "MessageBox");
@@ -124,16 +128,18 @@ void InstallForbiddenTechConfirmationHooks()
   }
 
   const auto show = message_box_helper.GetMethod("Show", 1);
+  bool       show_installed = false, callback_installed = false;
   if (show == nullptr) {
     ErrorMsg::MissingMethod("MessageBox", "Show");
   } else {
-    SPUD_STATIC_DETOUR(show, MessageBox_Show_Hook);
+    show_installed = SPUD_STATIC_DETOUR(show, MessageBox_Show_Hook);
   }
 
   const auto show_with_callback = message_box_helper.GetMethod("Show", 2);
   if (show_with_callback == nullptr) {
     ErrorMsg::MissingMethod("MessageBox", "Show");
   } else {
-    SPUD_STATIC_DETOUR(show_with_callback, MessageBox_ShowWithCallback_Hook);
+    callback_installed = SPUD_STATIC_DETOUR(show_with_callback, MessageBox_ShowWithCallback_Hook);
   }
+  controls_available = show_installed && callback_installed;
 }

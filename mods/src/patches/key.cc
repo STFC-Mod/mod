@@ -77,6 +77,8 @@ const std::unordered_map<std::string, KeyCode> Key::mappedKeys = {
     {"MOUSE6", KeyCode::Mouse6},
     {"SPACE", KeyCode::Space},
     {"MINUS", KeyCode::Minus},
+    {"EQUAL", KeyCode::Equals},
+    {"PIPE", KeyCode::Pipe},
     {"_", KeyCode::Underscore},
     {",", KeyCode::Comma},
     {";", KeyCode::Semicolon},
@@ -277,7 +279,7 @@ void Key::ResetCache()
   // Prune them here as well as at the consumer so claims cannot survive a scene without NavigationPan.
   for (const auto key : directionalKeys) {
     auto& directionClaimed = claimedDirectionalInput[(int)key];
-    if (directionClaimed && !Pressed(key)) {
+    if (directionClaimed && !RawPressed(key)) {
       directionClaimed = false;
     }
   }
@@ -291,6 +293,9 @@ void Key::EnsureCurrentFrame()
 }
 
 bool Key::Down(KeyCode key)
+{ return !SettingsOwnInput() && RawDown(key); }
+
+bool Key::RawDown(KeyCode key)
 {
   EnsureCurrentFrame();
 
@@ -305,6 +310,9 @@ bool Key::Down(KeyCode key)
 }
 
 bool Key::Pressed(KeyCode key)
+{ return !SettingsOwnInput() && RawPressed(key); }
+
+bool Key::RawPressed(KeyCode key)
 {
   EnsureCurrentFrame();
 
@@ -316,6 +324,31 @@ bool Key::Pressed(KeyCode key)
   }
 
   return cacheKeyPressed[(int)key] == 1;
+}
+
+std::string Key::Token(KeyCode key)
+{
+  // Pick a stable accepted token, with separator-safe spellings. Sorting the
+  // aliases makes the result independent of unordered_map iteration order.
+  if (key == KeyCode::Minus)
+    return "MINUS";
+  if (key == KeyCode::Equals)
+    return "EQUAL";
+  if (key == KeyCode::Pipe)
+    return "PIPE";
+  std::string result;
+  for (const auto& [token, value] : mappedKeys)
+    if (value == key && (result.empty() || token < result))
+      result = token;
+  return result;
+}
+
+bool Key::AnyRawPressed()
+{
+  for (const auto& [token, key] : mappedKeys)
+    if (key != KeyCode::None && RawPressed(key))
+      return true;
+  return false;
 }
 
 bool Key::IsInputFocused()

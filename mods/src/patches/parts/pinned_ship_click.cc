@@ -1,6 +1,6 @@
 #include "config.h"
-#include "file.h"
 #include "patches/key.h"
+#include "settings/upstream_settings.h"
 #include "ship_name_match.h"
 
 #include "pinned_ship_click.h"
@@ -14,10 +14,8 @@
 #include <il2cpp/il2cpp_helper.h>
 
 #include <spdlog/spdlog.h>
-#include <toml++/toml.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -40,42 +38,6 @@ bool IsShipManagementScreenVisible()
     if (canvas && canvas->Visible()) return true;
   }
   return false;
-}
-
-std::string JoinNames(const std::vector<std::string>& names)
-{
-  std::string joined;
-  for (size_t i = 0; i < names.size(); ++i) {
-    if (i != 0) joined += ", ";
-    joined += names[i];
-  }
-  return joined;
-}
-
-// Update ui.pinned_ships in the user's config file so pins survive a restart.
-// If/when we merge the runtime config writer we can route this through that instead of writing the file directly.
-void PersistPinnedShips(const std::vector<std::string>& names)
-{
-  const auto joined = JoinNames(names);
-
-  toml::table table;
-  try {
-    if (std::filesystem::exists(File::Config())) {
-      table = toml::parse_file(File::Config());
-    }
-  } catch (const std::exception& error) {
-    spdlog::warn("[PinnedShipClick] could not read '{}' to persist pinned ships: {}", File::Config(), error.what());
-    return;
-  }
-
-  if (!table["ui"].is_table()) {
-    table.emplace<toml::table>("ui", toml::table{});
-  }
-  if (auto ui = table["ui"].as_table()) {
-    ui->insert_or_assign("pinned_ships", joined);
-  }
-
-  Config::Save(table, File::Config(), false);
 }
 
 const MethodInfo* FindMethodInHierarchy(Il2CppClass* cls, const char* name, int argc)
@@ -152,7 +114,7 @@ void PinShipClickOnTileClicked(FleetPlayerData* ship)
     spdlog::info("[PinnedShipClick] pinned ship '{}'", key);
   }
 
-  PersistPinnedShips(names);
+  mod_settings::PersistCurrentSetting("ui", "pinned_ships");
 
   RefreshPinnedShipSortNow();
 }

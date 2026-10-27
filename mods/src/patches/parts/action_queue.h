@@ -106,3 +106,10 @@ private:
   std::uint64_t         serial_{};
 };
 } // namespace action_queue
+
+namespace mod_settings
+{
+bool QueueRecoveryAvailable();
+bool ThinQueueProtectionAvailable();
+bool QueueAddressGuardAvailable();
+} // namespace mod_settings

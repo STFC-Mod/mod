@@ -28,6 +28,15 @@ public:
 
   static bool Pressed(KeyCode key);
   static bool Down(KeyCode key);
+  // Editors alone sample raw input; every ordinary consumer respects ownership.
+  static bool        RawPressed(KeyCode key);
+  static bool        AnyRawPressed();
+  static bool        RawDown(KeyCode key);
+  static std::string Token(KeyCode key);
+  inline static bool shortcutCaptureActive = false, shortcutPopupActive = false;
+  inline static bool settingsSearchActive = false, textEntryActive = false;
+  static bool        SettingsOwnInput()
+  { return shortcutCaptureActive || shortcutPopupActive || settingsSearchActive || textEntryActive; }
 
   static void ClaimDirectionalInput(KeyCode key);
   static bool IsDirectionalInputClaimed();

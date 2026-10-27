@@ -3,6 +3,7 @@
 #include "key.h"
 #include "modifierkey.h"
 
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -11,6 +12,9 @@ bool ModifierKey::HasModifiers() const
 {
   return this->hasModifier;
 }
+
+bool ModifierKey::operator==(const ModifierKey& other) const
+{ return std::is_permutation(Modifiers.begin(), Modifiers.end(), other.Modifiers.begin(), other.Modifiers.end()); }
 
 ModifierKey::ModifierKey()
 {

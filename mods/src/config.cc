@@ -1,13 +1,15 @@
 #include "config.h"
+#include "config_save.h"
 #include "file.h"
 #include "patches/mapkey.h"
+#include "patches/optional_shortcuts.h"
+#include "patches/runtime_config.h"
 #include "prime/KeyCode.h"
-#include "ship_name_match.h"
+#include "settings/upstream_settings.h"
 #include "str_utils.h"
 #include "version.h"
 #include <prime/Toast.h>
 
-#include <EASTL/tuple.h>
 #include <spdlog/spdlog.h>
 
 #include "defaultconfig.h"
@@ -18,6 +20,7 @@
 #include <initializer_list>
 #include <iostream>
 #include <ranges>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -62,49 +65,6 @@ constexpr auto kToastAudioAlerts = std::to_array<ToastAudioAlertConfig>({
 });
 } // namespace
 
-static const eastl::tuple<const char*, int> bannerTypes[] = {
-    {"All", ToastState::All},
-    {"Standard", ToastState::Standard},
-    {"FactionWarning", ToastState::FactionWarning},
-    {"FactionLevelUp", ToastState::FactionLevelUp},
-    {"FactionLevelDown", ToastState::FactionLevelDown},
-    {"FactionDiscovered", ToastState::FactionDiscovered},
-    {"IncomingAttackFaction", ToastState::IncomingAttackFaction},
-    {"FleetBattle", ToastState::FleetBattle},
-    {"Victory", ToastState::Victory},
-    {"Defeat", ToastState::Defeat},
-    {"Event", ToastState::Tournament},
-    {"ArmadaCreated", ToastState::ArmadaCreated},
-    {"ArmadaCanceled", ToastState::ArmadaCanceled},
-    {"ArmadaIncomingAttack", ToastState::ArmadaIncomingAttack},
-    {"ArmadaBattleWon", ToastState::ArmadaBattleWon},
-    {"ArmadaBattleLost", ToastState::ArmadaBattleLost},
-    {"DiplomacyUpdated", ToastState::DiplomacyUpdated},
-    {"JoinedTakeover", ToastState::JoinedTakeover},
-    {"CompetitorJoinedTakeover", ToastState::CompetitorJoinedTakeover},
-    {"AbandonedTerritory", ToastState::AbandonedTerritory},
-    {"TakeoverVictory", ToastState::TakeoverVictory},
-    {"TakeoverDefeat", ToastState::TakeoverDefeat},
-    {"TreasuryProgress", ToastState::TreasuryProgress},
-    {"TreasuryFull", ToastState::TreasuryFull},
-    {"Achievement", ToastState::Achievement},
-    {"AssaultVictory", ToastState::AssaultVictory},
-    {"AssaultDefeat", ToastState::AssaultDefeat},
-    {"ChallengeComplete", ToastState::ChallengeComplete},
-    {"ChallengeFailed", ToastState::ChallengeFailed},
-    {"StrikeHit", ToastState::StrikeHit},
-    {"StrikeDefeat", ToastState::StrikeDefeat},
-    {"WarchestProgress", ToastState::WarchestProgress},
-    {"WarchestFull", ToastState::WarchestFull},
-    {"PartialVictory", ToastState::PartialVictory},
-    {"ArenaTimeLeft", ToastState::ArenaTimeLeft},
-    {"ChainedEventScored", ToastState::ChainedEventScored},
-    {"FleetPresetApplied", ToastState::FleetPresetApplied},
-    {"SurgeWarmUpEnded", ToastState::SurgeWarmUpEnded},
-    {"SurgeHostileGroupDefeated", ToastState::SurgeHostileGroupDefeated},
-    {"SurgeTimeLeft", ToastState::SurgeTimeLeft},
-};
-
 bool SyncConfig::enabled(SyncConfig::Type type) const
 {
   for (const auto& opt : SyncOptions) {
@@ -121,12 +81,10 @@ Config::Config()
   Load();
 }
 
-void Config::Save(const toml::table& config, const std::string_view filename, bool apply_warning)
+bool Config::Save(const toml::table& config, const std::string_view filename, bool apply_warning)
 {
-  std::ofstream config_file;
-
   auto config_path = File::MakePath(filename, true);
-  config_file.open(config_path);
+  std::ostringstream config_file;
 
   if (apply_warning) {
     char defaultFile[255], configFile[255];
@@ -148,8 +106,12 @@ void Config::Save(const toml::table& config, const std::string_view filename, bo
     config_file << "#######################################################################\n\n";
   }
 
-  config_file << config;
-  config_file.close();
+  std::string error;
+  const bool  saved = SaveStartupConfigDocument(config, config_path, config_file.str(), error);
+  if (!saved)
+    spdlog::warn("Could not write startup configuration output '{}': {}; loaded settings remain available", filename,
+                 error);
+  return saved;
 }
 
 Config& Config::Get()
@@ -259,6 +221,7 @@ void Config::AdjustUiScale(bool scaleUp)
     auto new_scale    = this->ui_scale + scale_factor;
     this->ui_scale    = std::clamp(new_scale, 0.1f, 2.0f);
 
+    mod_settings::PersistCurrentSetting("graphics", "ui_scale");
     auto dpi = Config::RefreshDPI();
     spdlog::info("UI has been scaled {}, was {}, now {} (unclamped {}) @ {} DPI Scaling", (scaleUp ? "UP" : "DOWN"),
                  old_scale, this->ui_scale, new_scale, dpi);
@@ -273,6 +236,7 @@ void Config::AdjustUiViewerScale(bool scaleUp)
     auto new_scale        = this->ui_scale_viewer + (scale_factor * 0.25f);
     this->ui_scale_viewer = std::clamp(new_scale, 0.1f, 2.0f);
 
+    mod_settings::PersistCurrentSetting("graphics", "ui_scale_viewer");
     spdlog::info("UI Viewer has been scaled {}, was {}, now {} (unclamped {})", (scaleUp ? "UP" : "DOWN"), old_scale,
                  this->ui_scale_viewer, new_scale);
   }
@@ -288,6 +252,7 @@ void Config::AdjustUiShipScale(bool scaleUp)
   spdlog::info("System ship models have been scaled {}, was {}, now {} (unclamped {})", (scaleUp ? "UP" : "DOWN"),
                old_scale, this->ui_scale_ship, new_scale);
   ApplyUiShipScaleToLoadedShips(old_scale, this->ui_scale_ship);
+  mod_settings::PersistCurrentSetting("graphics", "ui_scale_ship");
 }
 
 inline std::string mask_token(const std::string& token)
@@ -558,29 +523,12 @@ float get_fleet_label_zoom_threshold(toml::table& config, toml::table& new_confi
   return threshold;
 }
 
-void parse_ship_filter(std::string_view value, std::vector<std::string>& names, bool& match_all)
-{
-  names.clear();
-  match_all = false;
-  if (AsciiStrToUpper(StripAsciiWhitespace(value)) == "*") {
-    match_all = true;
-    return;
-  }
-  for (const auto& token : StrSplit(std::string(value), ',')) {
-    auto stripped = StripAsciiWhitespace(token);
-    if (stripped.empty()) continue;
-    if (auto normalized = ShipNameMatch::NormalizeKey(stripped); !normalized.empty()) {
-      names.emplace_back(std::move(normalized));
-    }
-  }
-}
-
 void read_instant_warp_filter(toml::table& config, toml::table& new_config, std::string_view key,
                               std::vector<std::string>& names, bool& match_all,
                               std::string_view default_value, bool write_log)
 {
   const auto value = config["ui"][key].value<std::string>().value_or(std::string(default_value));
-  parse_ship_filter(value, names, match_all);
+  ParseShipFilter(value, names, match_all);
 
   new_config.emplace<toml::table>("ui", toml::table());
   new_config["ui"].as_table()->insert_or_assign(std::string(key), std::string(value));
@@ -590,50 +538,17 @@ void read_instant_warp_filter(toml::table& config, toml::table& new_config, std:
   }
 }
 
-void parse_faction_filter(std::string_view value, std::vector<std::string>& factions)
-{
-  static constexpr std::array kKnownFactions{"federation", "klingon", "romulan"};
-
-  factions.clear();
-  bool none = false;
-  for (const auto& token : StrSplit(std::string(value), ',')) {
-    const auto stripped = StripAsciiWhitespace(token);
-    if (stripped.empty())
-      continue;
-
-    auto lowered = AsciiStrToLower(std::string(stripped));
-
-    if (lowered == "none") {
-      none = true;
-      continue;
-    }
-    if (std::ranges::find(kKnownFactions, lowered) == kKnownFactions.end()) {
-      spdlog::warn("Unrecognised faction '{}' in daily_bulk_claim_factions; expected one of: federation, klingon, "
-                   "romulan, or none by itself. Ignoring.",
-                   stripped);
-      continue;
-    }
-
-    if (std::ranges::find(factions, lowered) == factions.end()) {
-      factions.emplace_back(std::move(lowered));
-    }
-  }
-  if (none) {
-    if (!factions.empty())
-      spdlog::warn("daily_bulk_claim_factions: none overrides named factions; use none by itself.");
-    factions = {"none"};
-  }
-}
-
 void read_daily_bulk_claim_factions(toml::table& config, toml::table& new_config, std::vector<std::string>& factions,
                                     std::string_view default_value, bool write_log)
 {
   auto value = config["ui"]["daily_bulk_claim_factions"].value<std::string>().value_or(std::string(default_value));
-  // Blank has the same meaning as an omitted setting. Materialize the default
-  // for both gameplay and generated config values; none is the explicit opt-out.
+  // Blank has the same meaning as an omitted setting; none is the explicit opt-out.
   if (StripAsciiWhitespace(value).empty())
     value = std::string(default_value);
-  parse_faction_filter(value, factions);
+  if (!ParseFactionFilter(value, factions))
+    spdlog::warn("Unrecognised faction in daily_bulk_claim_factions; expected federation, klingon, romulan, or none by "
+                 "itself. Ignoring "
+                 "unknown names.");
 
   new_config.emplace<toml::table>("ui", toml::table());
   new_config["ui"].as_table()->insert_or_assign("daily_bulk_claim_factions", std::string(value));
@@ -751,6 +666,7 @@ void set_shortcut_noop(toml::node_view<toml::node> sectionTable, toml::node_view
 void parse_config_shortcut_value(toml::table& new_config, std::string_view item, GameFunction gameFunction,
                                  std::string_view default_value, const ShortcutConfigValue& shortcut_value)
 {
+  MapKey::RegisterAction(gameFunction, item, default_value);
   auto section = "shortcuts";
   auto source  = "shortcuts_source";
 
@@ -977,6 +893,10 @@ void Config::Load()
   this->installPanHooks = get_config_or_default(config, parsed, "patches", "panhooks", DCP::panhooks, write_config);
   this->installHotkeyHooks =
       get_config_or_default(config, parsed, "patches", "hotkeyhooks", DCP::hotkeyhooks, write_config);
+  this->installNativeSettings =
+      get_config_or_default(config, parsed, "patches", "nativesettingshooks", DCP::nativesettingshooks, write_config);
+  this->installRuntimeConfigHooks =
+      get_config_or_default(config, parsed, "patches", "runtimeconfighooks", DCP::runtimeconfighooks, write_config);
   this->installFreeResizeHooks =
       get_config_or_default(config, parsed, "patches", "freeresizehooks", DCP::freeresizehooks, write_config);
   this->installTempCrashFixes =
@@ -1353,66 +1273,17 @@ void Config::Load()
   this->loader_tip_enabled =
       get_config_or_default(config, parsed, "graphics", "loader_tip_enabled", DCG::loader_tip_enabled, write_log);
 
-  std::vector<std::string> types = StrSplit(disabled_banner_types_str, ',');
+  if (!ParseBannerFilter(disabled_banner_types_str, this->disabled_banner_types))
+    spdlog::warn("Unknown disabled_banner_types ignored");
+  parsed["ui"].as_table()->insert_or_assign("disabled_banner_types", FormatBannerFilter(this->disabled_banner_types));
 
-  spdlog::debug("");
+  const auto notify_banner_types_str = get_config_or_default<std::string>(config, parsed, "ui", "notify_banner_types",
+                                                                          DCU::notify_banner_types, write_log);
+  if (!ParseBannerFilter(notify_banner_types_str, this->notify_banner_types))
+    spdlog::warn("Unknown notify_banner_types ignored");
+  parsed["ui"].as_table()->insert_or_assign("notify_banner_types", FormatBannerFilter(this->notify_banner_types));
 
-  std::string       bannerString;
   std::stringstream message;
-  message << "Parsing banner strings";
-
-  spdlog::debug(message.str());
-
-  for (const auto& [key, value] : bannerTypes) {
-    auto upper_key = AsciiStrToUpper(key);
-
-    for (const std::string_view _type : types) {
-      auto stripped_type = StripLeadingAsciiWhitespace(_type);
-      auto upper_type    = AsciiStrToUpper(stripped_type);
-
-      if ("ALL" == upper_type || upper_key == upper_type) {
-        this->disabled_banner_types.emplace_back(value);
-        if (!bannerString.empty()) {
-          bannerString.append(", ");
-        }
-        bannerString.append(key);
-      }
-    }
-  }
-
-  message.str("");
-  message << "Final disabledbanner types: " << bannerString;
-  spdlog::debug(message.str());
-
-  parsed["ui"].as_table()->insert_or_assign("disabled_banner_types", bannerString);
-
-  // Parse notify_banner_types using the same bannerTypes lookup table
-  auto notify_banner_types_str = get_config_or_default<std::string>(config, parsed, "ui", "notify_banner_types",
-                                                                    DCU::notify_banner_types, write_log);
-
-  std::vector<std::string> notify_types = StrSplit(notify_banner_types_str, ',');
-  std::string              notifyString;
-
-  for (const auto& [key, value] : bannerTypes) {
-    auto upper_key = AsciiStrToUpper(key);
-    for (const std::string_view _type : notify_types) {
-      auto stripped_type = StripLeadingAsciiWhitespace(_type);
-      auto upper_type    = AsciiStrToUpper(stripped_type);
-      spdlog::warn("TEMP: Notify {} == {}", upper_type, upper_key);
-      if ("ALL" == upper_type || upper_key == upper_type) {
-        this->notify_banner_types.emplace_back(value);
-        if (!notifyString.empty())
-          notifyString.append(", ");
-        notifyString.append(key);
-      }
-    }
-  }
-
-  spdlog::debug("Final notify banner types: {}", notifyString);
-  parsed["ui"].as_table()->insert_or_assign("notify_banner_types", notifyString);
-
-  spdlog::debug("");
-
   parse_config_shortcut(config, parsed, "move_up", GameFunction::MoveUp, DCSH::move_up);
   parse_config_shortcut(config, parsed, "move_down", GameFunction::MoveDown, DCSH::move_down);
   parse_config_shortcut(config, parsed, "move_left", GameFunction::MoveLeft, DCSH::move_left);
@@ -1464,9 +1335,6 @@ void Config::Load()
   parse_config_shortcut(config, parsed, "zoom_preset5", GameFunction::ZoomPreset5, DCSH::zoom_preset5);
   parse_config_shortcut(config, parsed, "zoom_in", GameFunction::ZoomIn, DCSH::zoom_in);
   parse_config_shortcut(config, parsed, "zoom_out", GameFunction::ZoomOut, DCSH::zoom_out);
-  parse_config_shortcut(config, parsed, "zoom_max", GameFunction::ZoomMax, DCSH::zoom_max);
-  parse_config_shortcut(config, parsed, "zoom_min", GameFunction::ZoomMin, DCSH::zoom_min);
-  parse_config_shortcut(config, parsed, "zoom_reset", GameFunction::ZoomReset, DCSH::zoom_reset);
   parse_config_shortcut(config, parsed, "ui_scaleup", GameFunction::UiScaleUp, DCSH::ui_scaleup);
   parse_config_shortcut(config, parsed, "ui_scaledown", GameFunction::UiScaleDown, DCSH::ui_scaledown);
   parse_config_shortcut(config, parsed, "ui_scaleshipup", GameFunction::UiShipScaleUp, DCSH::ui_scaleshipup);
@@ -1521,52 +1389,23 @@ void Config::Load()
   parse_config_shortcut(config, parsed, "toggle_instant_warp", GameFunction::ToggleAutoConfirmInstantWarp,
                         DCSH::toggle_instant_warp);
 
-  if (this->hotkeys_extended) {
-    parse_config_shortcut(config, parsed, "show_alliance", GameFunction::ShowAlliance, DCSH::show_alliance);
-
-    if (this->enable_experimental) {
-      parse_config_shortcut(config, parsed, "show_alliance_help", GameFunction::ShowAllianceHelp,
-                            DCSH::show_alliance_help);
-      parse_config_shortcut(config, parsed, "show_alliance_armada", GameFunction::ShowAllianceArmada,
-                            DCSH::show_alliance_armada);
-    }
-
-    parse_config_shortcut(config, parsed, "show_bookmarks", GameFunction::ShowBookmarks, DCSH::show_bookmarks);
-
-    if (this->enable_experimental) {
-      parse_config_shortcut(config, parsed, "show_lookup", GameFunction::ShowLookup, DCSH::show_lookup);
-    }
-
-    parse_config_shortcut(config, parsed, "set_zoom_preset1", GameFunction::SetZoomPreset1, DCSH::set_zoom_preset1);
-    parse_config_shortcut(config, parsed, "set_zoom_preset2", GameFunction::SetZoomPreset2, DCSH::set_zoom_preset2);
-    parse_config_shortcut(config, parsed, "set_zoom_preset3", GameFunction::SetZoomPreset3, DCSH::set_zoom_preset3);
-    parse_config_shortcut(config, parsed, "set_zoom_preset4", GameFunction::SetZoomPreset4, DCSH::set_zoom_preset4);
-    parse_config_shortcut(config, parsed, "set_zoom_preset5", GameFunction::SetZoomPreset5, DCSH::set_zoom_preset5);
-    parse_config_shortcut(config, parsed, "set_zoom_default", GameFunction::SetZoomDefault, DCSH::set_zoom_default);
-    parse_config_shortcut(config, parsed, "toggle_preview_locate", GameFunction::TogglePreviewLocate,
-                          DCSH::toggle_preview_locate);
-    parse_config_shortcut(config, parsed, "toggle_preview_recall", GameFunction::TogglePreviewRecall,
-                          DCSH::toggle_preview_recall);
-    parse_config_shortcut(config, parsed, "toggle_cargo_default", GameFunction::ToggleCargoDefault,
-                          DCSH::toggle_cargo_default);
-    parse_config_shortcut(config, parsed, "toggle_cargo_player", GameFunction::ToggleCargoPlayer,
-                          DCSH::toggle_cargo_player);
-    parse_config_shortcut(config, parsed, "toggle_cargo_station", GameFunction::ToggleCargoStation,
-                          DCSH::toggle_cargo_station);
-    parse_config_shortcut(config, parsed, "toggle_cargo_hostile", GameFunction::ToggleCargoHostile,
-                          DCSH::toggle_cargo_hostile);
-    parse_config_shortcut(config, parsed, "toggle_cargo_armada", GameFunction::ToggleCargoArmada,
-                          DCSH::toggle_cargo_armada);
-  }
+  shortcut_options::LoadAll(this->hotkeys_extended, this->enable_experimental,
+                            [&](const shortcut_options::Definition& definition, bool enabled) {
+                              parse_config_shortcut(config, parsed, definition.key, definition.action,
+                                                    definition.default_binding);
+                              MapKey::SetActionEnabled(definition.action, enabled);
+                            });
 
   spdlog::debug("");
 
-  if (!std::filesystem::exists(File::MakePath(File::Config()))) {
+  const bool created_config = !std::filesystem::exists(File::MakePath(File::Config()));
+  bool       created_config_saved = false;
+  if (created_config) {
     message.str("");
     message << "Creating " << File::Config() << " (default config file)";
     spdlog::warn(message.str());
 
-    Config::Save(parsed, File::Config(), false);
+    created_config_saved = Config::Save(parsed, File::Config(), false);
   }
 
   message.str("");
@@ -1582,6 +1421,7 @@ void Config::Load()
   }
 
   Config::Save(parsed, File::Vars());
+  runtime_config::Configure(created_config_saved ? parsed : config);
 
   std::cout << "\n\n-----------------------------\n\n"
             << parsed << "\n\n-----------------------------\nVersion "

@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <config.h>
+#include "action_queue.h"
 #include <cstring>
 #include <il2cpp/il2cpp_helper.h>
 #include <il2cpp/method_contract.h>
@@ -258,3 +259,9 @@ void InstallQueueAddressGuard()
   ready.store(a && b && c && d);
   spdlog::info("[QueueAddressGuard] ready={}", ready.load());
 }
+
+namespace mod_settings
+{
+bool QueueAddressGuardAvailable()
+{ return ready.load() && Config::Get().installQueueAddressGuardHooks; }
+} // namespace mod_settings

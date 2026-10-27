@@ -64,6 +64,7 @@ trace_events = false
 
 [buffs]
 # This is the option to always show out of dock power for ships when they are docked. Defaults to false
+# Changes require a client restart.
 use_out_of_dock_power = true
 
 #  <[===============================================================================================]>
@@ -272,6 +273,11 @@ zoom = 5000.0
 #  <[=====================================================]>
 
 [patches]
+# Native Mod Settings pages and the checked background TOML saver. These are
+# emergency compatibility switches; changing either requires a client restart.
+# Normal feature preferences remain in their own sections and in Mod Settings.
+nativesettingshooks = true
+runtimeconfighooks = true
 
 # Subgroup: Leave Well Alone
 # --------------------------
@@ -789,6 +795,7 @@ show_player_title = true
 # -------------------------
 
 # Maximum for tagged chest-purchase sliders on Windows; 0 disables the feature and native limits above this value are preserved
+# Changes require a client restart.
 extend_chest_purchase_max = 160
 
 # Subgroup: Daily Goals

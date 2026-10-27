@@ -1,5 +1,9 @@
 #include "config.h"
+#include "patches/native_hook_extent.h"
+#include "patches/runtime_config.h"
 #include "patches/ship_shortcut_hint.h"
+#include "settings/upstream_settings.h"
+#include "settings/warp_mode.h"
 
 #include <spud/detour.h>
 #include <il2cpp/method_contract.h>
@@ -341,27 +345,6 @@ HullType GetHullTypeFromBattleTarget(BattleTargetData* context);
 void     GotoSection(SectionID sectionID, void* screen_data = nullptr);
 bool     CanHideViewers();
 bool     DidHideViewers();
-
-void CycleAutoConfirmInstantWarp(Config& config)
-{
-  const char* state = nullptr;
-  switch (config.auto_confirm_instant_warp) {
-    case InstantWarpConfirmation::None:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::Warp;
-      state                            = "warp";
-      break;
-    case InstantWarpConfirmation::Warp:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::Jump;
-      state                            = "jump";
-      break;
-    case InstantWarpConfirmation::Jump:
-      config.auto_confirm_instant_warp = InstantWarpConfirmation::None;
-      state                            = "none";
-      break;
-  }
-
-  spdlog::info("Auto-confirm instant warp set to {}", state);
-}
 
 bool MoveOfficerCanvas(bool goLeft)
 {
@@ -721,16 +704,20 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
   static int32_t                                            last_ship_select_request = -1;
 
   Key::ResetCache();
+  if (Key::SettingsOwnInput())
+    return original(_this);
 
   if (MapKey::IsDown(GameFunction::DisableHotKeys)) {
     if (shortcut_hints_ready) {
       SetNativeShortcutHintsVisible(false);
     }
     Config::Get().hotkeys_enabled = false;
+    mod_settings::PersistCurrentSetting("control", "hotkeys_enabled");
     spdlog::warn("Setting hotkeys to DISABLED");
     return;
   } else if (MapKey::IsDown(GameFunction::EnableHotKeys)) {
     Config::Get().hotkeys_enabled = true;
+    mod_settings::PersistCurrentSetting("control", "hotkeys_enabled");
     spdlog::warn("Setting hotkeys to ENABLED");
     return;
   }
@@ -806,7 +793,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
 #ifdef _WIN32
   if (MapKey::IsDown(GameFunction::Quit)) {
-    TerminateProcess(GetCurrentProcess(), 1);
+    runtime_config::ForceClose();
   }
 #elif defined(__APPLE__)
   if (MapKey::IsDown(GameFunction::Quit)) {
@@ -913,6 +900,7 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
       if ((MapKey::IsDown(GameFunction::ToggleQueue))) {
         config->queue_enabled = !config->queue_enabled;
+        mod_settings::PersistCurrentSetting("control", "queue_enabled");
         // Forget stale recovery authorizations; existing native target queues keep processing.
         ResetQueueRecoveryTracking();
         return;
@@ -1112,21 +1100,28 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       } else if (MapKey::IsPressed(GameFunction::UiViewerScaleDown)) {
         config->AdjustUiViewerScale(false);
       } else if (MapKey::IsDown(GameFunction::ToggleAutoConfirmInstantWarp)) {
-        CycleAutoConfirmInstantWarp(*config);
+        mod_settings::CycleWarpMode();
       } else if (MapKey::IsDown(GameFunction::TogglePreviewLocate)) {
         config->disable_preview_locate = !config->disable_preview_locate;
+        mod_settings::PersistCurrentSetting("ui", "disable_preview_locate");
       } else if (MapKey::IsDown(GameFunction::TogglePreviewRecall)) {
         config->disable_preview_recall = !config->disable_preview_recall;
+        mod_settings::PersistCurrentSetting("ui", "disable_preview_recall");
       } else if (MapKey::IsDown(GameFunction::ToggleCargoDefault)) {
         config->show_cargo_default = !config->show_cargo_default;
+        mod_settings::PersistCurrentSetting("ui", "show_cargo_default");
       } else if (MapKey::IsDown(GameFunction::ToggleCargoPlayer)) {
         config->show_player_cargo = !config->show_player_cargo;
+        mod_settings::PersistCurrentSetting("ui", "show_player_cargo");
       } else if (MapKey::IsDown(GameFunction::ToggleCargoStation)) {
         config->show_station_cargo = !config->show_station_cargo;
+        mod_settings::PersistCurrentSetting("ui", "show_station_cargo");
       } else if (MapKey::IsDown(GameFunction::ToggleCargoHostile)) {
         config->show_hostile_cargo = !config->show_hostile_cargo;
+        mod_settings::PersistCurrentSetting("ui", "show_hostile_cargo");
       } else if (MapKey::IsDown(GameFunction::ToggleCargoArmada)) {
         config->show_armada_cargo = !config->show_armada_cargo;
+        mod_settings::PersistCurrentSetting("ui", "show_armada_cargo");
       } else if (MapKey::IsDown(GameFunction::LogLevelOff)) {
         // spdlog::log("Setting log level to OFF");
         spdlog::set_level(spdlog::level::off);
@@ -1729,10 +1724,8 @@ bool install_screen_manager_update_hook()
 
 void InstallShortcutHintHooks()
 {
-  // Configuration is fully parsed before hook installation. NONE, empty, and invalid bindings opt out.
-  if (!MapKey::HasBinding(GameFunction::ToggleShortcutHints)) {
-    return;
-  }
+  // Install independently of the current binding: an initially unbound action
+  // can be assigned in Mod Settings later in this session.
 
   auto shortcuts_manager_helper =
       il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager");
@@ -1820,13 +1813,27 @@ void InstallShortcutHintHooks()
   if (get_show_keybindings && set_show_keybindings && can_use_shortcuts && initialize_actions_hook_ready &&
       clear_text_override && override_localized_text && shortcut_hint_fields_ready && shortcut_hint_update_text &&
       shortcut_hint_update_visibility && get_input_action && get_input_action_name) {
+#if __APPLE__
+    if (!native_hooks::MacHookFits(reinterpret_cast<const void*>(shortcut_hint_update_text))
+        || !native_hooks::MacHookFits(reinterpret_cast<const void*>(shortcut_hint_update_visibility))) {
+      spdlog::warn("Shortcut hint controls unavailable: native hook extent could not be verified");
+      return;
+    }
+#endif
     MapKey::CacheShortcutHints();
     original_shortcut_hint_update_text =
         SPUD_STATIC_DETOUR(shortcut_hint_update_text, ShortcutKeybindHint_UpdateText_Hook);
-    SPUD_STATIC_DETOUR(shortcut_hint_update_visibility, ShortcutKeybindHint_UpdateVisibility_Hook);
-    shortcut_hints_ready = true;
+    const bool visibility_installed =
+        SPUD_STATIC_DETOUR(shortcut_hint_update_visibility, ShortcutKeybindHint_UpdateVisibility_Hook);
+    shortcut_hints_ready = original_shortcut_hint_update_text && visibility_installed;
   }
 }
+
+namespace mod_settings
+{
+bool ShortcutHintControlAvailable()
+{ return shortcut_hints_ready; }
+} // namespace mod_settings
 
 void InstallHotkeyHooks()
 {
@@ -1864,8 +1871,7 @@ void InstallHotkeyHooks()
     if (ptr_can_user_shortcuts == nullptr) {
       ErrorMsg::MissingMethod("ShortcutsManager", "InitializeActions");
     } else {
-      SPUD_STATIC_DETOUR(ptr_can_user_shortcuts, InitializeActions_Hook);
-      initialize_actions_hook_ready = true;
+      initialize_actions_hook_ready = SPUD_STATIC_DETOUR(ptr_can_user_shortcuts, InitializeActions_Hook);
     }
   }
 
