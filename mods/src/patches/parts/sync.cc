@@ -40,6 +40,8 @@
 #include <algorithm>
 #include <atomic>
 #include <charconv>
+#include <locale>
+#include <sstream>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -2480,10 +2482,15 @@ namespace deployed_fleets
       return static_cast<int64_t>(value);
     }
 
+    // Floating-point std::from_chars needs macOS 26's libc++; a classic-locale stream reads the same text everywhere.
     char   buffer[32];
     double widened = value;
     if (const auto [end, ec] = std::to_chars(std::begin(buffer), std::end(buffer), value); ec == std::errc{}) {
-      std::from_chars(std::begin(buffer), end, widened);
+      std::istringstream in(std::string(std::begin(buffer), end));
+      in.imbue(std::locale::classic());
+      if (double parsed; in >> parsed) {
+        widened = parsed;
+      }
     }
     return widened;
   }
