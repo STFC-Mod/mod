@@ -61,6 +61,7 @@ void InstallActionQueueRecovery();
 void InstallThinQueueProtection();
 void InstallQueueAddressGuard();
 void InstallHavenHistoryHooks();
+void InstallAllianceGamesStoreHooks();
 
 __int64 il2cpp_init_hook(auto original, const char* domain_name)
 {
@@ -186,6 +187,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
       {"QueueAddressGuard", {InstallQueueAddressGuard, &cfg.installQueueAddressGuardHooks}},
       {"ThinQueueProtection", {InstallThinQueueProtection, &cfg.installThinQueueProtectionHooks}},
       {"HavenHistory", {InstallHavenHistoryHooks, &cfg.installHavenHistoryHooks}},
+      {"AllianceGamesStore", {InstallAllianceGamesStoreHooks, &cfg.installAllianceGamesStoreHooks}},
   };
   printf("il2cpp_init_hook(%s)\n", domain_name);
 

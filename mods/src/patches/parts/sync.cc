@@ -2483,7 +2483,11 @@ namespace deployed_fleets
     char   buffer[32];
     double widened = value;
     if (const auto [end, ec] = std::to_chars(std::begin(buffer), std::end(buffer), value); ec == std::errc{}) {
-      std::from_chars(std::begin(buffer), end, widened);
+      // Floating-point from_chars requires macOS 26; use the existing JSON parser on supported clients.
+      auto parsed = nlohmann::json::parse(std::begin(buffer), end, nullptr, false);
+      if (parsed.is_number()) {
+        return parsed;
+      }
     }
     return widened;
   }

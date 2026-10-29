@@ -301,6 +301,8 @@ giftsbulkclaimhooks = true
 
 # Enable Haven help-history ordering hooks.
 havenhistoryhooks = true
+# Restore native Research actions, currencies and visible rows in Alliance Games Store.
+alliancegamesstorehooks = true
 
 # Enable Haven zoom hooks.
 havenzoomhooks = true
