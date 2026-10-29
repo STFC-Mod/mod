@@ -97,6 +97,7 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
 
   spdlog::set_level(log_level);
   spdlog::flush_on(log_level);
+  spud::set_detour_diagnostic_handler([](const char* message) { spdlog::error("[Spud] {}", message); });
   if (!rotation_error.empty()) {
     spdlog::warn("Failed to rotate log history; preserving existing log: {}", rotation_error);
   }

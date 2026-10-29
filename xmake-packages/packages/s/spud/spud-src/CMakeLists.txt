@@ -217,6 +217,8 @@ target_sources(
         "src/detour/detour.cc"
         "src/detour/detour_impl.h"
         "src/detour/prologue.cc"
+        "src/detour/target_registry.cc"
+        "src/detour/target_registry.h"
         "src/detour/fwd.h"
         "src/detour/remapper.cc"
         "src/detour/remapper.h"
