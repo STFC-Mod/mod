@@ -1525,6 +1525,8 @@ static void planetary_base_data(std::unique_ptr<std::string>&& bytes)
   using trackers::pieces_states;
   using trackers::pieces_states_mtx;
 
+  static std::atomic_bool is_first_sync{true};
+
   if (auto response = Digit::PrimeServer::Models::PlanetaryBase(); response.ParseFromString(*bytes)) {
     http::logging::trace("PROCESS", "planetary base data", STR_FORMAT("Processing {} haven building pieces", response.pieces_size()));
     auto pieces_array = json::array();
@@ -1540,18 +1542,19 @@ static void planetary_base_data(std::unique_ptr<std::string>&& bytes)
     }
 
     if (!pieces_array.empty()) {
-      workers::queue_data(SyncConfig::Type::Haven, pieces_array);
+      const bool first_sync = is_first_sync.exchange(false, std::memory_order_acq_rel);
+      workers::queue_data(SyncConfig::Type::Haven, pieces_array, first_sync);
     }
   }
 }
 
 static void planetary_map_building_data(const google::protobuf::Map<int64_t, Digit::PrimeServer::Models::PlanetaryMapData_BuildingData>& buildings)
 {
-  // TODO: use PlanetaryMapBuildingDiff for updates during game session
-
   using trackers::structure_states;
   using trackers::structure_states_mtx;
   using trackers::types::PlanetaryBaseState;
+
+  static std::atomic_bool is_first_sync{true};
 
   auto structure_array = nlohmann::json::array();
   {
@@ -1568,7 +1571,8 @@ static void planetary_map_building_data(const google::protobuf::Map<int64_t, Dig
   }
 
   if (!structure_array.empty()) {
-    workers::queue_data(SyncConfig::Type::Haven, structure_array, true);
+    const bool first_sync = is_first_sync.exchange(false, std::memory_order_acq_rel);
+    workers::queue_data(SyncConfig::Type::Haven, structure_array, first_sync);
   }
 }
 
@@ -1586,7 +1590,7 @@ static void planetary_map_prosperity(std::unique_ptr<std::string>&& bytes)
     http::logging::trace("PROCESS", "planetary map prosperity", STR_FORMAT("Processing prosperity={}", response.prosperity()));
     const auto prosperity_array = nlohmann::json::array(
         {{{"type", SyncConfig::Type::Haven + "_prosperity"}, {"prosperity", response.prosperity()}}});
-    workers::queue_data(SyncConfig::Type::Haven, prosperity_array, true);
+    workers::queue_data(SyncConfig::Type::Haven, prosperity_array);
   }
 }
 
@@ -2957,28 +2961,19 @@ static void HandleEntityGroup(EntityGroup* entity_group)
     // haven
     case EntityGroup::Type::PlanetaryBaseData:
       if (sync_options.haven) {
-        static std::once_flag haven_init_base_flag;
-        std::call_once(haven_init_base_flag, [&] {
-          submit_async(processors::planetary_base_data);
-        });
+        submit_async(processors::planetary_base_data);
       }
       break;
 
     case EntityGroup::Type::PlanetaryMapData:
       if (sync_options.haven) {
-        static std::once_flag haven_init_map_flag;
-        std::call_once(haven_init_map_flag, [&] {
-          submit_async(processors::planetary_map_data);
-        });
+        submit_async(processors::planetary_map_data);
       }
       break;
 
     case EntityGroup::Type::PlanetaryMapProsperity:
       if (sync_options.haven) {
-        static std::once_flag haven_init_prosperity_flag;
-        std::call_once(haven_init_prosperity_flag, [&] {
-          submit_async(processors::planetary_map_prosperity);
-        });
+        submit_async(processors::planetary_map_prosperity);
       }
       break;
 
