@@ -2,8 +2,7 @@
 #include <config.h>
 
 // Port of the active v2.1.0-guffa.10 guard, not the dormant completion repair.
-// Windows x64 callback ABI is validated against running metadata; current native fit is recorded separately.
-#if defined(_WIN32) && defined(_M_X64)
+// Shared 64-bit managed layout; incompatible runtime contracts leave the feature unavailable.
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -317,6 +316,3 @@ void InstallThinQueueProtection()
   ready.store(a && b && c);
   spdlog::info("[ThinQueueProtection] ready={}", ready.load());
 }
-#else
-void InstallThinQueueProtection() {}
-#endif
