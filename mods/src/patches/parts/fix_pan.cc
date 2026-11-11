@@ -50,11 +50,17 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   }
   static auto GetMouseButton = il2cpp_resolve_icall_typed<bool(int)>("UnityEngine.Input::GetMouseButton(System.Int32)");
   static auto GetTouchCount  = il2cpp_resolve_icall_typed<int()>("UnityEngine.Input::get_touchCount()");
+  // The native recognizer owns held-drag movement, including when the legacy
+  // Input API does not report the pointer. Never replay its delta as momentum.
+  const bool dragging = GetMouseButton(0) || GetTouchCount() > 0 || _this->_panningStarted;
+  bool by_keys = false;
 
   if (!config.disable_move_keys && config.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
     if (config.use_scopely_hotkeys || !config.installHotkeyHooks) {
       original(_this);
-    } else if (!_this->BlockPan() && !_this->_trackingPOI && !GetMouseButton(0) && GetTouchCount() == 0
+      _this->_farMagRadiusRatioSystemExtended = _this->_farMagRadiusRatioSystemNormal;
+      return true;
+    } else if (!_this->BlockPan() && !_this->_trackingPOI && !dragging
                && KeyboardPanAllowed()) {
       // Opposite bindings cancel; normalize diagonals like the native 2D composite.
       float x = float(MapKey::IsPressed(GameFunction::MoveRight)) - float(MapKey::IsPressed(GameFunction::MoveLeft));
@@ -63,17 +69,16 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
       if (length > 0.0f) {
         d->x = -x / length * _this->_keyboardDeltaScaler;
         d->y = -y / length * _this->_keyboardDeltaScaler;
+        _this->MoveCamera(vec2{d->x * _this->_deltaScaler, d->y * _this->_deltaScaler}, true);
+        by_keys = true;
       }
-      _this->MoveCamera(vec2{d->x * _this->_deltaScaler, d->y * _this->_deltaScaler}, true);
     }
   }
 
   if (_this->BlockPan() || (_this->_trackingPOI && !disable_target_camera_lock)) {
     d->x = 0.0f;
     d->y = 0.0f;
-  } else if (GetMouseButton(0) || GetTouchCount() > 0) {
-    //
-  } else {
+  } else if (!dragging && !by_keys) {
     d->x = d->x * Config::Get().system_pan_momentum_falloff;
     d->y = d->y * Config::Get().system_pan_momentum_falloff;
     _this->MoveCamera(vec2{d->x, d->y}, true);

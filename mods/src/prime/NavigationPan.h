@@ -12,7 +12,10 @@ struct vec3 {
 
 struct NavigationPan {
 public:
-  __declspec(property(get = __get__lastDelta)) Vector2* _lastDelta;
+  // An inline value has no Il2CppObject header. Vector2's reflected accessors
+  // expect a boxed value and would read/write the adjacent pixel drag delta.
+  __declspec(property(get = __get__lastDelta)) vec2* _lastDelta;
+  __declspec(property(get = __get__panningStarted)) bool _panningStarted;
   __declspec(property(get = __get__deltaScaler)) float _deltaScaler;
   __declspec(property(get = __get__keyboardDeltaScaler)) float _keyboardDeltaScaler;
   __declspec(property(get = __get__trackingPOI, put = __set__trackingPOI)) uintptr_t* _trackingPOI;
@@ -54,10 +57,16 @@ public:
     *(uintptr_t**)((ptrdiff_t)this + field.offset()) = value;
   }
 
-  Vector2* __get__lastDelta()
+  vec2* __get__lastDelta()
   {
     static auto field = get_class_helper().GetField("_lastDelta");
-    return (Vector2*)((ptrdiff_t)this + field.offset());
+    return (vec2*)((ptrdiff_t)this + field.offset());
+  }
+
+  bool __get__panningStarted()
+  {
+    static auto field = get_class_helper().GetField("_panningStarted");
+    return *(bool*)((ptrdiff_t)this + field.offset());
   }
 
   float __get__keyboardDeltaScaler()
