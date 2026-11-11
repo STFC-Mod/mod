@@ -53,13 +53,13 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   // The native recognizer owns held-drag movement, including when the legacy
   // Input API does not report the pointer. Never replay its delta as momentum.
   const bool dragging = GetMouseButton(0) || GetTouchCount() > 0 || _this->_panningStarted;
-  bool by_keys = false;
+  bool by_keys        = false;
+  bool native_handled = false;
 
   if (!config.disable_move_keys && config.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
     if (config.use_scopely_hotkeys || !config.installHotkeyHooks) {
       original(_this);
-      _this->_farMagRadiusRatioSystemExtended = _this->_farMagRadiusRatioSystemNormal;
-      return true;
+      native_handled = true;
     } else if (!_this->BlockPan() && !_this->_trackingPOI && !dragging
                && KeyboardPanAllowed()) {
       // Opposite bindings cancel; normalize diagonals like the native 2D composite.
@@ -81,7 +81,9 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   } else if (!dragging && !by_keys) {
     d->x = d->x * Config::Get().system_pan_momentum_falloff;
     d->y = d->y * Config::Get().system_pan_momentum_falloff;
-    _this->MoveCamera(vec2{d->x, d->y}, true);
+    if (!native_handled) {
+      _this->MoveCamera(vec2{d->x, d->y}, true);
+    }
   }
   _this->_farMagRadiusRatioSystemExtended = _this->_farMagRadiusRatioSystemNormal;
   return true;
