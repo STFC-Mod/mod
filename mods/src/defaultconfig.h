@@ -119,6 +119,7 @@ namespace Patches
   constexpr bool pinnedshipclicktoggle      = true; // SHIFT+click a fleet dock ship tile to pin/unpin it
   constexpr bool havenhistoryhooks          = true; // reverse Haven help history into newest-first order
   constexpr bool revealconfirmhooks         = true; // auto-confirm the Excelsior Decloaking Deflector popup when enabled in [ui]
+  constexpr bool alliancegamesstorehooks   = true; // repair Alliance Games store research/currency/refresh
 } // namespace Patches
 
 namespace Shortcuts

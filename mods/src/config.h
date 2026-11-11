@@ -355,4 +355,7 @@ public:
 
   // Haven help-history list ordering
   bool installHavenHistoryHooks;
+
+  // Native Alliance Games store research, currency and purchase refresh
+  bool installAllianceGamesStoreHooks;
 };
