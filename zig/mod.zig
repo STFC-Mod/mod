@@ -98,11 +98,10 @@ pub fn add(ctx: *const Ctx, libs: []const Lib) void {
     if (ctx.isWindows()) {
         // version.dll proxies the system DLL: the .def forwards its exports, the .rc carries the build identity.
         library.win32_module_definition = b.path("src/platform/windows/version.def");
-        const rc_flags = addBuildIdentity(ctx, entry);
         entry.addIncludePath(b.path("src/platform/windows"));
         entry.addWin32ResourceFile(.{
             .file = b.path("src/platform/windows/version.rc"),
-            .flags = rc_flags,
+            .flags = identityDefines(ctx),
             .include_paths = &.{ b.path("src/mod"), b.path("src/platform/windows") },
         });
         inline for (.{ "shell32", "user32", "ole32", "oleaut32" }) |lib| entry.linkSystemLibrary(lib, .{});
@@ -136,37 +135,28 @@ fn addModSources(ctx: *const Ctx, module: *std.Build.Module, flags: []const []co
     }
 }
 
-/// Define the build identity as C++ string macros and as version resource defines. Returns the resource flags.
-fn addBuildIdentity(ctx: *const Ctx, module: *std.Build.Module) []const []const u8 {
+/// Resource compiler defines for the build identity values. version.rc composes them into the stfc-identity-v1
+/// marker; the RC's /D cuts a value at '=', so the whole marker cannot be passed as one define.
+fn identityDefines(ctx: *const Ctx) []const []const u8 {
     const b = ctx.b;
-    var defines: [5][2][]const u8 = undefined;
-    // Each value comes from -D<option>, then the environment, then the default.
+    const mode = if (ctx.options.moddbg) "releasedbg" else if (ctx.isDebug()) "debug" else "release";
+    var flags: std.ArrayList([]const u8) = .empty;
+    flags.appendSlice(b.allocator, &.{ "/D", b.fmt("STFC_BUILD_MODE=\"{s}\"", .{mode}) }) catch @panic("OOM");
     inline for (.{
         .{ "stfc_source_state_id", "STFC_SOURCE_STATE_ID", "unknown" },
         .{ "stfc_base_commit", "STFC_BASE_COMMIT", "unknown" },
         .{ "stfc_build_invocation_id", "STFC_BUILD_INVOCATION_ID", "zig-direct" },
         .{ "stfc_build_channel", "STFC_BUILD_CHANNEL", "local" },
-    }, 0..) |field, i| {
-        const option, const env, const default = field;
-        const value = b.option([]const u8, option, "Build identity value") orelse
-            compat.getEnv(b, env) orelse default;
-        // Values land inside C and RC string literals; keep them to characters that need no escaping.
+    }) |field| {
+        const option, const name, const default = field;
+        const value = b.option([]const u8, option, "Build identity value") orelse default;
+        // Values land inside an RC string literal; keep them to characters that need no escaping.
         if (value.len == 0 or value.len > 160) std.debug.panic("{s} must contain 1–160 characters", .{option});
         for (value) |char| if (!std.ascii.isAlphanumeric(char) and std.mem.indexOfScalar(u8, "._:+/-", char) == null)
             std.debug.panic("{s} contains unsupported identity characters", .{option});
-        defines[i] = .{ env, value };
+        flags.appendSlice(b.allocator, &.{ "/D", b.fmt("{s}=\"{s}\"", .{ name, value }) }) catch @panic("OOM");
     }
-    const mode = if (ctx.options.moddbg) "releasedbg" else if (ctx.isDebug()) "debug" else "release";
-    defines[4] = .{ "STFC_BUILD_MODE", mode };
-
-    var rc_flags: std.ArrayList([]const u8) = .empty;
-    for (defines) |define| {
-        const name, const value = define;
-        const quoted = b.fmt("\"{s}\"", .{value});
-        module.addCMacro(name, quoted);
-        rc_flags.appendSlice(b.allocator, &.{ "/D", b.fmt("{s}={s}", .{ name, quoted }) }) catch @panic("OOM");
-    }
-    return rc_flags.items;
+    return flags.items;
 }
 
 /// Generate one header per image, holding the PNG bytes the mod draws at run time.

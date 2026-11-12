@@ -91,7 +91,6 @@ namespace detail
   Il2CppClass* TypeClass();
   // System.Int32 and friends from corlib, by element type; null for anything else.
   Il2CppClass* PrimitiveClass(Il2CppTypeEnum type);
-  void         ReportFault(const char* what);
   void         ReportMissingICall(const char* name);
 
   template <typename T>
@@ -674,26 +673,6 @@ Il2CppObject* NewDelegate(Il2CppClass* delegate_class, Method target, Il2CppMeth
 // Il2CppExceptionWrapper.
 template <typename R = void, typename... A> R InvokeBound(Il2CppDelegate* delegate, A... args)
 { return detail::InvokeNative<R, A...>(delegate->method, delegate->target, args...); }
-
-// --- Faults ---
-
-// Runs `read` and, on Windows, survives an access violation inside it: reading game objects whose layout drifted
-// between client builds should cost a log line, not the game. False, after reporting `what`, when one was caught.
-template <typename Fn> bool Guarded(const char* what, Fn&& read)
-{
-#if _WIN32
-  __try {
-    read();
-  } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
-    detail::ReportFault(what);
-    return false;
-  }
-#else
-  (void)what;
-  read();
-#endif
-  return true;
-}
 
 // --- GC roots ---
 

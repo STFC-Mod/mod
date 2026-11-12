@@ -73,7 +73,7 @@ inline std::string TitleCase(std::string text)
 }
 
 // A readable name from a hull's internal key, for hulls the game cannot localize:
-// "Hull_L30_Destroyer_Klingon_LIVE" -> "Lv.30 Destroyer Klingon".
+// "Hull_L30_Destroyer_Klingon_LIVE" -> "Lv.30 Destroyer Klingon". Casing is left to the caller.
 inline std::string HullKeyName(std::string_view key)
 {
   if (key.size() > 5 && key.ends_with("_LIVE"))
@@ -85,6 +85,6 @@ inline std::string HullKeyName(std::string_view key)
   std::ranges::replace(name, '_', ' ');
   if (name.size() >= 2 && name[0] == 'L' && name[1] >= '0' && name[1] <= '9')
     name = "Lv." + name.substr(1);
-  return TitleCase(std::move(name));
+  return name;
 }
 } // namespace toast_text

@@ -118,7 +118,7 @@ void ToastText()
   Check(StripRichText("a < b") == "a < b", "an unclosed '<' is text");
   Check(TitleCase("USS ENTERPRISE-D") == "Uss Enterprise-D", "title case");
   Check(HullKeyName("Hull_L30_Destroyer_Klingon_LIVE") == "Lv.30 Destroyer Klingon", "hull key with level");
-  Check(HullKeyName("Hull_BORG_CUBE") == "Borg Cube", "hull key without level");
+  Check(HullKeyName("Hull_BORG_CUBE") == "BORG CUBE", "hull key without level");
 }
 
 void ShipNames()
@@ -331,9 +331,6 @@ void NotificationAudio()
                                       effective, false);
     Check(config->audio.alert_defeat == expected, "legacy cue aliases remain valid, unknown names fall back to none");
   }
-  Check(NotificationSoundBytes(NotificationSound::kCount).empty()
-            && NotificationSoundBytes(static_cast<NotificationSound>(255)).empty(),
-        "invalid cues have no WAV data");
 }
 
 void DailyFactionSettings()

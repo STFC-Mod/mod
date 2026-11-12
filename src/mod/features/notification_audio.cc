@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <mutex>
 #include <numbers>
 #include <span>
 #include <string_view>
@@ -111,13 +110,13 @@ std::vector<uint8_t> BuildWav(std::span<const ToneSegment> pattern)
 
 std::span<const uint8_t> NotificationSoundBytes(NotificationSound sound)
 {
-  const size_t index = std::to_underlying(sound);
-  if (index == 0 || index >= std::size(kPatterns))
+  const auto index = std::to_underlying(sound);
+  if (index == 0)
     return {};
-  static std::array<std::once_flag, std::size(kPatterns)>       ready;
+  // Only the cues in use are generated. The toast hooks are the only callers, all on the game thread.
   static std::array<std::vector<uint8_t>, std::size(kPatterns)> buffers;
-  // Only the cues in use are generated.
-  std::call_once(ready[index], [index] { buffers[index] = BuildWav(kPatterns[index]); });
+  if (buffers[index].empty())
+    buffers[index] = BuildWav(kPatterns[index]);
   return buffers[index];
 }
 

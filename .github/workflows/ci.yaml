@@ -20,8 +20,6 @@ env:
 jobs:
   build-win:
     runs-on: windows-2025-vs2026
-    outputs:
-      run_attempt: ${{ steps.build_identity.outputs.run_attempt }}
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
@@ -39,10 +37,8 @@ jobs:
         run: |
           if ($env:STFC_WINDOWS_TOOLCHAIN_URL) { zig build fetch-toolchains }
       - name: Build and test
-        id: build_identity
         shell: pwsh
         run: |
-          "run_attempt=${{ github.run_attempt }}" >> $env:GITHUB_OUTPUT
           zig build install test-toolchains test-codegen test-deps test-il2cpp test-mod test-sync test-spud `
             -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dtest-optimize=Debug `
             "-Dstfc_source_state_id=git:${{ github.sha }}" `
@@ -51,7 +47,9 @@ jobs:
             -Dstfc_build_channel=ci
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify proxy binary contract
-        run: python scripts/verify-windows-binary.py
+        run: >-
+          python scripts/verify-windows-binary.py --identity
+          "stfc-identity-v1;distribution=netniv.stfc-community-mod;source=git:${{ github.sha }};base=${{ github.sha }};build=github:${{ github.run_id }}:${{ github.run_attempt }}:windows;mode=release;channel=ci"
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: stfc-community-mod
@@ -153,36 +151,6 @@ jobs:
         with:
           name: stfc-community-mod
           path: .artifacts/windows
-
-      - name: Verify DLL provenance
-        shell: pwsh
-        env:
-          STFC_SOURCE_COMMIT: ${{ github.sha }}
-          STFC_RUN_ID: ${{ github.run_id }}
-          STFC_BUILD_RUN_ATTEMPT: ${{ needs.build-win.outputs.run_attempt }}
-        run: |
-          $dll = (Resolve-Path -LiteralPath '.artifacts/windows/version.dll').Path
-          $commit = $env:STFC_SOURCE_COMMIT
-          $runId = $env:STFC_RUN_ID
-          $buildAttempt = $env:STFC_BUILD_RUN_ATTEMPT
-
-          if ($commit -notmatch '^[0-9a-f]{40}$') {
-            throw "Unable to resolve the workflow commit for DLL provenance."
-          }
-          if ($runId -notmatch '^[1-9][0-9]*$') {
-            throw "Unable to resolve the workflow run ID for DLL provenance."
-          }
-          if ($buildAttempt -notmatch '^[1-9][0-9]*$') {
-            throw "The producing build did not provide a valid run attempt."
-          }
-
-          $expected = "stfc-identity-v1;distribution=netniv.stfc-community-mod;source=git:$commit;" +
-            "base=$commit;build=github:${runId}:${buildAttempt}:windows;mode=release;channel=ci"
-          $comments = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($dll).Comments
-          if (-not [string]::Equals($comments, $expected, [System.StringComparison]::Ordinal)) {
-            throw "DLL provenance mismatch. Expected '$expected'; found '$comments'."
-          }
-          Write-Host "Verified DLL provenance: $comments"
 
       - name: Attest Windows DLL
         uses: actions/attest@v4.2.1

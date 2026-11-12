@@ -2,6 +2,14 @@
 // zig/mod.zig passes to the resource compiler.
 #include <version.h>
 
+// The stfc-identity-v1 marker. CI and downstream tools parse its fields and their order.
+#define STFC_IDENTITY_COMMENT_STR   "stfc-identity-v1;distribution=netniv.stfc-community-mod" \
+                                    ";source=" STFC_SOURCE_STATE_ID \
+                                    ";base=" STFC_BASE_COMMIT \
+                                    ";build=" STFC_BUILD_INVOCATION_ID \
+                                    ";mode=" STFC_BUILD_MODE \
+                                    ";channel=" STFC_BUILD_CHANNEL
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION             VER_FILE_VERSION
 PRODUCTVERSION          VER_PRODUCT_VERSION

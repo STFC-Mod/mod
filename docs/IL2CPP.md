@@ -183,7 +183,6 @@ Change hidden `MethodInfo*` handling only when runtime evidence points to it.
 | `Is<T>`, `As<T>` | Test or cast a receiver against a bound class |
 | `InvokeBound` | Run a single-cast delegate's method directly; managed exceptions propagate so the caller can fall back |
 | `NewDelegate` | Bind a delegate to a static method, with an optional native redirect |
-| `Guarded` | Contain Windows access violations when reading layouts that may have drifted |
 
 The GC scans native stacks, so managed pointers in local variables remain visible to it.
 Pointers stored in C++ statics or heap objects need `GcHandle::Strong` roots.

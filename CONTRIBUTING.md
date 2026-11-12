@@ -262,18 +262,9 @@ Review source and configuration changes, then build supported targets.
 macOS uses Apple's system libcurl; Windows builds pinned curl with Schannel. Neither builds OpenSSL.
 Librsync uses checked-in configuration files. Normal builds need no Perl or CMake.
 
-Windows build-identity options have matching environment fallbacks:
-
-| Zig option | Environment variable |
-| --- | --- |
-| `stfc_source_state_id` | `STFC_SOURCE_STATE_ID` |
-| `stfc_base_commit` | `STFC_BASE_COMMIT` |
-| `stfc_build_invocation_id` | `STFC_BUILD_INVOCATION_ID` |
-| `stfc_build_channel` | `STFC_BUILD_CHANNEL` |
-
-Prefix options with `-D`, as in `-Dstfc_build_channel=local`.
-Zig 0.17 cannot track environment variables in its configure cache, so reading a fallback configures the build again on every run.
+Windows builds take their identity from `-Dstfc_source_state_id`, `-Dstfc_base_commit`, `-Dstfc_build_invocation_id`
+and `-Dstfc_build_channel`, as in `-Dstfc_build_channel=local`.
 Values accept 1 to 160 ASCII letters, digits, or `._:+/-`.
-The DLL version resource contains the same values.
+They form the `stfc-identity-v1` marker in the DLL version resource, which CI checks with `scripts/verify-windows-binary.py --identity`.
 Keep CI artifact names compatible with the upstream Windows attestation and macOS release jobs.
 See [Windows DLL verification](docs/WINDOWS_DLL_PROVENANCE.md) and [launcher version generation](docs/VERSION_SUBSTITUTION.md).

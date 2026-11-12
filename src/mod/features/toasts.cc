@@ -123,23 +123,10 @@ constexpr BattleType kPvpBattles[] = {BattleType::Fleet,       BattleType::Base,
                                       BattleType::PvpChainShot};
 
 // --- Notification text ---
-//
-// Toast data comes from a dozen game types whose layouts drift between builds. On Windows, an access violation
-// while reading one is contained and logged instead of taking the game down, so every read below is Guarded.
-
-using il2cpp::Guarded;
-
-// Localizes `identifier` with one parameter.
-std::string Localize(const char* identifier, const char* category, Il2CppObject* parameter)
-{
-  std::string result;
-  Guarded(identifier, [&] { result = LocaleUtilities::Localize(identifier, category, parameter); });
-  return result;
-}
 
 // NPC and marauder profiles have no name of their own; the game names them by their localization id.
 std::string EnemyName(int64_t loca_id)
-{ return loca_id ? Localize("marauder_name_only_{0}", "navigation", il2cpp::Box(loca_id)) : std::string{}; }
+{ return loca_id ? LocaleUtilities::Localize("marauder_name_only_{0}", "navigation", il2cpp::Box(loca_id)) : ""; }
 
 // A hull's display name: localized by numeric id, then by string id, then derived from its internal key.
 std::string HullName(BattleResultHeader* header, int64_t hull_id)
@@ -153,7 +140,7 @@ std::string HullName(BattleResultHeader* header, int64_t hull_id)
 
   // An unknown id localizes to the identifier itself, which counts as no name.
   const auto localized = [](Il2CppObject* id, const std::string& id_text) {
-    auto name = Localize("ship_name_{0}", "ships", id);
+    auto name = LocaleUtilities::Localize("ship_name_{0}", "ships", id);
     return name == "ship_name_" + id_text ? std::string{} : name;
   };
   if (auto* ids = hull->idRefs()) {
@@ -172,28 +159,20 @@ std::string HullName(BattleResultHeader* header, int64_t hull_id)
 // "Player (Ship) vs Enemy (Ship)". Outside PvP a named enemy is enough; its hull class is noise.
 std::string BattleBody(BattleResultHeader* header)
 {
-  std::string player, enemy, player_ship, enemy_ship;
-  bool        pvp = false;
-
-  Guarded("the player profile", [&] {
-    if (auto* profile = header->PlayerUserProfile())
-      player = il2cpp::ToUtf8(profile->name());
-  });
-  Guarded("the enemy profile", [&] {
-    auto* profile = header->EnemyUserProfile();
-    if (!profile)
-      return;
+  std::string player, enemy;
+  if (auto* profile = header->PlayerUserProfile())
+    player = il2cpp::ToUtf8(profile->name());
+  if (auto* profile = header->EnemyUserProfile()) {
     enemy = il2cpp::ToUtf8(profile->name());
     if (enemy.empty()) {
       auto name = EnemyName(profile->locaId());
       if (name != "Unknown")
         enemy = std::move(name);
     }
-  });
-  Guarded("the battle type", [&] { pvp = std::ranges::contains(kPvpBattles, header->Type()); });
-  Guarded("the player hull",
-          [&] { player_ship = toast_text::TitleCase(HullName(header, header->PlayerShipHullId())); });
-  Guarded("the enemy hull", [&] { enemy_ship = toast_text::TitleCase(HullName(header, header->EnemyShipHullId())); });
+  }
+  const bool pvp         = std::ranges::contains(kPvpBattles, header->Type());
+  const auto player_ship = toast_text::TitleCase(HullName(header, header->PlayerShipHullId()));
+  const auto enemy_ship  = toast_text::TitleCase(HullName(header, header->EnemyShipHullId()));
 
   const auto side = [](const std::string& name, const std::string& ship) {
     return name.empty() ? ship : ship.empty() ? name : fmt::format("{} ({})", name, ship);
@@ -208,28 +187,24 @@ std::string BattleBody(BattleResultHeader* header)
 // "[TAG] Owner started an Armada!\nLv.042 Target"
 std::string ArmadaCreatedBody(ArmadaCreatedData* data)
 {
-  std::string body;
-  Guarded("armada data", [&] {
-    auto* attack   = data ? data->ArmadaAttack() : nullptr;
-    auto* alliance = data ? data->Alliance() : nullptr;
-    auto* owner    = attack ? attack->Owner() : nullptr;
-    auto* target   = attack ? attack->TargetUserProfile() : nullptr;
+  auto* attack   = data ? data->ArmadaAttack() : nullptr;
+  auto* alliance = data ? data->Alliance() : nullptr;
+  auto* owner    = attack ? attack->Owner() : nullptr;
+  auto* target   = attack ? attack->TargetUserProfile() : nullptr;
 
-    const auto tag         = alliance ? il2cpp::ToUtf8(alliance->tag()) : std::string{};
-    auto       owner_name  = owner ? il2cpp::ToUtf8(owner->name()) : std::string{};
-    auto       target_name = target ? il2cpp::ToUtf8(target->name()) : std::string{};
-    if (target_name.empty() && target)
-      target_name = EnemyName(target->locaId());
-    if (owner_name.empty())
-      owner_name = "An alliance member";
-    if (target_name.empty() || target_name == "Unknown")
-      target_name = "Armada target";
+  const auto tag         = alliance ? il2cpp::ToUtf8(alliance->tag()) : std::string{};
+  auto       owner_name  = owner ? il2cpp::ToUtf8(owner->name()) : std::string{};
+  auto       target_name = target ? il2cpp::ToUtf8(target->name()) : std::string{};
+  if (target_name.empty() && target)
+    target_name = EnemyName(target->locaId());
+  if (owner_name.empty())
+    owner_name = "An alliance member";
+  if (target_name.empty() || target_name == "Unknown")
+    target_name = "Armada target";
 
-    const auto owner_label = tag.empty() ? owner_name : fmt::format("[{}] {}", tag, owner_name);
-    const auto level       = attack ? attack->TargetLevel() : 0;
-    body                   = fmt::format("{} started an Armada!\nLv.{:03} {}", owner_label, level, target_name);
-  });
-  return body;
+  const auto owner_label = tag.empty() ? owner_name : fmt::format("[{}] {}", tag, owner_name);
+  const auto level       = attack ? attack->TargetLevel() : 0;
+  return fmt::format("{} started an Armada!\nLv.{:03} {}", owner_label, level, target_name);
 }
 
 // The string form of each element: strings as they are, everything else through its ToString override.
@@ -237,10 +212,7 @@ std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameter
 {
   std::vector<std::string> values;
   for (auto* element : il2cpp::Items(parameters)) {
-    Il2CppString* text = nullptr;
-    if (element)
-      Guarded("a text parameter", [&] { text = il2cpp::ToString(static_cast<il2cpp::Object*>(element)); });
-    values.push_back(il2cpp::ToUtf8(text));
+    values.push_back(element ? il2cpp::ToUtf8(il2cpp::ToString(static_cast<il2cpp::Object*>(element))) : "");
   }
   return values;
 }
@@ -351,11 +323,8 @@ void Notify(Toast* toast)
   const auto& types = Config::Get().ui.notify_banner_types;
   if (!std::ranges::contains(types, std::to_underlying(state)))
     return;
+  // notify_banner_types only holds states from the config catalog, and kTitles names every one of them.
   const auto title = std::ranges::find(kTitles, state, &std::pair<ToastState, const char*>::first);
-  if (title == std::end(kTitles)) {
-    spdlog::debug("[Toasts] No title mapping for toast state {}, skipping", std::to_underlying(state));
-    return;
-  }
   ShowWindowsNotification(title->second, NotificationBody(toast));
 #else
   (void)toast;
