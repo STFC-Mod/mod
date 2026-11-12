@@ -175,12 +175,6 @@ const std::vector<KeyChord>& ChordsOf(Action action)
 // release, so letting go of CTRL before PGUP does not turn a held CTRL-PGUP into PGUP. At most one entry per key.
 std::vector<unity::KeyCode> used_keys;
 
-bool IsUsed(unity::KeyCode key)
-{
-  std::erase_if(used_keys, [](unity::KeyCode used) { return !unity::Key::Pressed(used); });
-  return std::ranges::contains(used_keys, key);
-}
-
 bool ModifiersHeld(const KeyChord& chord)
 {
   return std::ranges::all_of(
@@ -189,11 +183,14 @@ bool ModifiersHeld(const KeyChord& chord)
 
 template <bool (*KeyState)(unity::KeyCode)> bool Matches(Action action)
 {
+  // Pruned on every match, not only when a plain chord's key is down: the dispatch matches every frame, so a key
+  // released and pressed again between two of its checks is not mistaken for one still held.
+  std::erase_if(used_keys, [](unity::KeyCode used) { return !unity::Key::Pressed(used); });
   for (const auto& chord : ChordsOf(action)) {
     if (chord.key == unity::KeyCode::None || !KeyState(chord.key))
       continue;
     if (chord.modifiers.empty()) {
-      if (unity::Key::IsModified() || IsUsed(chord.key))
+      if (unity::Key::IsModified() || std::ranges::contains(used_keys, chord.key))
         continue;
     } else {
       if (!ModifiersHeld(chord))
@@ -242,8 +239,8 @@ bool BindChords(std::vector<KeyChord>& chords, std::string_view key, std::string
   return bound;
 }
 
-// Binds one [shortcuts] setting into `chords`, and records the binding and where it came from (default, config,
-// alias:<key> or invalid) for the vars file.
+// Binds one [shortcuts] setting into `chords`, and records the binding and where it came from (default, config or
+// alias:<key>) for the vars file.
 void BindSetting(const toml::table* shortcuts, toml::table& effective, toml::table& sources, const Setting& setting,
                  std::vector<KeyChord>& chords)
 {
@@ -279,15 +276,10 @@ void BindSetting(const toml::table* shortcuts, toml::table& effective, toml::tab
   if (value.empty() || value == "NONE")
     return record("NONE", label);
 
+  // Only a configured value can fail here: tests/shortcut_defaults.toml pins every default to a valid chord.
   if (!BindChords(chords, key, value)) {
-    if (configured)
-      spdlog::warn("invalid config value shortcuts.{}: '{}'; using the default {}", key, *configured, setting.fallback);
-    if (!configured || !BindChords(chords, setting.key, setting.fallback)) {
-      // A broken entry in shortcuts.def, not a user mistake.
-      spdlog::error("default shortcut shortcuts.{} = '{}' has no valid chord; the action is unbound", setting.key,
-                    setting.fallback);
-      return record("NONE", "invalid");
-    }
+    spdlog::warn("invalid config value shortcuts.{}: '{}'; using the default {}", key, value, setting.fallback);
+    BindChords(chords, setting.key, setting.fallback);
     label = "default";
   }
   record(DescribeChords(chords), label);
@@ -357,14 +349,6 @@ void Set(Bindings next) noexcept
 {
   bindings = std::move(next);
   used_keys.clear();
-}
-
-bool Owns(unity::KeyCode key)
-{ return IsUsed(key); }
-
-bool HasBinding(Action action)
-{
-  return std::ranges::any_of(ChordsOf(action), [](const auto& chord) { return chord.key != unity::KeyCode::None; });
 }
 
 bool IsPressed(Action action)

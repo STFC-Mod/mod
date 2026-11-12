@@ -217,13 +217,6 @@ struct Model : il2cpp::Object {
   { return Field<"_appConfig", AppConfig*>(); }
 };
 
-struct TutorialManager : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager">;
-
-  bool IsSceneInputAllowed()
-  { return Call<"IsSceneInputAllowed", bool>(); }
-};
-
 // Digit.Client.Core.Hub is a static class.
 struct Hub {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Hub">;
@@ -232,8 +225,6 @@ struct Hub {
   { return Class::Get<"SectionManager", SectionManager*>(); }
   static PrimeApp* App()
   { return Class::Get<"App", PrimeApp*>(); }
-  static TutorialManager* Tutorial()
-  { return Class::Get<"TutorialManager", TutorialManager*>(); }
 
   static SectionID CurrentSection()
   {

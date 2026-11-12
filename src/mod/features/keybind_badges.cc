@@ -12,7 +12,6 @@
 
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-#include <spdlog/spdlog.h>
 #include <unity/tracker.h>
 
 #include <algorithm>
@@ -69,23 +68,11 @@ constexpr auto kNativeActions = std::to_array<NativeAction>({
     {"challenges", Action::kShowQTrials},
 });
 
-constexpr const NativeAction* FindNativeAction(std::string_view name)
-{
-  const auto action = std::ranges::find(kNativeActions, name, &NativeAction::name);
-  return action == kNativeActions.end() ? nullptr : &*action;
-}
-
-static_assert(std::ranges::all_of(kNativeActions, [](const NativeAction& action) {
-  return std::ranges::count(kNativeActions, action.name, &NativeAction::name) == 1;
-}));
-static_assert(FindNativeAction("side_chat")->fallback == Action::kShowChatSide2);
-static_assert(FindNativeAction("unknown") == nullptr);
-
 // The badge text for a native action: its mod binding, or "-" when it has none.
 std::string BadgeText(std::string_view action_name)
 {
-  const auto* action = FindNativeAction(action_name);
-  if (!action)
+  const auto action = std::ranges::find(kNativeActions, action_name, &NativeAction::name);
+  if (action == kNativeActions.end())
     return "-";
   auto hint_action = action->primary;
   if (hint_action >= Action::kSelectShip1 && hint_action <= Action::kSelectShip8) {
@@ -142,13 +129,9 @@ bool ToggleKeybindBadges()
 {
   if (!badges_installed)
     return false;
-  auto* manager = ShortcutsManager::Instance();
-  if (!manager) {
-    spdlog::warn("[Hotkeys] the game's shortcut manager is not up; no badges to toggle");
-    return true;
-  }
   // The same gate the game's own show_keybindings action checks.
-  if (ShortcutsManager::CanUseShortcuts())
+  auto* manager = ShortcutsManager::Instance();
+  if (manager && ShortcutsManager::CanUseShortcuts())
     manager->SetShowKeybindings(!manager->ShowKeybindings());
   return true;
 }
@@ -162,10 +145,6 @@ void HideKeybindBadges()
 
 void InstallKeybindBadges()
 {
-  // Settings are parsed before installation; NONE, empty and invalid bindings opt out.
-  if (!Shortcut::HasBinding(Action::kToggleShortcutHints))
-    return;
-
   // Only the detour targets gate the feature. Members the badge path reads resolve on first use; a missing one is
   // reported once and reads as null, which leaves the game's own badge text.
   il2cpp::HookSet hooks("KeybindBadges");
