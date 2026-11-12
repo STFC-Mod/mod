@@ -8,7 +8,6 @@
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
-#include <optional>
 
 struct InterstitialViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController">;
@@ -55,8 +54,65 @@ struct Bundle : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimePlatform.Content", "Bundle">;
 };
 
-struct ShopListScrollerViewController;
-struct InventoryTooltipTriggerWidget;
+// Digit.Client.Serialization.OverridableBool: the serialized flag and the runtime override.
+struct OverridableBool {
+  bool serialized, current, modified;
+};
+
+struct TooltipTrigger : unity::Behaviour {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipTrigger">;
+
+  // Every appearance field, so a trigger added beside this one looks and loads the same.
+  void CopyAppearance(TooltipTrigger* source)
+  {
+    SetField<"_showHeader">(source->Field<"_showHeader", OverridableBool>());
+    SetField<"_header">(source->Field<"_header", LocaleTextContext*>());
+    SetField<"_showDescription">(source->Field<"_showDescription", OverridableBool>());
+    SetField<"_description">(source->Field<"_description", LocaleTextContext*>());
+    SetField<"_overrideLocale">(source->Field<"_overrideLocale", bool>());
+    SetField<"_anchorOverride">(source->Field<"_anchorOverride", int32_t>()); // TooltipAnchor
+    SetField<"_sizeOverride">(source->Field<"_sizeOverride", unity::Vector2>());
+    SetField<"_positionOverrideTarget">(source->Field<"_positionOverrideTarget", unity::Transform*>());
+    SetField<"_positionOverrideOffset">(source->Field<"_positionOverrideOffset", unity::Vector2>());
+    SetField<"_isInteractable">(source->Field<"_isInteractable", bool>());
+    SetField<"<DescriptionOverrideText>k__BackingField">(
+        source->Field<"<DescriptionOverrideText>k__BackingField", Il2CppString*>());
+    SetField<"_loader">(source->Field<"_loader", il2cpp::Object*>());
+  }
+};
+
+// A tooltip trigger with action buttons, such as VIEW RESEARCH.
+struct TooltipActionTrigger : TooltipTrigger {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipActionTrigger">;
+};
+
+// The tooltip on an inventory or shop item. Refresh writes the item into `_tooltipTrigger` and sets up the actions on
+// `_tooltipActionTrigger`, labelled from its action locale assets, when it has one.
+struct InventoryTooltipTriggerWidget : unity::Component {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Inventories", "InventoryTooltipTriggerWidget">;
+
+  TooltipTrigger* tooltipTrigger()
+  { return Field<"_tooltipTrigger", TooltipTrigger*>(); }
+  TooltipActionTrigger* tooltipActionTrigger()
+  { return Field<"_tooltipActionTrigger", TooltipActionTrigger*>(); }
+  il2cpp::Object* searchActionLocaleSetting()
+  { return Field<"_searchActionLocaleSetting", il2cpp::Object*>(); }
+  // Shows the tooltip through `action`, with the action locale assets of `source`.
+  void UseActionTrigger(TooltipActionTrigger* action, InventoryTooltipTriggerWidget* source)
+  {
+    SetField<"_tooltipTrigger">(action);
+    SetField<"_tooltipActionTrigger">(action);
+    SetField<"_actionLocaleSetting">(source->Field<"_actionLocaleSetting", il2cpp::Object*>());
+    SetField<"_searchActionLocaleSetting">(source->searchActionLocaleSetting());
+    SetField<"_settings">(source->Field<"_settings", il2cpp::Object*>());
+  }
+  // Private, and only its own methods can reach it, so the widget's bind path sets up the actions; which of its
+  // methods calls it is not visible in the metadata.
+  void SetupActionTooltipTrigger()
+  { Call<"SetupActionTooltipTrigger">(); }
+  void Refresh()
+  { Call<"Refresh">(); }
+};
 
 // A shop offer.
 struct BundleDataWidget : Widget<Bundle> {
@@ -67,9 +123,11 @@ struct BundleDataWidget : Widget<Bundle> {
 
   int32_t currentState()
   { return Field<"_currentState", int32_t>(); }
-  inline InventoryTooltipTriggerWidget* invTooltip();
-  // Set by OnDidBindContext after the card set up its tooltip.
-  inline ShopListScrollerViewController* scrollerController();
+  InventoryTooltipTriggerWidget* invTooltip()
+  { return Field<"_invTooltip", InventoryTooltipTriggerWidget*>(); }
+  // The list showing the card. OnDidBindContext sets it after the card's tooltip is bound.
+  il2cpp::Object* scrollerController()
+  { return Field<"_scrollerController", il2cpp::Object*>(); }
 
   void AuxViewButtonPressedHandler()
   { Call<"AuxViewButtonPressedHandler">(); }
@@ -89,210 +147,50 @@ struct DrawerWidget : Widget<DrawerContext> {
   { Call<"OnOpenButtonClicked">(); }
 };
 
+// A recycling list. Scrolling calls OnValueChangedCallback, which binds the cards in view.
+struct SmartScrollerBase : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SmartScrollerBase">;
+
+  // Regenerated content can spawn its cards over several frames.
+  bool Spawning()
+  {
+    return Field<"_regeneratingContent", bool>() || Field<"_spawnerCoroutine", il2cpp::Object*>()
+           || Field<"_dataHeldWhilstInitializing", il2cpp::Object*>();
+  }
+  // Binds the cards in view again, as a scroll to where the list already is would.
+  void Rebind()
+  { Call<"OnValueChangedCallback">(Get<"NormalizedPosition", unity::Vector2>()); }
+};
+
 // The gifts screen; its selection drawer holds bulk claim.
 struct ShopListScrollerViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopListScrollerViewController">;
 
   DrawerWidget* selectionDrawerWidget()
   { return Field<"_selectionDrawerWidget", DrawerWidget*>(); }
-  // Declared as some scroller; the store only uses a SmartScrollerBase.
-  il2cpp::Object* smartScroller()
-  { return Field<"_smartScroller", il2cpp::Object*>(); }
+  SmartScrollerBase* smartScroller()
+  { return Field<"_smartScroller", SmartScrollerBase*>(); }
 };
 
-// Digit.Client.Serialization.OverridableBool: the serialized flag and the runtime override.
-struct OverridableBool {
-  bool serialized, current, modified;
+// The Alliance Games screen's context. It wraps the shop's context and keeps the store's currency list.
+struct AllianceGamesSectionContext : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Alliances.Games", "AllianceGamesSectionContext">;
+
+  bool HasBundles()
+  { return !Get<"IsFetchingBundlesInProgress", bool>() && Get<"BundlesCount", int32_t>() > 0; }
+  // Rebuilds the currency list from the store's bundles.
+  void UpdateStoreCurrency()
+  { Call<"UpdateStoreCurrency">(); }
 };
 
-struct ActionLocaleSetting : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Actions", "ActionLocaleSetting">;
-};
-
-struct ActionLocaleSettingsList : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Actions", "ActionLocaleSettingsList">;
-};
-
-struct TooltipLoadAndShow : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipLoadAndShow">;
-};
-
-// TryEnabled and TrySetEnabled tell a failed call from the value, so the store can undo a half-made swap.
-struct TooltipTrigger : unity::Behaviour {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipTrigger">;
-
-  TooltipLoadAndShow* loader()
-  { return Field<"_loader", TooltipLoadAndShow*>(); }
-  std::optional<bool> TryEnabled()
-  { return TryCall<"get_enabled", bool()>(); }
-  bool TrySetEnabled(bool value)
-  { return TryCall<"set_enabled", void(bool)>(value); }
-
-  // Every serialized appearance field: what to show, where, and how it loads.
-  void CopyAppearance(TooltipTrigger* source)
-  {
-    SetField<"_showHeader">(source->Field<"_showHeader", OverridableBool>());
-    SetField<"_header">(source->Field<"_header", LocaleTextContext*>());
-    SetField<"_showDescription">(source->Field<"_showDescription", OverridableBool>());
-    SetField<"_description">(source->Field<"_description", LocaleTextContext*>());
-    SetField<"_overrideLocale">(source->Field<"_overrideLocale", bool>());
-    // Digit.Client.Tooltip.TooltipAnchor; -1 is Undefined.
-    SetField<"_anchorOverride">(source->Field<"_anchorOverride", int32_t>());
-    SetField<"_sizeOverride">(source->Field<"_sizeOverride", unity::Vector2>());
-    SetField<"_positionOverrideTarget">(source->Field<"_positionOverrideTarget", unity::Transform*>());
-    SetField<"_positionOverrideOffset">(source->Field<"_positionOverrideOffset", unity::Vector2>());
-    SetField<"_isInteractable">(source->Field<"_isInteractable", bool>());
-    SetField<"<DescriptionOverrideText>k__BackingField">(
-        source->Field<"<DescriptionOverrideText>k__BackingField", Il2CppString*>());
-    SetField<"_loader">(source->loader());
-  }
-};
-
-struct TooltipActionTrigger : TooltipTrigger {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipActionTrigger">;
-};
-
-// What a store tooltip shows. Its members resolve on the runtime class.
-struct TooltipItem : il2cpp::Object {
-  // ResourceSpec.Id; 0 when there is none.
-  int64_t ResourceId()
-  {
-    auto* spec = Get<"ResourceSpec", il2cpp::Object*>();
-    return spec ? spec->Get<"Id", int64_t>() : 0;
-  }
-};
-
-// The tooltip on an inventory or shop item. The Alliance Games store swaps a card's plain trigger for an action
-// trigger that carries the same appearance plus the native research actions, and swaps it back on release.
-struct InventoryTooltipTriggerWidget : unity::Component {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Inventories", "InventoryTooltipTriggerWidget">;
-
-  TooltipItem* Context()
-  { return Get<"Context", TooltipItem*>(); }
-
-  TooltipTrigger* tooltipTrigger()
-  { return Field<"_tooltipTrigger", TooltipTrigger*>(); }
-  void SetTooltipTrigger(TooltipTrigger* value)
-  { SetField<"_tooltipTrigger">(value); }
-  TooltipActionTrigger* tooltipActionTrigger()
-  { return Field<"_tooltipActionTrigger", TooltipActionTrigger*>(); }
-  void SetTooltipActionTrigger(TooltipActionTrigger* value)
-  { SetField<"_tooltipActionTrigger">(value); }
-  ActionLocaleSetting* searchActionLocaleSetting()
-  { return Field<"_searchActionLocaleSetting", ActionLocaleSetting*>(); }
-  void SetSearchActionLocaleSetting(ActionLocaleSetting* value)
-  { SetField<"_searchActionLocaleSetting">(value); }
-  ActionLocaleSetting* actionLocaleSetting()
-  { return Field<"_actionLocaleSetting", ActionLocaleSetting*>(); }
-  void SetActionLocaleSetting(ActionLocaleSetting* value)
-  { SetField<"_actionLocaleSetting">(value); }
-  ActionLocaleSettingsList* settings()
-  { return Field<"_settings", ActionLocaleSettingsList*>(); }
-  void SetSettings(ActionLocaleSettingsList* value)
-  { SetField<"_settings">(value); }
-
-  bool UpdateTooltipDescription()
-  { return TryCall<"UpdateTooltipDescription", void()>(); }
-  bool SetupActionTooltipTrigger()
-  { return TryCall<"SetupActionTooltipTrigger", void()>(); }
-
-  // The plain trigger on this GameObject; null when it is missing or is already an action trigger.
-  TooltipTrigger* PlainTrigger()
-  {
-    auto* object  = gameObject();
-    auto* trigger = object ? object->GetComponent<TooltipTrigger>() : nullptr;
-    return trigger && trigger->klass == TooltipTrigger::Class::Raw() ? trigger : nullptr;
-  }
-  // The action trigger on this GameObject. Empty when the lookup failed, which is not the same as there being none.
-  std::optional<TooltipActionTrigger*> ActionTrigger()
-  {
-    auto* object = gameObject();
-    auto* type   = TooltipActionTrigger::Class::TypeObject();
-    if (!object || !type)
-      return std::nullopt;
-    return object->TryCall<"GetComponent", TooltipActionTrigger*(Il2CppReflectionType*)>(type);
-  }
-  TooltipActionTrigger* AddActionTrigger()
-  {
-    auto* object = gameObject();
-    return object ? object->AddComponent<TooltipActionTrigger>() : nullptr;
-  }
-};
-
-// The smart scroller's card pool and layout.
-struct SmartScrollerBase : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SmartScrollerBase">;
-
-  // The spawned card transforms.
-  il2cpp::List<unity::Component*>* spawnedItems()
-  { return Field<"_spawnedItems", il2cpp::List<unity::Component*>*>(); }
-  // Cards are still spawning while any of these is set.
-  bool regeneratingContent()
-  { return Field<"_regeneratingContent", bool>(); }
-  il2cpp::Object* spawnerCoroutine()
-  { return Field<"_spawnerCoroutine", il2cpp::Object*>(); }
-  il2cpp::Object* dataHeldWhilstInitializing()
-  { return Field<"_dataHeldWhilstInitializing", il2cpp::Object*>(); }
-
-  std::optional<unity::Vector2> NormalizedPosition()
-  { return TryCall<"get_NormalizedPosition", unity::Vector2()>(); }
-  // Lays the visible cards out again for `position`, as a scroll to it would.
-  bool OnValueChangedCallback(unity::Vector2 position)
-  { return TryCall<"OnValueChangedCallback", void(unity::Vector2)>(position); }
-  std::optional<int32_t> VisibleItemsCount()
-  { return TryCall<"get_VisibleItemsCount", int32_t()>(); }
-  std::optional<float> ScrollPosition()
-  { return TryCall<"get_ScrollPosition", float()>(); }
-
-  // How many cards are spawned; empty when the pool is missing or its count could not be read.
-  std::optional<int32_t> SpawnedCount()
-  {
-    auto* items = spawnedItems();
-    return items ? items->TryCall<"get_Count", int32_t()>() : std::nullopt;
-  }
-
-  // The tooltip widget on a spawned card, active or not.
-  static InventoryTooltipTriggerWidget* CardTooltip(unity::Component* card)
-  {
-    auto* type = InventoryTooltipTriggerWidget::Class::TypeObject();
-    return type ? card->Call<"GetComponentInChildren", InventoryTooltipTriggerWidget*(Il2CppReflectionType*, bool)>(
-                      type, true)
-                : nullptr;
-  }
-};
-
-// The store's context. Its members resolve on the runtime class.
-struct AllianceGamesStoreContext : il2cpp::Object {
-  bool IsShopViewActive()
-  { return Get<"IsShopViewActive", bool>(); }
-  std::optional<bool> IsFetchingBundlesInProgress()
-  { return TryCall<"get_IsFetchingBundlesInProgress", bool()>(); }
-  int32_t BundlesCount()
-  { return Get<"BundlesCount", int32_t>(); }
-  // Rebuilds the store's currency list from its bundles.
-  bool UpdateStoreCurrency()
-  { return TryCall<"UpdateStoreCurrency", void()>(); }
-  // How many soft currencies the store shows.
-  std::optional<int32_t> CurrencyCount()
-  {
-    auto* currencies = Get<"StoreCurrency", il2cpp::Object*>();
-    auto* soft       = currencies ? currencies->Get<"SoftResources", il2cpp::List<il2cpp::Object*>*>() : nullptr;
-    return soft ? soft->TryCall<"get_Count", int32_t()>() : std::nullopt;
-  }
-};
-
+// Its OnContextUpdatedEventCallback override is empty, so it does none of the regular store's context handling.
 struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController {
   using Class =
       il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Alliances.Games", "AllianceGamesStoreScrollerViewController">;
 
-  AllianceGamesStoreContext* AllianceGamesContext()
-  { return Get<"AllianceGamesContext", AllianceGamesStoreContext*>(); }
+  AllianceGamesSectionContext* AllianceGamesContext()
+  { return Get<"AllianceGamesContext", AllianceGamesSectionContext*>(); }
 };
-
-InventoryTooltipTriggerWidget* BundleDataWidget::invTooltip()
-{ return Field<"_invTooltip", InventoryTooltipTriggerWidget*>(); }
-ShopListScrollerViewController* BundleDataWidget::scrollerController()
-{ return Field<"_scrollerController", ShopListScrollerViewController*>(); }
 
 // Shows the shop's reveal sequences and offer popups. Only hooked.
 using ShopSceneManager = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;

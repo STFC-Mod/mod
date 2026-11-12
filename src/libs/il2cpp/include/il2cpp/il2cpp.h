@@ -15,7 +15,6 @@
 #include <functional>
 #include <initializer_list>
 #include <iterator>
-#include <optional>
 #include <ranges>
 #include <span>
 #include <string>
@@ -23,7 +22,6 @@
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
-#include <vector>
 
 namespace il2cpp
 {
@@ -287,34 +285,6 @@ namespace detail
     return R();
   }
 
-  // Invoke for TryCall: empty (false for void) when the method is missing, the receiver is null, or a managed
-  // exception stopped the call. Exceptions are reported as Invoke reports them.
-  template <typename R> using Tried = std::conditional_t<std::is_void_v<R>, bool, std::optional<R>>;
-  template <typename R, typename... A> Tried<R> TryInvoke(const MethodInfo* method, Il2CppObject* target, A... args)
-  {
-    const bool is_static = method && (method->flags & METHOD_ATTRIBUTE_STATIC);
-    if (!method || (!is_static && !target))
-      return {};
-    if (!is_static && (method->flags & METHOD_ATTRIBUTE_VIRTUAL)) {
-      method = il2cpp_object_get_virtual_method(target, method);
-      if (!method)
-        return {};
-    }
-    try {
-      if constexpr (std::is_void_v<R>) {
-        InvokeNative<R>(method, target, args...);
-        return true;
-      } else {
-        return InvokeNative<R>(method, target, args...);
-      }
-    } catch (const Il2CppExceptionWrapper& error) {
-      ReportException(method, error.ex);
-    } catch (...) {
-      ReportException(method, nullptr);
-    }
-    return {};
-  }
-
   // Call<"Name", F>: F is either the result type, with parameters taken from the argument types (CallOf<R, A...>),
   // or a full signature R(P...). Param converts each argument to P with brace initialization, which rejects
   // narrowing, and turns a T& parameter into the std::reference_wrapper the deduced form uses for ref/out.
@@ -337,11 +307,6 @@ namespace detail
     {
       static_assert(sizeof...(A) == sizeof...(P), "argument count does not match the signature");
       return Invoke<R, typename Param<P>::Type...>(method, target, Param<P>::From(std::forward<A>(args))...);
-    }
-    template <typename... A> static Tried<R> TryRun(const MethodInfo* method, Il2CppObject* target, A&&... args)
-    {
-      static_assert(sizeof...(A) == sizeof...(P), "argument count does not match the signature");
-      return TryInvoke<R, typename Param<P>::Type...>(method, target, Param<P>::From(std::forward<A>(args))...);
     }
   };
   template <typename F, typename... A> struct CallOf : MethodCall<F(A...)> {
@@ -514,15 +479,6 @@ struct Object : Il2CppObject {
     using Sig    = detail::CallOf<F, std::decay_t<A>...>;
     auto* method = detail::Lookup<Self>(self, [](Il2CppClass* klass) { return Sig::Resolve(klass, N.View(), false); });
     return Sig::Run(method, &self, std::forward<A>(args)...);
-  }
-  // Call, except that a failed call is told apart from a result that reads as zero: empty, or false for a void
-  // method, when the method is missing or a managed exception (still reported) stopped it. For callers that undo
-  // their own changes when the game's code fails.
-  template <Name N, typename F = void, typename Self, typename... A> auto TryCall(this Self& self, A&&... args)
-  {
-    using Sig    = detail::CallOf<F, std::decay_t<A>...>;
-    auto* method = detail::Lookup<Self>(self, [](Il2CppClass* klass) { return Sig::Resolve(klass, N.View(), false); });
-    return Sig::TryRun(method, &self, std::forward<A>(args)...);
   }
 
   template <typename T> bool Is() const
@@ -794,34 +750,6 @@ private:
   {
   }
   Il2CppGCHandle handle_ = nullptr;
-};
-
-// Strong roots for the objects one operation touches, released together when it ends. Keep returns its argument,
-// or null after marking the set unhealthy when the runtime could not root it. Null needs no root.
-class GcRoots
-{
-public:
-  Il2CppObject* Keep(Il2CppObject* object)
-  {
-    if (!object)
-      return nullptr;
-    auto root = GcHandle::Strong(object);
-    if (root.Get() != object) {
-      healthy_ = false;
-      return nullptr;
-    }
-    roots_.push_back(std::move(root));
-    return object;
-  }
-  template <typename T> T* Keep(T* object)
-  { return reinterpret_cast<T*>(Keep(reinterpret_cast<Il2CppObject*>(object))); }
-  // False once any Keep failed.
-  bool healthy() const
-  { return healthy_; }
-
-private:
-  std::vector<GcHandle> roots_;
-  bool                  healthy_ = true;
 };
 
 // --- Internal calls ---

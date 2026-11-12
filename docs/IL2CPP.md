@@ -89,8 +89,6 @@ A missing or drifted class or member is reported once.
 Calls then do nothing and return a value-initialized result.
 A managed exception is contained at the binding call, reported once per method, and produces the same default result.
 It cannot unwind through the hook and skip the game's code.
-`TryCall` is the same call for code that undoes its own changes when the game's code fails.
-It returns an empty `std::optional`, or `false` for a void method, when the method is missing or threw.
 
 Receivers must be non-null. Check pointers returned by the game before calling methods through them.
 
@@ -189,8 +187,6 @@ Change hidden `MethodInfo*` handling only when runtime evidence points to it.
 
 The GC scans native stacks, so managed pointers in local variables remain visible to it.
 Pointers stored in C++ statics or heap objects need `GcHandle::Strong` roots.
-`GcRoots` holds strong roots for the objects one operation touches and releases them together.
-Its `healthy()` turns false once a root could not be taken.
 Release roots before runtime shutdown. Roots do not destroy Unity native resources.
 
 `unity::Track<T>()` tracks a class and its subclasses from hook installation onward.
