@@ -70,9 +70,6 @@ struct UnityObject {
 inline bool Alive(Il2CppObject* object)
 { return object && UnityObject::Class::Call<"op_Implicit", bool>(object); }
 
-inline void Destroy(Il2CppObject* object)
-{ UnityObject::Class::Call<"Destroy">(object); }
-
 // The first loaded object of T. Scans every loaded object; keep it off per-frame paths.
 template <typename T> T* FindObject()
 {
@@ -121,9 +118,6 @@ struct GameObject : il2cpp::Object {
   { return Get<"transform", Transform*>(); }
   void SetActive(bool active)
   { Call<"SetActive">(active); }
-  // Whether it and every parent are active.
-  bool activeInHierarchy()
-  { return Get<"activeInHierarchy", bool>(); }
 
   // Passing System.Type selects the (Type) overloads over the string and generic ones. A null Type would throw in
   // managed code, so a missing class yields null instead.
@@ -325,8 +319,6 @@ struct Material : il2cpp::Object {
   { return il2cpp::ToUtf8(Get<"name", Il2CppString*>()); }
   Shader* shader()
   { return Get<"shader", Shader*>(); }
-  bool HasProperty(Il2CppString* name)
-  { return Call<"HasProperty", bool>(name); }
   float GetFloat(Il2CppString* name)
   { return Call<"GetFloat", float>(name); }
   void SetFloat(Il2CppString* name, float value)

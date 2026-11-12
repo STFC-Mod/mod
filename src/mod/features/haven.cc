@@ -16,97 +16,51 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <concepts>
 #include <optional>
 #include <string_view>
-#include <unordered_set>
 #include <utility>
-#include <vector>
 
 namespace
 {
 // --- Haven zoom ---
 
 // From further out the roads sink into the ground mesh. A depth bias on the road materials keeps them drawn on top.
-// Finding the materials (GetComponentsInChildren and every material's name) is the costly part, so it runs every 5 s
-// while the bias is checked every second. The handles are weak, so a cached material never keeps an unloaded scene or
-// asset alive.
-class HavenRoads
+// Walking the visuals for them (GetComponentsInChildren and every material's name) is costly, so it runs every 5 s,
+// which also picks up the materials of a base that was rebuilt.
+bool IsHavenRoad(unity::Material* material)
 {
-public:
-  void Apply()
-  {
-    if (!apply_.Due())
-      return;
-    if (auto* owner = owner_.Get<unity::GameObject>(); !unity::Alive(owner) || !owner->activeInHierarchy()) {
-      owner_.Reset();
-      materials_.clear();
-    }
-    // A replacement can take the visuals' path while the old object is still alive and active, so the owner is
-    // looked up again at every search, not only once it is gone.
-    if (search_.Due())
-      Search();
-    for (const auto& handle : materials_)
-      if (auto* material = handle.Get<unity::Material>(); unity::Alive(material))
-        Bias(material);
-  }
-
-private:
-  void Search()
-  {
-    materials_.clear();
-    auto* root = unity::GameObject::Find("StarbaseRoot/StarbaseManager/StarbasePlanetaryVisualsHolder");
-    owner_     = il2cpp::GcHandle::Weak(root);
-    std::unordered_set<unity::Material*> seen;
-    for (auto* renderer : il2cpp::Items(root ? root->GetComponentsInChildren<unity::Renderer>(true) : nullptr))
-      for (auto* material : il2cpp::Items(renderer ? renderer->sharedMaterials() : nullptr))
-        if (material && IsRoad(material) && seen.insert(material).second)
-          materials_.push_back(il2cpp::GcHandle::Weak(material));
-  }
-
-  static bool IsRoad(unity::Material* material)
-  {
-    static constexpr std::string_view kRoadMaterials[] = {
-        "mat_PB_3101101_asphalt_", "mat_PB_3101201_asphalt_", "mat_PB_3101301_asphalt_", "mat_PB_3101401_asphalt_",
-        "mat_PB_3101501_asphalt_", "mat_PB_3101601_asphalt_", "mat_PB_3101701_asphalt_"};
-    const auto name = material->Name();
-    if (!std::ranges::any_of(kRoadMaterials, [&](std::string_view prefix) { return name.starts_with(prefix); }))
-      return false;
-    auto* shader = material->shader();
-    return shader && shader->Name() == "Custom/LitMSAE";
-  }
-
-  static void Bias(unity::Material* material)
-  {
-    const std::array properties{il2cpp::NewString("_OffsetFactor"), il2cpp::NewString("_OffsetUnits")};
-    if (!material->HasProperty(properties[0]) || !material->HasProperty(properties[1]))
-      return;
-    const std::array before{material->GetFloat(properties[0]), material->GetFloat(properties[1])};
-    if (!std::isfinite(before[0]) || !std::isfinite(before[1]))
-      return;
-    // Negative offsets pull the roads toward the camera. Keep an already stronger native bias.
-    for (size_t i = 0; i < properties.size(); ++i)
-      if (before[i] > -1.0f)
-        material->SetFloat(properties[i], -1.0f);
-  }
-
-  Throttle                      apply_{std::chrono::seconds(1)}, search_{std::chrono::seconds(5)};
-  il2cpp::GcHandle              owner_;
-  std::vector<il2cpp::GcHandle> materials_;
-};
+  static constexpr std::string_view kRoadMaterials[] = {
+      "mat_PB_3101101_asphalt_", "mat_PB_3101201_asphalt_", "mat_PB_3101301_asphalt_", "mat_PB_3101401_asphalt_",
+      "mat_PB_3101501_asphalt_", "mat_PB_3101601_asphalt_", "mat_PB_3101701_asphalt_"};
+  const auto name = material->Name();
+  if (!std::ranges::any_of(kRoadMaterials, [&](std::string_view prefix) { return name.starts_with(prefix); }))
+    return false;
+  // The shader defines both offset properties.
+  auto* shader = material->shader();
+  return shader && shader->Name() == "Custom/LitMSAE";
+}
 
 void ApplyHavenRoadDepthBias()
 {
-  // Leaked: its handles must not be freed by static destructors after the runtime is gone.
-  static auto* roads = new HavenRoads;
-  roads->Apply();
+  static Throttle throttle(std::chrono::seconds(5));
+  if (!throttle.Due())
+    return;
+  auto*            root = unity::GameObject::Find("StarbaseRoot/StarbaseManager/StarbasePlanetaryVisualsHolder");
+  const std::array properties{il2cpp::NewString("_OffsetFactor"), il2cpp::NewString("_OffsetUnits")};
+  // Negative offsets pull the roads toward the camera. Keep an already stronger native bias.
+  for (auto* renderer : il2cpp::Items(root ? root->GetComponentsInChildren<unity::Renderer>(true) : nullptr))
+    for (auto* material : il2cpp::Items(renderer ? renderer->sharedMaterials() : nullptr))
+      if (material && IsHavenRoad(material))
+        for (auto* property : properties)
+          if (material->GetFloat(property) > -1.0f)
+            material->SetFloat(property, -1.0f);
 }
 
 // Haven's zoom blends between two planetary orbits, each pinned to one radius (min == max) and sitting on it. Reads
 // that radius, or nothing for any other kind of endpoint.
 std::optional<float> HavenOrbitRadius(FrameProvider* provider)
 {
-  if (!provider || !provider->Is<PlanetaryOrbitFrameProvider>() || !provider->Is<AbstractOrbitFrameProvider>())
+  if (!provider || !provider->Is<PlanetaryOrbitFrameProvider>())
     return std::nullopt;
   auto* orbit      = provider->As<AbstractOrbitFrameProvider>();
   auto* constraint = orbit->constraint();
@@ -115,15 +69,10 @@ std::optional<float> HavenOrbitRadius(FrameProvider* provider)
     return std::nullopt;
   const auto minimum = data->min(), maximum = data->max();
   const auto radius = orbit->radius();
-  if (std::isfinite(radius) && std::isfinite(maximum) && maximum > 0.0f && minimum == maximum
-      && std::abs(radius - maximum) < 0.01f)
+  if (maximum > 0.0f && minimum == maximum && std::abs(radius - maximum) < 0.01f)
     return radius;
   return std::nullopt;
 }
-
-// Every value is finite: NaN and infinity both fail.
-bool HavenFinite(std::floating_point auto... values)
-{ return (std::isfinite(values) && ...); }
 
 void BlendFrameProvider_UpdateCameraFrame_Hook(auto original, BlendFrameProvider* _this, unity::Camera* camera)
 {
@@ -131,7 +80,7 @@ void BlendFrameProvider_UpdateCameraFrame_Hook(auto original, BlendFrameProvider
   // endpoint assets and normalized LOD stay native.
   original(_this, camera);
   const auto max_zoom = Config::Get().graphics.haven_zoom;
-  if (!std::isfinite(max_zoom) || max_zoom <= 0.0f)
+  if (max_zoom <= 0.0f)
     return;
 
   auto*      source        = _this->sourceFrameProvider();
@@ -155,34 +104,28 @@ void BlendFrameProvider_UpdateCameraFrame_Hook(auto original, BlendFrameProvider
   CameraFrame* result       = _this->blendedCameraFrame();
   auto*        curve        = _this->blendCurve();
   const auto   minimum = _this->softLimitMin(), maximum = _this->softLimitMax(), ratio = _this->blendRatio();
-  if (!source_frame || !target_frame || !result || !curve || source_frame == target_frame || result == source_frame
-      || result == target_frame || !HavenFinite(minimum, maximum, ratio) || minimum < 0.0f || maximum > 1.0f
-      || maximum <= minimum)
+  if (!source_frame || !target_frame || !result || !curve)
     return;
 
   auto       position = result->position();
   const auto ar = source_frame->rotation(), br = target_frame->rotation();
   const auto af = source_frame->fov(), bf = target_frame->fov();
-  const auto rotation_dot    = ar.x * br.x + ar.y * br.y + ar.z * br.z + ar.w * br.w;
-  const auto gap             = std::abs(source_radius - target_radius);
-  const auto rotation_length = ar.x * ar.x + ar.y * ar.y + ar.z * ar.z + ar.w * ar.w;
-  // Qualify the common-pivot, same-facing perspective orbit measured in Haven: unit rotations that agree up to sign
+  const auto rotation_dot = ar.x * br.x + ar.y * br.y + ar.z * br.z + ar.w * br.w;
+  const auto gap          = std::abs(source_radius - target_radius);
+  // Qualify the common-pivot, same-facing perspective orbit measured in Haven: rotations that agree up to sign
   // (|dot| = 1) and one field of view. Only then is moving along the camera's back axis the same as a wider orbit.
   // Preserve native output when a client changes that geometry or camera mode.
-  if (!HavenFinite(rotation_length, rotation_dot, af, bf) || std::abs(rotation_length - 1.0f) > 0.0001f
-      || std::abs(std::abs(rotation_dot) - 1.0f) > 0.0001f || af <= 0.0f || std::abs(af - bf) > 0.001f
+  if (std::abs(std::abs(rotation_dot) - 1.0f) > 0.0001f || af <= 0.0f || std::abs(af - bf) > 0.001f
       || source_frame->orthographic() || target_frame->orthographic() || result->orthographic())
     return;
 
   const auto at_ratio   = curve->Evaluate(ratio);
   const auto at_minimum = curve->Evaluate(minimum);
   const auto at_maximum = curve->Evaluate(maximum);
-  if (!HavenFinite(at_ratio, at_minimum, at_maximum))
-    return;
   // Weights run from 0 at the inner orbit to 1 at the outer one, whichever way the blend goes. outer_weight and
   // inner_weight are the curve at the soft limits, where the native zoom stops; progress is how far the current
   // ratio is between them. The extra distance grows with progress up to max_zoom - native_outer at the outer stop,
-  // and never takes the camera past max_zoom.
+  // and never takes the camera past max_zoom. Soft limits out of order give outer_weight <= inner_weight.
   const bool source_is_far = source_radius > target_radius;
   const auto outer_weight =
       source_is_far ? 1.0f - std::clamp(at_minimum, 0.0f, 1.0f) : std::clamp(at_maximum, 0.0f, 1.0f);
@@ -196,8 +139,6 @@ void BlendFrameProvider_UpdateCameraFrame_Hook(auto original, BlendFrameProvider
   const auto native_distance = inner_radius + gap * weight;
   const auto progress        = std::clamp((weight - inner_weight) / (outer_weight - inner_weight), 0.0, 1.0);
   const auto extra           = std::min(max_zoom - native_distance, (max_zoom - native_outer) * progress);
-  if (!std::isfinite(extra))
-    return;
   ApplyHavenRoadDepthBias();
   if (extra <= 0.0)
     return;
@@ -208,14 +149,8 @@ void BlendFrameProvider_UpdateCameraFrame_Hook(auto original, BlendFrameProvider
   position.x += static_cast<float>(-2.0 * (ar.x * ar.z + ar.w * ar.y) * extra);
   position.y += static_cast<float>(-2.0 * (ar.y * ar.z - ar.w * ar.x) * extra);
   position.z += static_cast<float>((2.0 * (ar.x * ar.x + ar.y * ar.y) - 1.0) * extra);
-  auto clip = result->farPlane();
-  if (!std::isfinite(clip) || clip <= 0.0f)
-    return;
-  clip += static_cast<float>(extra);
-  if (!HavenFinite(position.x, position.y, position.z, clip) || clip <= 0.0f)
-    return;
   result->SetPosition(position);
-  result->SetFarPlane(clip);
+  result->SetFarPlane(result->farPlane() + static_cast<float>(extra));
   static bool reported = false;
   if (!std::exchange(reported, true))
     spdlog::info("[HavenZoom] expanded native outer distance {} to maximum {}", native_outer, max_zoom);

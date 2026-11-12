@@ -481,13 +481,10 @@ struct ArtifactHallDetailsViewController : unity::Behaviour {
   }
 };
 
-// The cargo bar's "X of Y" label. Its fields are declared on LegacyProgressBar and Widget`1; lookups walk the
-// parents.
+// The cargo bar. Its fields are declared on LegacyProgressBar and Widget`1; lookups walk the parents.
 struct LegacyComparableProgressBar : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Stats", "LegacyComparableProgressBar">;
 
-  TextLocalizer* currentValue_X_of_Y()
-  { return Field<"_currentValue_X_of_Y", TextLocalizer*>(); }
   // IProgressData
   il2cpp::Object* context()
   { return Field<"m_context", il2cpp::Object*>(); }
