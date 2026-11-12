@@ -68,3 +68,10 @@ if is_arch("x64", "x86_64") then
         add_files("tests/spud_relocation.cc")
         add_packages("spud")
 end
+
+-- Pure startup gate regression tests; no game process required.
+target("chat-startup-tests")
+    set_kind("binary")
+    set_default(false)
+    add_files("tests/chat_startup.cc")
+    add_includedirs("mods/src")

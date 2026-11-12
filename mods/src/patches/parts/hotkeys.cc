@@ -7,6 +7,7 @@
 // Object Viewers
 #include "prime/AllianceStarbaseObjectViewerWidget.h"
 #include "prime/ArmadaObjectViewerWidget.h"
+#include "prime/WaveDefenseObjectViewerWidget.h"
 #include "prime/CelestialObjectViewerWidget.h"
 #include "prime/EmbassyObjectViewer.h"
 #include "prime/HousingObjectViewerWidget.h"
@@ -1198,12 +1199,10 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         || force_space_action_next_frame) {
       if (Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat() && !Key::IsInputFocused()) {
         auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
-        if (fleet_bar) {
-          bool was_forced = force_space_action_next_frame;
-          ExecuteSpaceAction(fleet_bar);
-          if (was_forced) {
-            force_space_action_next_frame = false;
-          }
+        bool was_forced = force_space_action_next_frame;
+        ExecuteSpaceAction(fleet_bar);
+        if (was_forced) {
+          force_space_action_next_frame = false;
         }
       }
     }
@@ -1422,6 +1421,24 @@ bool DidExecuteRepair(FleetBarViewController* fleet_bar)
 
 void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
 {
+  if (MapKey::IsDown(GameFunction::ActionPrimary)) {
+    if (auto* navigation = ObjectFinder<NavigationInteractionUIViewController>::Get();
+        navigation && navigation->TryPressJoinWaveDefense()) {
+      return;
+    }
+    // Query active viewers without adding constructor detours for this popup or its subclasses.
+    if (auto viewers = WaveDefenseObjectViewerWidget::FindActiveViewers()) {
+      for (uintptr_t index = 0; index < viewers->max_length; ++index) {
+        auto widget = reinterpret_cast<WaveDefenseObjectViewerWidget**>(viewers->vector)[index];
+        if (CanHideViewer(widget, true)) {
+          // Use the displayed native action, including its eligibility and confirmation checks.
+          widget->PressPrimaryButton();
+          return;
+        }
+      }
+    }
+  }
+
   if (!fleet_bar) {
     return;
   }

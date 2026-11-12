@@ -1237,6 +1237,10 @@ void Config::Load()
   this->extend_donation_max =
       get_config_or_default(config, parsed, "ui", "extend_donation_max", DCU::extend_donation_max, write_config);
 
+  this->default_chat_width =
+      get_config_or_default(config, parsed, "ui", "default_chat_width", DCU::default_chat_width, write_config);
+  this->auto_open_chat =
+      get_config_or_default(config, parsed, "ui", "auto_open_chat", DCU::auto_open_chat, write_config);
   this->disable_galaxy_chat =
       get_config_or_default(config, parsed, "ui", "disable_galaxy_chat", DCU::disable_galaxy_chat, write_config);
   this->disable_veil_chat =

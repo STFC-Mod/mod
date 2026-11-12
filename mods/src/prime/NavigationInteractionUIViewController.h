@@ -2,9 +2,38 @@
 
 #include <il2cpp/il2cpp_helper.h>
 #include "VisibilityController.h"
+#include "SemaphoreButtonListener.h"
 
 struct NavigationInteractionUIViewController {
 public:
+  bool TryPressJoinWaveDefense()
+  {
+    if (!IsSetCourseVisible()) {
+      return false;
+    }
+    static auto widget_class = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "SetCourseWidget");
+    static auto widget_field = get_class_helper().GetField("_setCourseWidget");
+    static auto join_field = widget_class.GetField("_joinWaveDefenseButton");
+    static auto active_property = SemaphoreButtonListener::get_class_helper().GetProperty("isActiveAndEnabled");
+    if (!widget_field.get_info() || !join_field.get_info()) {
+      return false;
+    }
+    auto* widget = *reinterpret_cast<char**>(reinterpret_cast<char*>(this) + widget_field.offset());
+    if (!widget) {
+      return false;
+    }
+    auto* listener = *reinterpret_cast<SemaphoreButtonListener**>(widget + join_field.offset());
+    const auto* active = listener ? active_property.Get<bool>(listener) : nullptr;
+    if (!active || !*active) {
+      return false;
+    }
+    // Button.Press preserves Unity's active/interactable checks and the native join callback.
+    if (auto* button = listener->TheButton) {
+      button->Press();
+    }
+    return true;
+  }
+
   bool IsSetCourseVisible()
   {
     static auto widget_class = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "SetCourseWidget");

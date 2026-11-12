@@ -228,6 +228,8 @@ public:
   bool                     disable_preview_recall;
   bool                     disable_escape_exit;
   int                      disable_escape_exit_timer;
+  float                    default_chat_width;
+  bool                     auto_open_chat;
   bool                     disable_galaxy_chat;
   bool                     disable_veil_chat;
   bool                     show_player_title;

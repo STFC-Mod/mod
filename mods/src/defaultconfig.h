@@ -285,6 +285,8 @@ namespace UI
   // 0 disables double-tap and preserves the existing blocked behavior.
   constexpr auto        disable_escape_exit_timer   = 0;
   constexpr bool        disable_first_popup         = false;
+  constexpr float       default_chat_width          = 0.0f;
+  constexpr bool        auto_open_chat              = false;
   constexpr bool        disable_galaxy_chat         = false;
   constexpr bool        disable_move_keys           = false;
   constexpr bool        disable_preview_locate      = false;
