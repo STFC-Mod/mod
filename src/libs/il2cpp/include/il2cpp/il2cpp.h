@@ -529,15 +529,6 @@ template <typename T> Il2CppObject* Box(T value)
   return klass ? il2cpp_value_box(klass, &value) : nullptr;
 }
 
-// Reads a boxed primitive of exactly type T. False, leaving `value` alone, for null or any other type.
-template <typename T> bool Unbox(const Il2CppObject* object, T& value)
-{
-  if (!object || object->klass != PrimitiveClass<T>())
-    return false;
-  std::memcpy(&value, il2cpp_object_unbox(const_cast<Il2CppObject*>(object)), sizeof(T));
-  return true;
-}
-
 // System.Nullable<T> as the runtime lays it out, for members that take or return one: the flag, then the value.
 template <typename T> struct Nullable {
   bool has_value;

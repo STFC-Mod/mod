@@ -60,13 +60,6 @@ struct NodeAddress : il2cpp::Object {
   { return Get<"Instance", int32_t>(); }
 };
 
-// IDeployedFleet: the server's model behind a deployed fleet. Its class varies (DeployedFleet, DeployedFleetJSON),
-// so members resolve on the runtime class.
-struct DeployedFleetModel : il2cpp::Object {
-  int64_t FleetId()
-  { return Get<"FleetId", int64_t>(); }
-};
-
 struct FleetDeployedData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetDeployedData">;
 
@@ -87,13 +80,8 @@ struct FleetDeployedData : il2cpp::Object {
   { return Get<"CurrentlyBattling", bool>(); }
   bool IsPlanningRecallCourse()
   { return Get<"IsPlanningRecallCourse", bool>(); }
-  // True for the player's own fleets.
-  bool localPlayerFleet()
-  { return Field<"_localPlayerFleet", bool>(); }
   NodeAddress* address()
   { return Field<"_address", NodeAddress*>(); }
-  DeployedFleetModel* deploymentFleet()
-  { return Field<"_deploymentFleet", DeployedFleetModel*>(); }
 };
 
 struct BattleTargetData : il2cpp::Object {

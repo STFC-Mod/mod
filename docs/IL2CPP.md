@@ -178,7 +178,7 @@ Change hidden `MethodInfo*` handling only when runtime evidence points to it.
 | `il2cpp::Allocate<T>()` | Allocate without a constructor, for classes whose parameterless constructor has no generated code |
 | `NewString`, `ToUtf8`, `Equals` | Create, convert, or compare managed strings |
 | `ToString` | A managed string for any object |
-| `Box`, `Unbox` | Box a primitive, or read one of exactly that type |
+| `Box` | Box a primitive |
 | `Nullable<T>` | `System.Nullable<T>` by value |
 | `Is<T>`, `As<T>` | Test or cast a receiver against a bound class |
 | `InvokeBound` | Run a single-cast delegate's method directly; managed exceptions propagate so the caller can fall back |

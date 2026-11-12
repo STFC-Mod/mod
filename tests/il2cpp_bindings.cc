@@ -828,15 +828,6 @@ int main()
   Require(initialized.empty(), "a static hook lookup leaves the class uninitialized");
   Require(!Base::Class::StaticMethod<void(bool)>("Select"), "static hook lookup rejects an instance method");
 
-  // Boxed primitives unbox only as their own type.
-  Il2CppObject boxed{};
-  boxed.klass    = &int_class.klass;
-  int32_t number = 0;
-  int64_t wide   = 7;
-  Require(il2cpp::Unbox(&boxed, number) && number == shared_result, "unbox the boxed type");
-  Require(!il2cpp::Unbox(&boxed, wide) && wide == 7, "unbox rejects another type and leaves the value");
-  Require(!il2cpp::Unbox(static_cast<Il2CppObject*>(nullptr), number), "unbox rejects null");
-
   // A hook set installs every hook or none: a missing member, or a null address, leaves its targets untouched.
   {
     const int       scaled_before = Scaled(2);

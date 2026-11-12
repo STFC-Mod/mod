@@ -486,7 +486,6 @@ bool FleetShortcuts()
   if (Shortcut::IsDown(Action::kToggleQueue)) {
     auto& queue_enabled = Config::Get().control.queue_enabled;
     queue_enabled       = !queue_enabled;
-    ResetQueueRecoveryTracking();
     return true;
   }
   return false;
