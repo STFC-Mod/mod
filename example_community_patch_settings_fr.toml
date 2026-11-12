@@ -7,7 +7,7 @@
 #  |    #***     #    #       #***         #   *   #**    #***    |
 #  |                                                              |
 #  +--------------------------------------------------------------+
-#   Généré le 2026-10-17T14:08:05.818Z
+#   Généré le 2026-11-12T23:23:43.304Z
 #
 #   Ce fichier de configuration a été généré par https://modconfig.pages.dev
 #   et est fourni tel quel. En cas de problème avec le STFC Community Mod,
@@ -17,7 +17,7 @@
 #       Discord : https://discord.gg/PrpHgs7Vjs
 #       GitHub  : https://github.com/STFC-Mod/mod
 #
-#   Le fichier de configuration du jour vous est présenté par la lettre Z et le nombre 6
+#   Le fichier de configuration du jour vous est présenté par la lettre N et le nombre 5
 #
 
 #  <[=======================================]>
@@ -222,6 +222,9 @@ allow_cursor = true
 # Autorise le plein écran sans bordure, mettez ça sur désactiver pour désactiver
 borderless_fullscreen = true
 
+# Keep the system camera free when selecting a target. Requires mod 1.1.10 or newer.
+disable_target_camera_lock = false
+
 # Autorise le redimensionnement libre, mettez désactiver pour désactiver
 free_resize = true
 
@@ -293,6 +296,9 @@ chattitledisplayhooks = true
 dailyfactionbulkclaimhooks = true
 doubleclickassignshiphooks = true
 forbiddentechconfirmhooks = true
+
+# Enable the equipped ship name in Forbidden Tech details. Requires mod 1.1.10 or newer.
+forbiddentechshipnamehooks = true
 freeresizehooks = true
 galacticanomalytimerhooks = true
 game_version = true
@@ -736,6 +742,9 @@ reverse_haven_history = true
 # Subgroup: Auto Confirm
 # ----------------------
 
+# Automatically confirm the max-level warning when contributing to an alliance that has reached level 60. Requires mod 1.1.10 or newer.
+auto_confirm_alliance_contribution = false
+
 # Confirmer automatiquement les améliorations de niveau et de rang de Technologie interdite
 auto_confirm_ft_upgrade = false
 
@@ -769,6 +778,12 @@ notify_banner_types = ""
 # Subgroup: Chat
 # --------------
 
+# Open alliance side chat once per login, after station and chat initialization, section completion, and three continuous seconds of readiness. Requires mod 1.1.10 or newer.
+auto_open_chat = false
+
+# Initial side-chat width in canvas units; 0 preserves the native width. Positive values are clamped to available space and the minimum width. Requires mod 1.1.10 or newer.
+default_chat_width = 0
+
 # Mettre sur true pour retirer le chat Galaxie du jeu
 disable_galaxy_chat = false
 
@@ -788,7 +803,7 @@ extend_chest_purchase_max = 160
 # ------------------------------
 
 # Factions séparées par des virgules (federation, klingon, romulan) auxquelles s'applique l'option de réclamation groupée des objectifs quotidiens ; laissez vide pour conserver le comportement par défaut du jeu
-daily_bulk_claim_factions = ""
+daily_bulk_claim_factions = "federation,klingon,romulan"
 
 # Réactive l'option Tout réclamer des objectifs quotidiens lors du premier affichage de l'écran à chaque session
 daily_bulk_claim_toggle_default_on = false
@@ -824,12 +839,6 @@ pinned_ships = ""
 #   "auto" - Use the game's default visibility behaviour
 #   "show" - Always show this HUD item
 #   "hide" - Always hide this HUD item
-hud_daily_goals = "auto"
-
-# HUD visibility mode: auto, show, or hide
-#   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
 hud_field_training = "auto"
 
 # HUD visibility mode: auto, show, or hide
@@ -858,6 +867,9 @@ disable_exchange_all = false
 
 # Enable the shortcut that focuses the search box on supported screens
 focus_search = true
+
+# Show the equipped ship name in Forbidden Tech details. Requires mod 1.1.10 or newer.
+forbidden_tech_ship_name = true
 
 # Format abbreviated cargo values using Cargo Significant Decimals
 format_cargo_values = true
@@ -937,6 +949,9 @@ missions = true
 # Do you want to sync owned officer data?
 officers = true
 
+# Sync your own player profile (level, XP, power, Haven unlocked), never other players. Requires mod 1.1.10 or newer.
+profile = false
+
 # Voulez-vous synchroniser les données de recherche ?
 research = true
 
@@ -948,6 +963,9 @@ ships = true
 
 # Voulez-vous synchroniser les données d'emplacements ?
 slots = true
+
+# Sync faction store offer data. Requires mod 1.1.10 or newer.
+store_offers = false
 
 # Voulez-vous synchroniser les données de technologie interdite possédée ?
 tech = true
