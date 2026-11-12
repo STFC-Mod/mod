@@ -7,6 +7,110 @@
 
 #include <spud/detour.h>
 #include <tuple>
+#include <chrono>
+#include <cmath>
+#include <spdlog/spdlog.h>
+#include "il2cpp/il2cpp_checked.h"
+#include "patches/chat_startup.h"
+#include "patches/screen_update_hook.h"
+#include "prime/Hub.h"
+
+namespace
+{
+Il2CppGCHandle preview_handle = {};
+ChatStartup::Gate startup;
+bool width_applied = false;
+bool startup_failed = false;
+
+void ObserveChatPreview(ChatPreviewController* preview)
+{
+  if (!Config::Get().auto_open_chat)
+    return;
+  if (preview_handle && il2cpp_gchandle_get_target(preview_handle) == reinterpret_cast<Il2CppObject*>(preview))
+    return;
+  if (preview_handle)
+    il2cpp_gchandle_free(preview_handle);
+  preview_handle = il2cpp_gchandle_new_weakref(reinterpret_cast<Il2CppObject*>(preview), false);
+  startup.ready_since = -1;
+  spdlog::info("[ChatOptions] observed chat preview");
+}
+
+void UpdateChatOptions()
+{
+  const float configured_width = Config::Get().default_chat_width;
+  const bool custom_width = std::isfinite(configured_width) && configured_width > 0;
+  if (startup_failed || (!Config::Get().auto_open_chat && !custom_width))
+    return;
+  try {
+    auto* sections = Hub::get_SectionManager();
+    if (!sections)
+      return;
+    const auto section = sections->CurrentSection;
+    if (section == SectionID::Login || section == SectionID::AppInit) {
+      startup = {};
+      width_applied = false;
+      // The preview may initialize while CurrentSection is still Login/AppInit.
+      // Keep its weak handle: clearing it here can lose the only AboutToShow
+      // notification. A destroyed preview naturally resolves to null.
+      return;
+    }
+    if ((!Config::Get().auto_open_chat || startup.completed) && (!custom_width || width_applied))
+      return;
+    auto* manager = reinterpret_cast<Il2CppObject*>(ChatManager::Instance());
+    if (!manager)
+      return;
+    const bool side_open = Il2CppChecked::Boolean(Il2CppChecked::Invoke(manager, "get_IsSideChatOpen"));
+    float width = configured_width;
+    // Apply once per login, then leave manual resizing to the game.
+    if (side_open && !width_applied && std::isfinite(width) && width > 0) {
+      static auto screen_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ScreenManager");
+      static auto singleton = screen_helper.GetParent("MonoSingleton`1");
+      auto* screen = singleton.GetProperty("Instance").GetRaw<Il2CppObject>(nullptr);
+      auto* frame = Il2CppChecked::ReferenceField(screen, "_frameManager", "UIFrameManager");
+      if (frame) {
+        auto* method = IL2CppClassHelper(frame->klass).GetMethodInfo("ResizeSideFrame", 1);
+        if (!method || !method->parameters || method->parameters[0]->type != IL2CPP_TYPE_R4)
+          throw std::runtime_error("side frame resize signature changed");
+        void* args[] = {&width};
+        if (!Il2CppRuntime::TryInvoke(method, frame, args))
+          throw std::runtime_error("side frame resize failed");
+        width_applied = true;
+      }
+    }
+    if (!Config::Get().auto_open_chat || startup.completed)
+      return;
+    auto* preview = preview_handle ? il2cpp_gchandle_get_target(preview_handle) : nullptr;
+    const bool station = section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
+    // Section completion is set by the game after its visibility refresh.
+    const bool section_ready = preview && Il2CppChecked::BooleanField(preview, "_isSectionChangedCompleted");
+    const bool context_ready = Il2CppChecked::BooleanField(manager, "_isContextInitialised");
+    const bool side_allowed = Il2CppChecked::Boolean(Il2CppChecked::Invoke(manager, "get_IsSideChatAllowed"));
+    const bool ready = station && section_ready && context_ready && side_allowed;
+    // Log changes only, so a pending startup identifies its exact blocking gate.
+    const int status = (station ? 1 : 0) | (preview ? 2 : 0) | (section_ready ? 4 : 0)
+                       | (context_ready ? 8 : 0) | (side_allowed ? 16 : 0) | (side_open ? 32 : 0);
+    static int last_status = -1;
+    static SectionID last_section = SectionID::AppInit;
+    if (status != last_status || section != last_section) {
+      last_status = status;
+      last_section = section;
+      spdlog::info("[ChatOptions] startup section={} station={} preview={} section_ready={} context_ready={} "
+                   "side_allowed={} side_open={}", static_cast<int>(section), station, preview != nullptr,
+                   section_ready, context_ready, side_allowed, side_open);
+    }
+    const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (startup.Tick(ready, side_open || Hub::IsInChat(), now)) {
+      spdlog::info("[ChatOptions] readiness settled; opening alliance side chat");
+      reinterpret_cast<ChatManager*>(manager)->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
+    } else if (startup.completed) {
+      spdlog::info("[ChatOptions] startup consumed by existing/manual chat");
+    }
+  } catch (const std::exception& error) {
+    startup_failed = true;
+    spdlog::warn("[ChatOptions] disabled after metadata/invocation failure: {}", error.what());
+  }
+}
+} // namespace
 
 auto GetChatTabIndices()
 {
@@ -89,6 +193,8 @@ void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _th
 {
   original(_this);
 
+  ObserveChatPreview(_this);
+
   if (Config::Get().disable_galaxy_chat || Config::Get().disable_veil_chat) {
     const auto allianceChatIdx = std::get<3>(GetChatTabIndices());
     _this->_focusedPanel       = ChatChannelCategory::Alliance;
@@ -101,6 +207,7 @@ void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _th
 
 void ChatPreviewController_OnPanelFocused(auto original, ChatPreviewController* _this, int32_t index)
 {
+  ObserveChatPreview(_this);
   static const auto disableGalaxyChat = Config::Get().disable_galaxy_chat;
   static const auto disableVeilChat   = Config::Get().disable_veil_chat;
 
@@ -142,6 +249,9 @@ void ChatPreviewController_OnRegionalMessageReceived(auto original, ChatPreviewC
 
 void InstallChatPatches()
 {
+  if (install_screen_manager_update_hook() && register_screen_manager_update_callback(UpdateChatOptions))
+    spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}",
+                 Config::Get().auto_open_chat, Config::Get().default_chat_width);
   if (auto fullscreen_controller =
           il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Chat", "FullScreenChatViewController");
       !fullscreen_controller.isValidHelper()) {
