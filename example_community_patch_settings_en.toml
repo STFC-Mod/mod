@@ -792,14 +792,6 @@ default_chat_width = 0
 # Change to true to remove Galaxy Chat from the game
 disable_galaxy_chat = false
 
-# Initial side-chat width in canvas units. 0 keeps the game default.
-# The game clamps positive values to the available screen space and minimum width.
-default_chat_width = 0.0
-
-# Open alliance side chat once per login, after station and chat initialization.
-# Waits for section completion and three continuous seconds of readiness.
-auto_open_chat = false
-
 # Change to true to remove Veil Chat from the game
 disable_veil_chat = false
 
