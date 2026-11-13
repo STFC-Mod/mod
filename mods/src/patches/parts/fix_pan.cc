@@ -14,6 +14,44 @@
 #include <spud/detour.h>
 #include <cmath>
 
+namespace
+{
+// Native LateUpdate uses _deltaScaler for both keyboard movement and coasting.
+// Apply our falloff to the cached delta once, and preserve native keyboard speed
+// while preventing a second native fade. Restore both fields after the call.
+struct NativePanScalers {
+  NavigationPan* pan;
+  float          delta;
+  float          keyboard;
+
+  NativePanScalers(NavigationPan* pan, float speed)
+      : pan(pan)
+      , delta(pan->_deltaScaler)
+      , keyboard(pan->_keyboardDeltaScaler)
+  {
+    pan->_deltaScaler         = 1.0f;
+    pan->_keyboardDeltaScaler = keyboard * delta * speed;
+  }
+
+  ~NativePanScalers()
+  {
+    pan->_keyboardDeltaScaler = keyboard;
+    pan->_deltaScaler         = delta;
+  }
+};
+} // namespace
+
+void NavigationPan_MoveCamera_Hook(auto original, NavigationPan* _this, vec2 delta, bool is_momentum)
+{
+  // Only fresh recognizer input is scaled. MoveCamera caches the effective
+  // movement, so scaling coasting again would compound speed every frame.
+  if (!is_momentum && _this->_panningStarted) {
+    delta.x *= Config::Get().system_pan_speed;
+    delta.y *= Config::Get().system_pan_speed;
+  }
+  original(_this, delta, is_momentum);
+}
+
 TKTouch *TKTouch_populateWithPosition_Hook(auto original, TKTouch *_this, uintptr_t pos, TouchPhase phase)
 {
   auto r = original(_this, pos, phase);
@@ -24,7 +62,7 @@ TKTouch *TKTouch_populateWithPosition_Hook(auto original, TKTouch *_this, uintpt
 }
 
 // Retain the native tutorial and modal/text-input gates while replacing the
-// keyboard source through the existing LateUpdate hook, without new detours.
+// keyboard source through the existing LateUpdate hook.
 bool KeyboardPanAllowed()
 {
   static auto hub          = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "Hub");
@@ -58,10 +96,14 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
 
   if (!config.disable_move_keys && config.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
     if (config.use_scopely_hotkeys || !config.installHotkeyHooks) {
-      original(_this);
       native_handled = true;
-    } else if (!_this->BlockPan() && !_this->_trackingPOI && !dragging
-               && KeyboardPanAllowed()) {
+      if (!dragging) {
+        d->x *= config.system_pan_momentum_falloff;
+        d->y *= config.system_pan_momentum_falloff;
+        NativePanScalers scalers(_this, config.system_pan_speed);
+        original(_this);
+      }
+    } else if (!_this->BlockPan() && !_this->_trackingPOI && !dragging && KeyboardPanAllowed()) {
       // Opposite bindings cancel; normalize diagonals like the native 2D composite.
       float x = float(MapKey::IsPressed(GameFunction::MoveRight)) - float(MapKey::IsPressed(GameFunction::MoveLeft));
       float y = float(MapKey::IsPressed(GameFunction::MoveUp)) - float(MapKey::IsPressed(GameFunction::MoveDown));
@@ -69,7 +111,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
       if (length > 0.0f) {
         d->x = -x / length * _this->_keyboardDeltaScaler;
         d->y = -y / length * _this->_keyboardDeltaScaler;
-        _this->MoveCamera(vec2{d->x * _this->_deltaScaler, d->y * _this->_deltaScaler}, true);
+        const float speed = _this->_deltaScaler * config.system_pan_speed;
+        _this->MoveCamera(vec2{d->x * speed, d->y * speed}, true);
         by_keys = true;
       }
     }
@@ -78,12 +121,10 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   if (_this->BlockPan() || (_this->_trackingPOI && !disable_target_camera_lock)) {
     d->x = 0.0f;
     d->y = 0.0f;
-  } else if (!dragging && !by_keys) {
-    d->x = d->x * Config::Get().system_pan_momentum_falloff;
-    d->y = d->y * Config::Get().system_pan_momentum_falloff;
-    if (!native_handled) {
-      _this->MoveCamera(vec2{d->x, d->y}, true);
-    }
+  } else if (!dragging && !by_keys && !native_handled) {
+    d->x *= config.system_pan_momentum_falloff;
+    d->y *= config.system_pan_momentum_falloff;
+    _this->MoveCamera(vec2{d->x, d->y}, true);
   }
   _this->_farMagRadiusRatioSystemExtended = _this->_farMagRadiusRatioSystemNormal;
   return true;
@@ -135,6 +176,11 @@ void InstallPanHooks()
       !navHelper.isValidHelper()) {
     ErrorMsg::MissingHelper("Navigation", "NavigationPan");
   } else {
+    if (const auto ptr = navHelper.GetMethod("MoveCamera"); ptr == nullptr) {
+      ErrorMsg::MissingMethod("NavigationPan", "MoveCamera");
+    } else {
+      SPUD_STATIC_DETOUR(ptr, NavigationPan_MoveCamera_Hook);
+    }
     if (const auto ptr = navHelper.GetMethod("LateUpdate"); ptr == nullptr) {
       ErrorMsg::MissingMethod("NavigationPan", "LateUpdate");
     } else {

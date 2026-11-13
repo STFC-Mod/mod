@@ -1102,15 +1102,25 @@ void Config::Load()
   this->keyboard_zoom_speed =
       get_config_or_default(config, parsed, "graphics", "keyboard_zoom_speed", DCG::keyboard_zoom_speed, write_config);
 
-  if (this->enable_experimental) {
-    this->system_pan_momentum = get_config_or_default(config, parsed, "graphics", "system_pan_momentum",
-                                                      DCG::system_pan_momentum, write_config);
+  this->system_pan_speed =
+      get_config_or_default(config, parsed, "graphics", "system_pan_speed", DCG::system_pan_speed, write_config);
+  if (!std::isfinite(this->system_pan_speed) || this->system_pan_speed <= 0.0f || this->system_pan_speed > 10.0f) {
+    spdlog::warn("Invalid system_pan_speed {}; using {}", this->system_pan_speed, DCG::system_pan_speed);
+    this->system_pan_speed = DCG::system_pan_speed;
+    parsed["graphics"].as_table()->insert_or_assign("system_pan_speed", this->system_pan_speed);
   }
 
   spdlog::debug("");
 
   this->system_pan_momentum_falloff = get_config_or_default(config, parsed, "graphics", "system_pan_momentum_falloff",
-                                                            DCG::system_pan_momentum_falloff, write_log);
+                                                            DCG::system_pan_momentum_falloff, write_config);
+  if (!std::isfinite(this->system_pan_momentum_falloff) || this->system_pan_momentum_falloff < 0.0f
+      || this->system_pan_momentum_falloff > 1.0f) {
+    spdlog::warn("Invalid system_pan_momentum_falloff {}; using {}", this->system_pan_momentum_falloff,
+                 DCG::system_pan_momentum_falloff);
+    this->system_pan_momentum_falloff = DCG::system_pan_momentum_falloff;
+    parsed["graphics"].as_table()->insert_or_assign("system_pan_momentum_falloff", this->system_pan_momentum_falloff);
+  }
   this->disable_target_camera_lock = get_config_or_default(config, parsed, "graphics", "disable_target_camera_lock",
                                                          DCG::disable_target_camera_lock, write_log);
   this->borderless_fullscreen =

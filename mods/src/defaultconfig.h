@@ -50,7 +50,7 @@ namespace Graphics
   constexpr auto        keyboard_zoom_speed             = 350;
   constexpr auto        system_pan_momentum_falloff     = 0.8;
   constexpr bool        disable_target_camera_lock = false;
-  constexpr auto        system_pan_momentum             = 0.4;
+  constexpr auto        system_pan_speed                = 1.0f;
   constexpr auto        system_zoom_preset_1            = 50;
   constexpr auto        system_zoom_preset_2            = 500;
   constexpr auto        system_zoom_preset_3            = 1250;

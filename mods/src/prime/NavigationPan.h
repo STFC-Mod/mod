@@ -16,8 +16,8 @@ public:
   // expect a boxed value and would read/write the adjacent pixel drag delta.
   __declspec(property(get = __get__lastDelta)) vec2* _lastDelta;
   __declspec(property(get = __get__panningStarted)) bool _panningStarted;
-  __declspec(property(get = __get__deltaScaler)) float _deltaScaler;
-  __declspec(property(get = __get__keyboardDeltaScaler)) float _keyboardDeltaScaler;
+  __declspec(property(get = __get__deltaScaler, put = __set__deltaScaler)) float                 _deltaScaler;
+  __declspec(property(get = __get__keyboardDeltaScaler, put = __set__keyboardDeltaScaler)) float _keyboardDeltaScaler;
   __declspec(property(get = __get__trackingPOI, put = __set__trackingPOI)) uintptr_t* _trackingPOI;
 
   __declspec(property(get = __get__farMagRadiusRatioSystemNormal,
@@ -75,10 +75,22 @@ public:
     return *(float*)((ptrdiff_t)this + field.offset());
   }
 
+  void __set__keyboardDeltaScaler(float value)
+  {
+    static auto field                           = get_class_helper().GetField("_keyboardDeltaScaler");
+    *(float*)((ptrdiff_t)this + field.offset()) = value;
+  }
+
   float __get__deltaScaler()
   {
     static auto field = get_class_helper().GetField("_deltaScaler");
     return *(float*)((ptrdiff_t)this + field.offset());
+  }
+
+  void __set__deltaScaler(float value)
+  {
+    static auto field                           = get_class_helper().GetField("_deltaScaler");
+    *(float*)((ptrdiff_t)this + field.offset()) = value;
   }
 
   float __get__farMagRadiusRatioSystemNormal()

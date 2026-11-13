@@ -192,7 +192,7 @@ public:
   bool              adjust_scale_res;
 
   bool  use_out_of_dock_power;
-  float system_pan_momentum;
+  float system_pan_speed;
   float system_pan_momentum_falloff;
   bool disable_target_camera_lock;
 
