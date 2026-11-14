@@ -4,9 +4,9 @@
 #pragma push_macro("GROUP_SIZE")
 #undef GROUP_SIZE
 #if IL2CPP_USE_SPARSEHASH
-#include "../../external/google/sparsehash/sparse_hash_map.h"
+#include <sparsehash/sparse_hash_map.h>
 #else
-#include "../../external/google/sparsehash/dense_hash_map.h"
+#include <sparsehash/dense_hash_map.h>
 #endif
 #pragma pop_macro("GROUP_SIZE")
 

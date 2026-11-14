@@ -1,0 +1,45 @@
+#pragma once
+
+// The mod's version, for the logs, the loading screen and the Windows version resource. CI
+// stamps VERSION_COMMIT_HASH, so keep that line's shape.
+
+// clang-format off
+#define VERSION_MAJOR               1
+#define VERSION_MINOR               1
+#define VERSION_REVISION            11
+#define VERSION_PATCH               1
+#define VERSION_COMMIT_HASH         ""
+
+#define VERSION_STRINGIFY_(s)       #s
+#define VERSION_STRINGIFY(s)        VERSION_STRINGIFY_(s)
+
+// A nonzero patch is a beta build.
+#if VERSION_PATCH
+	#define VERSION_PATCH_STR " (Beta)"
+#else
+	#define VERSION_PATCH_STR ""
+#endif
+
+#define VER_FILE_DESCRIPTION_STR    "Star Trek Fleet Command: Community Mod" VERSION_PATCH_STR
+
+#define VER_FILE_VERSION            VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION, VERSION_PATCH
+#define VER_FILE_VERSION_STR        VERSION_STRINGIFY(VERSION_MAJOR) "." VERSION_STRINGIFY(VERSION_MINOR) "." VERSION_STRINGIFY(VERSION_REVISION) "." VERSION_STRINGIFY(VERSION_PATCH)
+
+#define VER_PRODUCTNAME_STR         "STFC: Community Mod"
+#define VER_PRODUCT_VERSION         VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION
+#define VER_PRODUCT_VERSION_STR     VER_FILE_VERSION_STR
+// Windows loads the mod as a proxy version.dll.
+#define VER_ORIGINAL_FILENAME_STR   "version.dll"
+#define VER_INTERNAL_NAME_STR       VER_ORIGINAL_FILENAME_STR
+#define VER_COPYRIGHT_STR           "Copyright (C) 2026"
+
+#ifdef DEBUG
+#define VER_FILEFLAGS               VS_FF_DEBUG
+#else
+#define VER_FILEFLAGS               0
+#endif
+
+#ifndef VS_VERSION_INFO
+#define VS_VERSION_INFO 1
+#endif
+// clang-format on

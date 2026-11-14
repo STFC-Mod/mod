@@ -1,0 +1,4 @@
+module librsync {
+    header "rsync.h"
+    export *
+}

@@ -1,0 +1,37 @@
+// The version resource of version.dll. Values come from src/mod/version.h and the build identity defines that
+// zig/mod.zig passes to the resource compiler.
+#include <version.h>
+
+// The stfc-identity-v1 marker. CI and downstream tools parse its fields and their order.
+#define STFC_IDENTITY_COMMENT_STR   "stfc-identity-v1;distribution=netniv.stfc-community-mod" \
+                                    ";source=" STFC_SOURCE_STATE_ID \
+                                    ";base=" STFC_BASE_COMMIT \
+                                    ";build=" STFC_BUILD_INVOCATION_ID \
+                                    ";mode=" STFC_BUILD_MODE \
+                                    ";channel=" STFC_BUILD_CHANNEL
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION             VER_FILE_VERSION
+PRODUCTVERSION          VER_PRODUCT_VERSION
+FILEFLAGS               VER_FILEFLAGS
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        // US English, Unicode: matches the Translation entry below.
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "FileDescription",  VER_FILE_DESCRIPTION_STR
+            VALUE "FileVersion",      VER_FILE_VERSION_STR
+            VALUE "Comments",         STFC_IDENTITY_COMMENT_STR
+            VALUE "InternalName",     VER_INTERNAL_NAME_STR
+            VALUE "LegalCopyright",   VER_COPYRIGHT_STR
+            VALUE "OriginalFilename", VER_ORIGINAL_FILENAME_STR
+            VALUE "ProductName",      VER_PRODUCTNAME_STR
+            VALUE "ProductVersion",   VER_PRODUCT_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

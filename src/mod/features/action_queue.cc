@@ -1,0 +1,396 @@
+// [control] kirshara_fixes: three fixes for the Kir'Shara action queue, each with its own [patches] group.
+//
+// - ActionQueueRecovery hands a failed course response straight to the native planner when its target is gone.
+// - ThinQueueProtection resumes a fleet the native planner or watchdog left idle after pruning its queue.
+// - QueueAddressGuard keeps a queue from being cleared over a misreported fleet address.
+//
+// The decisions live in action_queue.h. The hooks here gather evidence around the game's own handlers, and only
+// ever call back into the game's own entry points; they never edit queues, flags or retry counts.
+
+#include "features/action_queue.h"
+#include "config.h"
+#include "features/features.h"
+
+#include "game/queues.h"
+
+#include <il2cpp/hook.h>
+#include <il2cpp/il2cpp.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <utility>
+#include <vector>
+
+namespace
+{
+// The only check a hook needs: each fix installs whole or not at all, so a hook that runs has its partners.
+bool QueueFixesEnabled()
+{
+  const auto& control = Config::Get().control;
+  return control.kirshara_fixes && control.queue_enabled;
+}
+
+// Sets a thread-local for the length of one native call, so hooks the game reaches from inside it can see it.
+template <typename T> class QueueCallScope
+{
+public:
+  QueueCallScope(T& slot, T value)
+      : slot_(slot)
+      , previous_(std::exchange(slot, value))
+  {
+  }
+  ~QueueCallScope()
+  { slot_ = previous_; }
+  QueueCallScope(const QueueCallScope&)            = delete;
+  QueueCallScope& operator=(const QueueCallScope&) = delete;
+
+private:
+  T& slot_;
+  T  previous_;
+};
+
+ActionQueueInstance* FindQueue(ActionQueueManager* manager, int64_t fleet_id)
+{
+  for (auto* queue : il2cpp::Items(manager->battleQueue()))
+    if (queue && queue->PlayerFleetId() == fleet_id)
+      return queue;
+  return nullptr;
+}
+
+// Empty, which reads as no queue, when the queue or any action cannot be read. The game bounds the queue's length.
+action_queue::QueueSnapshot SnapshotOf(ActionQueueInstance* queue)
+{
+  auto* actions = queue ? queue->actionQueue() : nullptr;
+  if (!actions)
+    return {};
+  action_queue::QueueSnapshot snapshot{
+      .player_fleet_id        = queue->PlayerFleetId(),
+      .is_engaging            = queue->IsEngaging(),
+      .last_engaged_target_id = queue->LastEngagedTargetId(),
+      .pending_target_id      = queue->PendingEngageTargetId(),
+  };
+  for (auto* action : *actions) {
+    const auto target = action ? action->FleetId() : 0;
+    if (!target)
+      return {};
+    snapshot.targets.push_back(target);
+  }
+  snapshot.present = snapshot.player_fleet_id != 0;
+  return snapshot;
+}
+
+// --- Faster queue recovery ---
+
+action_queue::Attempts recovery_attempts;
+
+// Set while the course response handler runs for a failed, non-recall response whose queue was engaging on entry.
+// Only then may the retry decision the handler makes inside hand over to the planner.
+thread_local bool failed_while_engaging = false;
+
+// `target`, when given, is checked against every queued action; otherwise only the head is read.
+action_queue::RetryState RetryStateOf(ActionQueueInstance* queue, int64_t target = 0)
+{
+  if (!queue)
+    return {};
+  action_queue::RetryState state{
+      .fleet    = queue->PlayerFleetId(),
+      .attempt  = queue->LastEngageAttemptTime(),
+      .engaging = queue->IsEngaging(),
+  };
+  auto* actions = queue->actionQueue();
+  if (!actions)
+    return state;
+  state.count = actions->Count();
+  if (state.count > 0) {
+    auto* head = (*actions)[0];
+    if (!head)
+      return state;
+    state.front = head->FleetId();
+  }
+  if (target) {
+    for (auto* action : *actions) {
+      if (!action)
+        return state;
+      state.contains_target |= action->FleetId() == target;
+    }
+  }
+  state.valid = state.fleet != 0;
+  return state;
+}
+
+// An unreadable queue might hold the target, so it counts as holding it.
+bool AbsentFromAllQueues(ActionQueueManager* manager, int64_t target)
+{
+  auto* queues = manager->battleQueue();
+  return queues && std::ranges::all_of(*queues, [target](ActionQueueInstance* queue) {
+           if (!queue)
+             return true;
+           const auto state = RetryStateOf(queue, target);
+           return state.valid && !state.contains_target;
+         });
+}
+
+EngageResult ActionQueueManager_TryPlanPathAndEngageTarget_Hook(auto original, ActionQueueManager* _this,
+                                                                FleetPlayerData* fleet, ActionQueueInstance* queue)
+{
+  if (!QueueFixesEnabled() || !fleet)
+    return original(_this, fleet, queue);
+  const auto slot = fleet->Index();
+  recovery_attempts.Remember(slot, RetryStateOf(queue));
+  const auto result = original(_this, fleet, queue);
+  // Only a dispatched attempt can be answered by a course response.
+  if (result != EngageResult::Success)
+    recovery_attempts.Forget(slot);
+  return result;
+}
+
+// Called by the game from inside OnSetCourseResponseEventHandler, for the failed target and the response fleet's
+// queue.
+bool ActionQueueManager_ShouldRetryFailedSetCourse_Hook(auto original, ActionQueueManager* _this, int64_t target,
+                                                        ActionQueueInstance* queue)
+{
+  const bool retry = original(_this, target, queue);
+  if (retry || !failed_while_engaging)
+    return retry;
+  const auto state = RetryStateOf(queue, target);
+  // The native false branch removes the target from every fleet's queue. Leave that to it while any queue might
+  // still hold the target. Checked after the cheap test because it reads every queue.
+  if (!action_queue::CanAdvance(state, target) || !AbsentFromAllQueues(_this, target)
+      || !recovery_attempts.Consume(state, target))
+    return retry;
+  // True takes the handler's retry branch, which runs the native planner for this fleet with all of its checks.
+  return true;
+}
+
+void ActionQueueManager_OnSetCourseResponseEventHandler_Hook(auto original, ActionQueueManager* _this,
+                                                             SetCourseResponse response)
+{
+  bool engaging = false;
+  if (!response.success && !response.is_recall && QueueFixesEnabled())
+    if (auto* queue = FindQueue(_this, response.fleet_id))
+      engaging = queue->IsEngaging();
+  QueueCallScope scope(failed_while_engaging, engaging);
+  original(_this, response);
+}
+
+// --- Thin queue protection ---
+
+ActionQueueInstance* FindQueueWithHead(ActionQueueManager* manager, int64_t target)
+{
+  for (auto* queue : il2cpp::Items(manager->battleQueue()))
+    if (const auto snapshot = SnapshotOf(queue); snapshot.present && snapshot.Head() == target)
+      return queue;
+  return nullptr;
+}
+
+// Asks the fleet to engage its new head after a native call pruned its queue, when the evidence allows it.
+bool ResumeAfterPrune(ActionQueueManager* manager, ActionQueueInstance* queue, FleetPlayerData* fleet, bool idle,
+                      const action_queue::QueueSnapshot& before, const action_queue::QueueSnapshot& after,
+                      const char* source)
+{
+  if (!action_queue::IsNativePruneResumeCandidate(idle, before, after))
+    return false;
+  // The game's own engage entry, so faster recovery sees this attempt like any other. If it throws, the binding
+  // contains the exception and reports it, but the result reads as Success.
+  // TODO(tashcan): let the binding tell a contained exception apart, so a throw is not taken for an engage.
+  const auto result = manager->TryPlanPathAndEngageTarget(fleet, queue);
+  spdlog::info("[ThinQueueProtection] resumed fleet {} after the {} pruned it: head {} -> {} of {}, engage result {}",
+               after.player_fleet_id, source, before.Head(), after.Head(), after.targets.size(),
+               std::to_underlying(result));
+  return result == EngageResult::Success;
+}
+
+bool ActionQueueManager_DoPlanPathAndEngageTarget_Hook(auto original, ActionQueueManager* _this, FleetPlayerData* fleet)
+{
+  if (!QueueFixesEnabled() || !fleet)
+    return original(_this, fleet);
+  const auto id     = fleet->Id();
+  auto*      queue  = FindQueue(_this, id);
+  const auto before = SnapshotOf(queue);
+  const bool result = original(_this, fleet);
+  // A replaced queue (a new session) is not evidence of pruning.
+  if (FindQueue(_this, id) != queue)
+    return result;
+  const auto after = SnapshotOf(queue);
+  const bool idle  = !result && before.player_fleet_id == id && fleet->CurrentState() == FleetState::IdleInSpace;
+  return ResumeAfterPrune(_this, queue, fleet, idle, before, after, "planner") || result;
+}
+
+void ActionQueueManager_HandleStall_Hook(auto original, ActionQueueManager* _this, ActionQueueInstance* queue,
+                                         FleetPlayerData* fleet, FleetDeployedData* deployed)
+{
+  if (!QueueFixesEnabled() || !fleet || !deployed)
+    return original(_this, queue, fleet, deployed);
+  const auto before = SnapshotOf(queue);
+  original(_this, queue, fleet, deployed);
+  if (FindQueue(_this, before.player_fleet_id) != queue)
+    return;
+  const auto after = SnapshotOf(queue);
+  const bool idle  = before.player_fleet_id == fleet->Id() && before.player_fleet_id == deployed->Id()
+                     && fleet->CurrentState() == FleetState::IdleInSpace
+                     && deployed->CurrentState() == DeployedFleetState::Idle && !deployed->IsDestroyed()
+                     && !deployed->CurrentlyBattling();
+  ResumeAfterPrune(_this, queue, fleet, idle, before, after, "watchdog");
+}
+
+// A destroyed target can stay at the head of an idle queue after disposal; the game's ProcessQueue removes it.
+void ActionQueueManager_OnFleetsDisposedEventHandler_Hook(auto original, ActionQueueManager* _this,
+                                                          il2cpp::List<FleetDeployedData*>* fleets)
+{
+  if (!QueueFixesEnabled())
+    return original(_this, fleets);
+  // Read before the game disposes of them.
+  std::vector<int64_t> destroyed;
+  for (auto* fleet : il2cpp::Items(fleets))
+    if (fleet && fleet->IsDestroyed() && fleet->RemovalReason() == FleetRemovalReason::Destroyed)
+      if (const auto id = fleet->Id(); id && !std::ranges::contains(destroyed, id))
+        destroyed.push_back(id);
+  original(_this, fleets);
+  for (const auto target : destroyed) {
+    const auto queue = SnapshotOf(FindQueueWithHead(_this, target));
+    if (!action_queue::ShouldProcessDestroyedHead(target, queue))
+      continue;
+    _this->ProcessQueue(target, false);
+    spdlog::info("[ThinQueueProtection] removed destroyed target {} from the head of fleet {}'s queue", target,
+                 queue.player_fleet_id);
+  }
+}
+
+// --- Queue address guard ---
+
+// Set while the game handles a player-state event, the only time a queue is cleared over a misreported address. Only
+// set while the fixes are on, so the hooks that read it need no setting check of their own.
+thread_local bool in_player_state_event = false;
+
+// What the queue's address check has seen so far: the fleet's own deployment, and the target being compared.
+struct AddressCheck {
+  FleetPlayerData*   fleet{};
+  int64_t            fleet_id{};
+  bool               own_resolved{};
+  FleetDeployedData* own_deployment{};
+  FleetDeployedData* target{};
+};
+thread_local AddressCheck* current_address_check = nullptr;
+
+action_queue::Address AddressOf(NodeAddress* address)
+{
+  if (!address)
+    return {};
+  action_queue::Address value{true, address->Galaxy(), address->System(), address->Planet(), address->Instance()};
+  value.valid = value.galaxy >= 0 && value.system > 0 && value.planet >= 0 && value.instance >= 0;
+  return value;
+}
+
+void ActionQueueManager_OnPlayerFleetStateChangedEventHandler_Hook(auto original, ActionQueueManager* _this,
+                                                                   il2cpp::List<FleetPlayerData*>* fleets)
+{
+  if (!QueueFixesEnabled())
+    return original(_this, fleets);
+  QueueCallScope scope(in_player_state_event, true);
+  original(_this, fleets);
+}
+
+bool ActionQueueManager_DoesFleetQueueContainMismatchedAddressTargets_Hook(auto original, ActionQueueManager* _this,
+                                                                           FleetPlayerData* fleet)
+{
+  if (!in_player_state_event || !fleet)
+    return original(_this, fleet);
+  // The check walks this fleet's queue, so an empty one never looks up a deployment.
+  AddressCheck   check{fleet, fleet->Id()};
+  QueueCallScope scope(current_address_check, &check);
+  return original(_this, fleet);
+}
+
+// The check reads the fleet's address once per target. Inside it, and only there, a fleet whose evidence matches
+// the observed fault reports its own deployment's address. Nothing is written or remembered.
+NodeAddress* FleetPlayerData_get_Address_Hook(auto original, FleetPlayerData* _this)
+{
+  auto* reported = original(_this);
+  auto* check    = current_address_check;
+  if (!check || _this != check->fleet || !check->own_deployment || !check->target)
+    return reported;
+  auto*                               own      = check->own_deployment;
+  auto*                               deployed = own->address();
+  const action_queue::AddressEvidence evidence{
+      .planning_recall = own->IsPlanningRecallCourse(),
+      .player_state    = static_cast<int>(_this->CurrentState()),
+      .deployed_state  = static_cast<int>(own->CurrentState()),
+      .removal_reason  = static_cast<int>(own->RemovalReason()),
+      .reported        = AddressOf(reported),
+      .deployed        = AddressOf(deployed),
+      .target          = AddressOf(check->target->address()),
+  };
+  if (!action_queue::UseDeployedAddress(evidence))
+    return reported;
+  spdlog::debug("[QueueAddressGuard] fleet {} kept its queue: reported in system {}, deployed in system {}",
+                check->fleet_id, evidence.reported.system, evidence.deployed.system);
+  return deployed;
+}
+
+// The check looks up each queued target here. The fleet's own deployment is looked up once, alongside.
+FleetDeployedData* DeploymentService_GetDeployedFleet_Hook(auto original, DeploymentService* _this, int64_t fleet_id)
+{
+  auto* result = original(_this, fleet_id);
+  if (auto* check = current_address_check; check) {
+    check->target = result;
+    if (!std::exchange(check->own_resolved, true))
+      check->own_deployment = original(_this, check->fleet_id);
+  }
+  return result;
+}
+
+// --- Installation ---
+
+bool InstallActionQueueRecovery()
+{
+  using Manager = ActionQueueManager::Class;
+  il2cpp::HookSet hooks("ActionQueueRecovery");
+  IL2CPP_STAGE(hooks,
+               Manager::Method<EngageResult(FleetPlayerData*, ActionQueueInstance*)>("TryPlanPathAndEngageTarget"),
+               ActionQueueManager_TryPlanPathAndEngageTarget_Hook);
+  IL2CPP_STAGE(hooks, Manager::Method<bool(int64_t, ActionQueueInstance*)>("ShouldRetryFailedSetCourse"),
+               ActionQueueManager_ShouldRetryFailedSetCourse_Hook);
+  IL2CPP_STAGE(hooks, Manager::Method<void(SetCourseResponse)>("OnSetCourseResponseEventHandler"),
+               ActionQueueManager_OnSetCourseResponseEventHandler_Hook);
+  return hooks.Commit();
+}
+
+bool InstallThinQueueProtection()
+{
+  using Manager = ActionQueueManager::Class;
+  // Called rather than hooked: a missing one would read as a successful engage.
+  if (!Manager::Method<EngageResult(FleetPlayerData*, ActionQueueInstance*)>("TryPlanPathAndEngageTarget"))
+    return false;
+  il2cpp::HookSet hooks("ThinQueueProtection");
+  IL2CPP_STAGE(hooks, Manager::Method<bool(FleetPlayerData*)>("DoPlanPathAndEngageTarget"),
+               ActionQueueManager_DoPlanPathAndEngageTarget_Hook);
+  IL2CPP_STAGE(hooks, Manager::Method<void(ActionQueueInstance*, FleetPlayerData*, FleetDeployedData*)>("HandleStall"),
+               ActionQueueManager_HandleStall_Hook);
+  IL2CPP_STAGE(hooks, Manager::Method<void(il2cpp::List<FleetDeployedData*>*)>("OnFleetsDisposedEventHandler"),
+               ActionQueueManager_OnFleetsDisposedEventHandler_Hook);
+  return hooks.Commit();
+}
+
+bool InstallQueueAddressGuard()
+{
+  using Manager = ActionQueueManager::Class;
+  il2cpp::HookSet hooks("QueueAddressGuard");
+  IL2CPP_STAGE(hooks, Manager::Method<void(il2cpp::List<FleetPlayerData*>*)>("OnPlayerFleetStateChangedEventHandler"),
+               ActionQueueManager_OnPlayerFleetStateChangedEventHandler_Hook);
+  IL2CPP_STAGE(hooks, Manager::Method<bool(FleetPlayerData*)>("DoesFleetQueueContainMismatchedAddressTargets"),
+               ActionQueueManager_DoesFleetQueueContainMismatchedAddressTargets_Hook);
+  IL2CPP_STAGE(hooks, FleetPlayerData::Class::Method<NodeAddress*()>("get_Address"), FleetPlayerData_get_Address_Hook);
+  IL2CPP_STAGE(hooks, DeploymentService::Class::Method<FleetDeployedData*(int64_t)>("GetDeployedFleet"),
+               DeploymentService_GetDeployedFleet_Hook);
+  return hooks.Commit();
+}
+} // namespace
+
+// Recovery and thin protection run on Windows and both Mac architectures: the host ABI passes the 24-byte
+// SetCourseResponse as the game does, and the method lookups reject a client whose managed layout differs.
+const Feature kActionQueueRecovery{"ActionQueueRecovery", &Config::Patches::actionqueuerecoveryhooks,
+                                   InstallActionQueueRecovery};
+const Feature kThinQueueProtection{"ThinQueueProtection", &Config::Patches::thinqueueprotectionhooks,
+                                   InstallThinQueueProtection};
+const Feature kQueueAddressGuard{"QueueAddressGuard", &Config::Patches::queueaddressguardhooks,
+                                 InstallQueueAddressGuard};

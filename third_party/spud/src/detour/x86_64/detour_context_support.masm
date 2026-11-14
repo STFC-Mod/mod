@@ -1,0 +1,12 @@
+.data
+
+.code
+; uintptr_t spud_read_context_value(uintptr_t *entry): the jump stub's r11
+; (the hook's context) and r10 (the entry shard it counted in).
+spud_read_context_value proc
+  mov [rcx], r10
+  mov rax, r11
+  ret
+spud_read_context_value endp
+
+end

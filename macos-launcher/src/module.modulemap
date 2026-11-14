@@ -1,9 +1,0 @@
-module libplzma {
-    header "../deps/PLzmaSDK/libplzma.h"
-    export *
-}
-
-module librsync {
-    header "rsync.h"
-    export *
-}

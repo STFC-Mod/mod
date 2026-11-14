@@ -1,0 +1,19 @@
+// Pinned cross-compilation sysroots. Fetch them with `zig build fetch-toolchains`.
+//
+// `url` may be left empty and supplied at fetch time through the environment
+// variable named in `url_env` instead. When `sha256` is empty the fetcher
+// prints the digest of the downloaded archive so it can be pinned here.
+.{
+    .windows_msvc = .{
+        .version = "msvc-14.50.35717_sdk-10.0.26100.0",
+        .url = "",
+        .url_env = "STFC_WINDOWS_TOOLCHAIN_URL",
+        .sha256 = "0a9c8c1501574aae6d2f36dfe48827944cce5aa9c674f2baa0df1ec6a14e519f",
+    },
+    .macos_sdk = .{
+        .version = "",
+        .url = "",
+        .url_env = "STFC_MACOS_SDK_URL",
+        .sha256 = "",
+    },
+}

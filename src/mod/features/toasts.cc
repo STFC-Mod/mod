@@ -1,0 +1,388 @@
+// Toast banners: [ui] disabled_banner_types hides banner types, [ui] notify_banner_types mirrors them to Windows
+// notifications with a readable body for battle results, and [audio] alert_* plays a cue for battle results.
+
+#include "config.h"
+#include "features/features.h"
+#include "features/notification_audio.h"
+#include "features/toast_text.h"
+
+#include "game/server.h"
+#include "game/ui.h"
+
+#include <il2cpp/hook.h>
+#include <il2cpp/il2cpp.h>
+#include <spdlog/fmt/fmt.h>
+#include <spdlog/spdlog.h>
+
+#include <algorithm>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#if _WIN32
+#include <Windows.h>
+#include <winrt/windows.data.xml.dom.h>
+#include <winrt/windows.ui.notifications.h>
+#endif
+
+namespace
+{
+// --- Toast states ---
+
+constexpr std::pair<ToastState, const char*> kTitles[] = {
+    {ToastState::Standard, "Notification"},
+    {ToastState::FactionWarning, "Faction Warning"},
+    {ToastState::FactionLevelUp, "Faction Level Up"},
+    {ToastState::FactionLevelDown, "Faction Level Down"},
+    {ToastState::FactionDiscovered, "Faction Discovered"},
+    {ToastState::IncomingAttack, "Incoming Attack!"},
+    {ToastState::IncomingAttackFaction, "Incoming Faction Attack!"},
+    {ToastState::FleetBattle, "Fleet Battle"},
+    {ToastState::StationBattle, "Station Under Attack!"},
+    {ToastState::StationVictory, "Station Victory!"},
+    {ToastState::Victory, "Victory!"},
+    {ToastState::Defeat, "Defeat"},
+    {ToastState::StationDefeat, "Station Defeat"},
+    {ToastState::Tournament, "Event Progress"},
+    {ToastState::ArmadaCreated, "Armada Created"},
+    {ToastState::ArmadaCanceled, "Armada Canceled"},
+    {ToastState::ArmadaIncomingAttack, "Armada Under Attack!"},
+    {ToastState::ArmadaBattleWon, "Armada Victory!"},
+    {ToastState::ArmadaBattleLost, "Armada Defeated"},
+    {ToastState::DiplomacyUpdated, "Diplomacy Updated"},
+    {ToastState::JoinedTakeover, "Territory Capture Joined"},
+    {ToastState::CompetitorJoinedTakeover, "Competitor Joined Territory"},
+    {ToastState::AbandonedTerritory, "Territory Abandoned"},
+    {ToastState::TakeoverVictory, "Takeover Victory!"},
+    {ToastState::TakeoverDefeat, "Takeover Defeat"},
+    {ToastState::TreasuryProgress, "Treasury Progress"},
+    {ToastState::TreasuryFull, "Treasury Full"},
+    {ToastState::Achievement, "Achievement"},
+    {ToastState::AssaultVictory, "Assault Victory!"},
+    {ToastState::AssaultDefeat, "Assault Defeat"},
+    {ToastState::ChallengeComplete, "Challenge Complete"},
+    {ToastState::ChallengeFailed, "Challenge Failed"},
+    {ToastState::StrikeHit, "Strike Hit"},
+    {ToastState::StrikeDefeat, "Strike Defeat"},
+    {ToastState::WarchestProgress, "Warchest Progress"},
+    {ToastState::WarchestFull, "Warchest Full"},
+    {ToastState::PartialVictory, "Partial Victory"},
+    {ToastState::ArenaTimeLeft, "Arena Time Warning"},
+    {ToastState::ChainedEventScored, "Event Progress"},
+    {ToastState::FleetPresetApplied, "Fleet Preset Applied"},
+    {ToastState::SurgeWarmUpEnded, "Surge Started"},
+    {ToastState::SurgeHostileGroupDefeated, "Surge Hostiles Defeated"},
+    {ToastState::SurgeTimeLeft, "Surge Time Warning"},
+    {ToastState::QueueForLeaseActivated, "Queue Activated"},
+    {ToastState::QueueForLeaseExpired, "Queue Expired"},
+    {ToastState::PermanentQueuePurchased, "Permanent Queue Purchased"},
+    {ToastState::OutpostStartedOrEnded, "Outpost Update"},
+    {ToastState::CrossAllianceArmadaVictory, "Cross-Armada Victory!"},
+    {ToastState::CrossAllianceArmadaDefeat, "Cross-Armada Defeated"},
+    {ToastState::CrossAllianceArmadaPartialVictory, "Cross-Armada Partial Victory"},
+    {ToastState::FactionWeeklyEventsProgress, "Faction Weekly Event Progress"},
+    {ToastState::FactionWeeklyEventsComplete, "Faction Weekly Event Complete"},
+    {ToastState::ArmadaPlayerBlocked, "Armada Player Blocked"},
+    {ToastState::ArmadaPlayerUnblocked, "Armada Player Unblocked"},
+    {ToastState::DynamicCrisisUpdate, "Dynamic Crisis Update"},
+    {ToastState::DynamicCrisisFailed, "Dynamic Crisis Failed"},
+    {ToastState::DynamicCrisisCompleted, "Dynamic Crisis Completed"},
+    {ToastState::GalacticAnomalySystemEntered, "Galactic Anomaly Entered"},
+};
+
+// Indexed by Digit.PrimePlatform.Models.EventCategories.
+constexpr const char* kEventCategories[] = {
+    "Standard",           "Daily Goals",          "Daily Milestone",    "Leaderboard",           "Stat",
+    "Battle Pass Season", "Battle Pass Event",    "Treasury Progress",  "Treasury Reward",       "Server Clash",
+    "Webstore Event",     "Player Lifecycle",     "Field Training",     "FT Category",           "Cutscenes",
+    "Minigame",           "Minigame Stage",       "Warchest",           "Alliance Game",         "Alliance Game Task",
+    "Meta Event",         "Meta Event Objective", "Invasion",           "Loop Museum",           "Loop Museum Task",
+    "PLC BP Season",      "PLC BP Event",         "Progression Reward", "Faction Weekly Events",
+};
+
+// Toasts whose Data is an EventModel; their body is prefixed with the event's category.
+constexpr ToastState kEventToasts[] = {ToastState::Achievement,
+                                       ToastState::Tournament,
+                                       ToastState::ChainedEventScored,
+                                       ToastState::TreasuryProgress,
+                                       ToastState::TreasuryFull,
+                                       ToastState::WarchestProgress,
+                                       ToastState::WarchestFull,
+                                       ToastState::FactionWeeklyEventsProgress,
+                                       ToastState::FactionWeeklyEventsComplete};
+
+// Toasts whose Data is a BattleResultHeader.
+constexpr ToastState kBattleToasts[] = {
+    ToastState::Victory,         ToastState::Defeat,           ToastState::PartialVictory, ToastState::StationVictory,
+    ToastState::StationDefeat,   ToastState::StationBattle,    ToastState::IncomingAttack, ToastState::FleetBattle,
+    ToastState::ArmadaBattleWon, ToastState::ArmadaBattleLost, ToastState::AssaultVictory, ToastState::AssaultDefeat};
+
+constexpr BattleType kPvpBattles[] = {BattleType::Fleet,       BattleType::Base,      BattleType::ArmadaBase,
+                                      BattleType::ArmadaAsb,   BattleType::ArmadaMta, BattleType::PvpCuttingBeam,
+                                      BattleType::PvpChainShot};
+
+// --- Notification text ---
+
+// NPC and marauder profiles have no name of their own; the game names them by their localization id.
+std::string EnemyName(int64_t loca_id)
+{ return loca_id ? LocaleUtilities::Localize("marauder_name_only_{0}", "navigation", il2cpp::Box(loca_id)) : ""; }
+
+// A hull's display name: localized by numeric id, then by string id, then derived from its internal key.
+std::string HullName(BattleResultHeader* header, int64_t hull_id)
+{
+  if (hull_id == 0)
+    return "";
+  auto* specs = header->specService();
+  auto* hull  = specs ? specs->GetHull(hull_id) : nullptr;
+  if (!hull)
+    return fmt::format("Hull#{}", hull_id);
+
+  // An unknown id localizes to the identifier itself, which counts as no name.
+  const auto localized = [](Il2CppObject* id, const std::string& id_text) {
+    auto name = LocaleUtilities::Localize("ship_name_{0}", "ships", id);
+    return name == "ship_name_" + id_text ? std::string{} : name;
+  };
+  if (auto* ids = hull->idRefs()) {
+    if (const auto loca_id = ids->locaId())
+      if (auto name = localized(il2cpp::Box(loca_id), std::to_string(loca_id)); !name.empty())
+        return name;
+    if (auto* loca_string = ids->locaStringId(); loca_string && loca_string->length)
+      if (auto name = localized(reinterpret_cast<Il2CppObject*>(loca_string), il2cpp::ToUtf8(loca_string));
+          !name.empty())
+        return name;
+  }
+  auto* key = hull->name();
+  return key ? toast_text::HullKeyName(il2cpp::ToUtf8(key)) : fmt::format("Hull#{}", hull_id);
+}
+
+// "Player (Ship) vs Enemy (Ship)". Outside PvP a named enemy is enough; its hull class is noise.
+std::string BattleBody(BattleResultHeader* header)
+{
+  std::string player, enemy;
+  if (auto* profile = header->PlayerUserProfile())
+    player = il2cpp::ToUtf8(profile->name());
+  if (auto* profile = header->EnemyUserProfile()) {
+    enemy = il2cpp::ToUtf8(profile->name());
+    if (enemy.empty()) {
+      auto name = EnemyName(profile->locaId());
+      if (name != "Unknown")
+        enemy = std::move(name);
+    }
+  }
+  const bool pvp         = std::ranges::contains(kPvpBattles, header->Type());
+  const auto player_ship = toast_text::TitleCase(HullName(header, header->PlayerShipHullId()));
+  const auto enemy_ship  = toast_text::TitleCase(HullName(header, header->EnemyShipHullId()));
+
+  const auto side = [](const std::string& name, const std::string& ship) {
+    return name.empty() ? ship : ship.empty() ? name : fmt::format("{} ({})", name, ship);
+  };
+  const auto left  = side(player, player_ship);
+  const auto right = !pvp && !enemy.empty() ? enemy : side(enemy, enemy_ship);
+  if (left.empty() || right.empty())
+    return left + right;
+  return left + " vs " + right;
+}
+
+// "[TAG] Owner started an Armada!\nLv.042 Target"
+std::string ArmadaCreatedBody(ArmadaCreatedData* data)
+{
+  auto* attack   = data ? data->ArmadaAttack() : nullptr;
+  auto* alliance = data ? data->Alliance() : nullptr;
+  auto* owner    = attack ? attack->Owner() : nullptr;
+  auto* target   = attack ? attack->TargetUserProfile() : nullptr;
+
+  const auto tag         = alliance ? il2cpp::ToUtf8(alliance->tag()) : std::string{};
+  auto       owner_name  = owner ? il2cpp::ToUtf8(owner->name()) : std::string{};
+  auto       target_name = target ? il2cpp::ToUtf8(target->name()) : std::string{};
+  if (target_name.empty() && target)
+    target_name = EnemyName(target->locaId());
+  if (owner_name.empty())
+    owner_name = "An alliance member";
+  if (target_name.empty() || target_name == "Unknown")
+    target_name = "Armada target";
+
+  const auto owner_label = tag.empty() ? owner_name : fmt::format("[{}] {}", tag, owner_name);
+  const auto level       = attack ? attack->TargetLevel() : 0;
+  return fmt::format("{} started an Armada!\nLv.{:03} {}", owner_label, level, target_name);
+}
+
+// The string form of each element: strings as they are, everything else through its ToString override.
+std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameters)
+{
+  std::vector<std::string> values;
+  for (auto* element : il2cpp::Items(parameters)) {
+    values.push_back(element ? il2cpp::ToUtf8(il2cpp::ToString(static_cast<il2cpp::Object*>(element))) : "");
+  }
+  return values;
+}
+
+// Fills `text` from the toast's TextParameters, its object[] field. Other array fields may hold unboxed values
+// rather than object pointers, so they are not read as parameters.
+std::string FormatToastText(const std::string& text, Toast* toast)
+{
+  if (auto* parameters = toast->TextParameters(); parameters && parameters->size() > 0)
+    return toast_text::FormatPlaceholders(text, ParameterValues(parameters));
+  if (text.contains('{'))
+    spdlog::warn("[Toasts] TextParameters unavailable; placeholders unresolved in template: \"{}\"", text);
+  return text;
+}
+
+// The toast's own localized text with its parameters filled in, for toasts without a body of their own.
+std::string ToastText(Toast* toast)
+{
+  auto* context = toast->TextLocaleTextContext();
+  if (!context) {
+    spdlog::debug("[Toasts] No TextLocaleTextContext for toast state {}", std::to_underlying(toast->State()));
+    return {};
+  }
+
+  // LocaleUtilities.Localize fills the context's own parameters; the toast may carry them instead.
+  if (auto* text = LocaleUtilities::Localize(context, true, false)) {
+    auto result = il2cpp::ToUtf8(text);
+    return result.contains('{') ? FormatToastText(result, toast) : result;
+  }
+
+  Il2CppString* text    = nullptr;
+  auto*         manager = LanguageManager::Instance();
+  if (!manager || !manager->Localize(text, context) || !text) {
+    spdlog::debug("[Toasts] toast state {} could not be localized", std::to_underlying(toast->State()));
+    return {};
+  }
+  return FormatToastText(il2cpp::ToUtf8(text), toast);
+}
+
+// Empty for a category this table does not name.
+std::string_view EventCategory(Toast* toast)
+{
+  auto*      data     = toast->Data();
+  auto*      event    = data ? data->As<EventModel>() : nullptr;
+  const auto category = event ? event->category() : -1;
+  return category >= 0 && std::cmp_less(category, std::size(kEventCategories)) ? kEventCategories[category] : "";
+}
+
+std::string NotificationBody(Toast* toast)
+{
+  const auto  state = toast->State();
+  auto*       data  = toast->Data();
+  std::string body;
+  if (state == ToastState::ArmadaCreated)
+    body = ArmadaCreatedBody(static_cast<ArmadaCreatedData*>(data));
+  else if (auto* header =
+               data && std::ranges::contains(kBattleToasts, state) ? data->As<BattleResultHeader>() : nullptr)
+    body = BattleBody(header);
+  if (body.empty())
+    body = toast_text::StripRichText(ToastText(toast));
+  if (body.empty())
+    body = "(no details available)";
+
+  if (std::ranges::contains(kEventToasts, state))
+    if (const auto category = EventCategory(toast); !category.empty())
+      body = fmt::format("{} - {}", category, body);
+  return body;
+}
+
+// --- Windows notifications ---
+
+#if _WIN32
+void ShowWindowsNotification(const char* title, const std::string& body)
+{
+  // Notifications need a WinRT apartment on the game thread, set up by the first one. The game may already have
+  // one in another mode, which only matters if notifications then fail.
+  [[maybe_unused]] static const bool apartment = [] {
+    try {
+      winrt::init_apartment(winrt::apartment_type::single_threaded);
+    } catch (const winrt::hresult_error& e) {
+      spdlog::warn("[Toasts] Windows notification service failed: {:#x} {}", static_cast<unsigned long>(e.code()),
+                   winrt::to_string(e.message()));
+    } catch (...) {
+      spdlog::warn("[Toasts] Windows notification service failed (unknown error)");
+    }
+    return true;
+  }();
+  try {
+    using namespace winrt::Windows::UI::Notifications;
+    auto xml   = ToastNotificationManager::GetTemplateContent(ToastTemplateType::ToastText02);
+    auto nodes = xml.GetElementsByTagName(L"text");
+    nodes.Item(0).InnerText(winrt::to_hstring(title));
+    nodes.Item(1).InnerText(winrt::to_hstring(body));
+    ToastNotificationManager::CreateToastNotifier(L"Star Trek Fleet Command").Show(ToastNotification(xml));
+  } catch (const winrt::hresult_error& e) {
+    spdlog::warn("[Toasts] WinRT notification failed: {}", winrt::to_string(e.message()));
+  } catch (...) {
+    spdlog::warn("[Toasts] WinRT notification failed (unknown error)");
+  }
+}
+#endif
+
+// TODO: macOS has no notification delivery yet, so notify_banner_types does nothing there.
+void Notify(Toast* toast)
+{
+#if _WIN32
+  const auto  state = toast->State();
+  const auto& types = Config::Get().ui.notify_banner_types;
+  if (!std::ranges::contains(types, std::to_underlying(state)))
+    return;
+  // notify_banner_types only holds states from the config catalog, and kTitles names every one of them.
+  const auto title = std::ranges::find(kTitles, state, &std::pair<ToastState, const char*>::first);
+  ShowWindowsNotification(title->second, NotificationBody(toast));
+#else
+  (void)toast;
+#endif
+}
+
+// --- Banners ---
+
+// Plays the toast's alert and sends its notification, then says whether the game should show its banner.
+bool ShowBanner(Toast* toast)
+{
+  if (!toast)
+    return true;
+  const auto&       audio = Config::Get().audio;
+  NotificationSound sound = NotificationSound::kNone;
+  switch (toast->State()) {
+    case ToastState::Victory:
+      sound = audio.alert_victory;
+      break;
+    case ToastState::Defeat:
+      sound = audio.alert_defeat;
+      break;
+    case ToastState::ArmadaCreated:
+      sound = audio.alert_armada_created;
+      break;
+    case ToastState::ArmadaBattleWon:
+      sound = audio.alert_armada_battle_won;
+      break;
+    case ToastState::ArmadaBattleLost:
+      sound = audio.alert_armada_battle_lost;
+      break;
+    default:
+      break;
+  }
+  PlayNotificationSound(sound);
+  Notify(toast);
+  return !std::ranges::contains(Config::Get().ui.disabled_banner_types, std::to_underlying(toast->State()));
+}
+
+void ToastObserver_EnqueueToast_Hook(auto original, ToastObserver* _this, Toast* toast)
+{
+  if (ShowBanner(toast))
+    original(_this, toast);
+}
+
+void ToastObserver_EnqueueOrCombineToast_Hook(auto original, ToastObserver* _this, Toast* toast, uintptr_t compare)
+{
+  if (ShowBanner(toast))
+    original(_this, toast, compare);
+}
+
+bool InstallToasts()
+{
+  il2cpp::HookSet hooks("Toasts");
+  IL2CPP_STAGE(hooks, ToastObserver::Class::Method("EnqueueToast"), ToastObserver_EnqueueToast_Hook);
+  IL2CPP_STAGE(hooks, ToastObserver::Class::Method("EnqueueOrCombineToast"), ToastObserver_EnqueueOrCombineToast_Hook);
+  return hooks.Commit();
+}
+} // namespace
+
+const Feature kToasts{"Toasts", &Config::Patches::toastbannerhooks, InstallToasts};

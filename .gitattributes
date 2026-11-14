@@ -1,2 +1,6 @@
 # Keep text files consistent across Windows and macOS.
 * text=auto eol=lf
+
+# Preserve upstream source and generator output verbatim.
+third_party/plzma/** -whitespace
+zig/deps/openssl/generated/** -whitespace

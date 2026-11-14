@@ -1,0 +1,87 @@
+.{
+    .name = .stfc_community_mod,
+    .version = "0.0.0",
+    .fingerprint = 0x3332afbd34425758,
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .spdlog = .{
+            .url = "https://github.com/gabime/spdlog/archive/refs/tags/v1.17.0.tar.gz",
+            .hash = "N-V-__8AALV4EgBbl10jtpTgXbAMeWyE5t24VkpFyu6JKaWR",
+        },
+        .tomlplusplus = .{
+            .url = "https://github.com/marzer/tomlplusplus/archive/refs/tags/v3.4.0.tar.gz",
+            .hash = "N-V-__8AADK0RQD1COdtDdmDmnolfWdg42Bp8usyxNExSWf6",
+        },
+        .nlohmann_json = .{
+            .url = "https://github.com/nlohmann/json/archive/refs/tags/v3.12.0.tar.gz",
+            .hash = "N-V-__8AANqC8wBtv10C_41rBAgWfTMpQow7tzRi4h6LQYxm",
+        },
+        .protobuf = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protobuf-35.1.tar.gz",
+            .hash = "N-V-__8AAKESzQLTflk_8mGwLlk9VhY62vntiaDf9ZwZwX6U",
+        },
+        .abseil = .{
+            .url = "https://github.com/abseil/abseil-cpp/archive/refs/tags/20250512.1.tar.gz",
+            .hash = "N-V-__8AAPVZnwDbTjOwxj7Svc8jGQDVnvG3Qz1XJ-L4fuL2",
+        },
+        .cpr = .{
+            .url = "https://github.com/libcpr/cpr/archive/refs/tags/1.14.2.tar.gz",
+            .hash = "N-V-__8AAB5XDQDfjou0s1GHxJA1FIHZePsd9z_pVi7mF7Wj",
+        },
+        .curl = .{
+            .lazy = true,
+            .url = "https://github.com/curl/curl/releases/download/curl-8_21_0/curl-8.21.0.tar.xz",
+            .hash = "N-V-__8AALEMTAGmPn1iGtLTj0oIiySFaGadtszadQ_-WeEo",
+        },
+        .zlib = .{
+            .url = "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+            .hash = "N-V-__8AAJ2cNgAgfBtAw33Bxfu1IWISDeKKSr3DAqoAysIJ",
+        },
+        .zydis = .{
+            .url = "https://github.com/zyantific/zydis/archive/refs/tags/v4.1.0.tar.gz",
+            .hash = "N-V-__8AAG_f3ADsgtXR-6KT0oPilS_pRzH13KCfebN3aFmV",
+        },
+        .capstone = .{
+            .url = "https://github.com/capstone-engine/capstone/archive/refs/tags/6.0.0-Alpha5.tar.gz",
+            .hash = "N-V-__8AAMOHLgV4MQeePit44McQPtZU2W-jHK8yptwaGKxQ",
+        },
+        .inifile_cpp = .{
+            .url = "https://github.com/Rookfighter/inifile-cpp/archive/7e49789411beba98ca2c98940c40f7ca7e4b23b5.tar.gz",
+            .hash = "N-V-__8AACEjAQCdTAwUfweX68VRRFPW3PBPuD1N83eAD7Qu",
+        },
+        .librsync = .{
+            .url = "https://github.com/librsync/librsync/archive/refs/tags/v2.3.4.tar.gz",
+            .hash = "N-V-__8AAPZ5CwCIAxNBNInePykgTCHaNsTQ1-uP5Yv3tTvm",
+        },
+        .zycore = .{
+            .url = "https://github.com/zyantific/zycore-c/archive/refs/tags/v1.5.0.tar.gz",
+            .hash = "N-V-__8AAOV4BwAQKJ-oHUpZyjV4gxIQJ58HDu3MsYzRq5FP",
+        },
+        .protoc_osx_aarch_64 = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-osx-aarch_64.zip",
+            .hash = "N-V-__8AAIsxlACp1iWtsa4CgX7of3HQoHNIpvH_TupNRKK1",
+            .lazy = true,
+        },
+        .protoc_osx_x86_64 = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-osx-x86_64.zip",
+            .hash = "N-V-__8AAGunlQA4VwrG3eBnzctIfhPfzbTOr32gFgkXdHbf",
+            .lazy = true,
+        },
+        .protoc_linux_x86_64 = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-linux-x86_64.zip",
+            .hash = "N-V-__8AAOMcogCzsYJdqo1IGH01T9MlD4H9ImMkTX4AH3dO",
+            .lazy = true,
+        },
+        .protoc_linux_aarch_64 = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-linux-aarch_64.zip",
+            .hash = "N-V-__8AAPsfogALHjIUXkHC6Bj5zxTcjsA9btJER-eLnHvA",
+            .lazy = true,
+        },
+        .protoc_win64 = .{
+            .url = "https://github.com/protocolbuffers/protobuf/releases/download/v35.1/protoc-35.1-win64.zip",
+            .hash = "N-V-__8AAPh-yQByeYHnYD95ofHmRBZ06_htJWJtlkaX15Ci",
+            .lazy = true,
+        },
+    },
+    .paths = .{ "build.zig", "build.zig.zon", "zig", "src", "third_party", "assets", "tests", "LICENSE" },
+}
