@@ -187,7 +187,8 @@ zoom_label_player_threshold = 0.5
 keyboard_zoom_speed = 350.0
 
 # Controls mouse/touch and keyboard panning speed in System view only.
-# 1.0 = normal, 0.5 = half speed, 1.5 = 50% faster. Valid range: greater than 0, up to 10.
+# 1.0 = normal, 0.5 = half speed, 1.5 = 50% faster. Valid range: 0.1 to 10.
+# Invalid values, including zero and values below 0.1, use normal speed (1.0).
 # Replaces system_pan_momentum, which was unused. Does not require experimental mode.
 system_pan_speed = 1.0
 

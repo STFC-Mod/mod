@@ -472,14 +472,15 @@ void PanControls()
           "runtime vars record the bounded pan glide actually used");
   }
   for (const auto* key : {"system_pan_speed", "galaxy_pan_speed"})
-    for (const auto& item : std::array{Case{"0.5", 0.5f}, Case{"1", 1}, Case{"10", 10}, Case{"0", 1}, Case{"-1", 1},
-                                       Case{"10.1", 1}, Case{"nan", 1}, Case{"inf", 1}, Case{"\"bad\"", 1}}) {
+    for (const auto& item : std::array{Case{"0.1", 0.1f}, Case{"0.5", 0.5f}, Case{"1", 1}, Case{"10", 10}, Case{"0", 1},
+                                       Case{"0.05", 1}, Case{"1e-40", 1}, Case{"-1", 1}, Case{"10.1", 1},
+                                       Case{"nan", 1}, Case{"inf", 1}, Case{"\"bad\"", 1}}) {
       toml::table effective;
       const auto  parsed =
           Config::Parse(toml::parse(std::string("[graphics]\n") + key + " = " + item.text), effective, false);
       const float value = std::string_view(key) == "system_pan_speed" ? parsed->graphics.system_pan_speed
                                                                       : parsed->graphics.galaxy_pan_speed;
-      Check(value == item.expected, "pan speed accepts only finite values in (0, 10]");
+      Check(value == item.expected, "pan speed accepts only finite values in [0.1, 10]");
     }
 }
 
