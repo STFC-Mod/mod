@@ -3,6 +3,7 @@
 //   Shift+click on a ship tile pins or unpins that ship;
 // - [ui] double_click_to_assign_ship presses Assign on a double click on a ship tile, or on Enter;
 // - [ui] dock_syncmanagement selects the fleet bar slot of the ship open in ship management.
+// Ship selection shortcuts open the corresponding dock's ship in management.
 //
 // Only ShipManagementViewContext.Sort is hooked, not ISortedFleetsContext, so the hailing frequencies inventory keeps
 // the game's order.
@@ -396,6 +397,41 @@ bool InstallDoubleClickAssign()
   return double_click_installed;
 }
 } // namespace
+
+bool SelectManagedDock(int32_t index)
+{
+  // Manage is hosted under several sections. Follow the visible controller, as the dock's other actions do.
+  auto* controller = VisibleShipManagement();
+  auto* context    = controller ? controller->Context() : nullptr;
+  if (!context)
+    return false;
+
+  auto* bar         = unity::Newest<FleetBarViewController>();
+  auto* bar_context = bar ? bar->CanvasContext() : nullptr;
+  auto* fleets      = bar_context ? bar_context->FleetData() : nullptr;
+  // Use the bar's positions, as normal ship shortcuts do: locked docks can leave gaps in FleetPlayerData::Index.
+  auto* target = fleets && index >= 0 && std::cmp_less(index, fleets->size()) ? (*fleets)[index] : nullptr;
+  auto* list   = context ? context->FleetList() : nullptr;
+  // Empty or unavailable docks consume the key too, rather than selecting or locating behind management.
+  if (!target || !target->HasShip() || !list)
+    return true;
+
+  // Management includes undocked ships and has its own order. Match the fleet rather than using the dock index.
+  const auto id    = target->Id();
+  const auto count = list->Count();
+  for (int32_t position = 0; position < count; ++position) {
+    auto* fleet = (*list)[position];
+    if (!fleet || fleet->Id() != id)
+      continue;
+    const auto current = context->CurrentIndex();
+    if (position != current) {
+      context->SetLastMovementWasToIncrement(position > current);
+      context->SetCurrentIndex(position);
+    }
+    return true;
+  }
+  return true;
+}
 
 const Feature kPinnedShips{"PinnedShips", &Config::Patches::pinnedshiphooks, InstallPinnedShips};
 const Feature kPinnedShipClick{"PinnedShipClick", &Config::Patches::pinnedshipclicktoggle, InstallPinnedShipClick};

@@ -454,6 +454,11 @@ bool SelectShipShortcuts()
     return false;
   const auto index = static_cast<int32_t>(ship - kShips.begin());
 
+  if (SelectManagedDock(index)) {
+    last_index = -1;
+    return true;
+  }
+
   auto* fleet_bar = unity::Newest<FleetBarViewController>();
   if (!fleet_bar)
     return false;

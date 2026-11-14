@@ -459,6 +459,8 @@ struct ShipManagementViewContext : il2cpp::Object {
   { return Field<"SortedIdleShips", il2cpp::List<FleetPlayerData*>*>(); }
   FleetPlayerData* CurrentFleet()
   { return Get<"CurrentFleet", FleetPlayerData*>(); }
+  il2cpp::List<FleetPlayerData*>* FleetList()
+  { return Field<"FleetList", il2cpp::List<FleetPlayerData*>*>(); }
   int32_t CurrentIndex()
   { return Get<"CurrentIndex", int32_t>(); }
   void SetCurrentIndex(int32_t index)

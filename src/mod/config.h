@@ -294,9 +294,9 @@ public:
     // Abbreviated cargo values use cargo_significant_decimals.
     bool format_cargo_values = true;
     // Restores the Below Deck Ability officer sort option.
-    bool officer_sort                       = true;
-    bool arrow_keys_to_select_ship          = true;
-    bool auto_confirm_ft_upgrade            = false;
+    bool officer_sort              = true;
+    bool arrow_keys_to_select_ship = true;
+    bool auto_confirm_ft_upgrade   = false;
     // Shows the equipped ship below the Forbidden Tech header, including ships without a dock.
     bool forbidden_tech_ship_name           = true;
     bool auto_confirm_alliance_contribution = false;

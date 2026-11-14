@@ -69,6 +69,9 @@ Actions depend on the selected ship and target.
 
 The Kir'Shara queue requires the artifact.
 `[control].select_timer` sets the ship-selection double-tap interval in milliseconds.
+In ship management (Manage), the ship selection shortcuts switch to the corresponding dock's ship.
+Numbering follows the fleet bar, skipping locked docks just as it does outside management.
+Empty docks and ships unavailable in the management list leave the current ship selected.
 
 ### Screens and chat
 
