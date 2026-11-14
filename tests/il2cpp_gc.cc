@@ -79,5 +79,17 @@ int main()
     Require(root && !root.Get());
   }
   Require(frees == 3 && targets.empty());
+  {
+    auto root = il2cpp::GcHandle::Strong(&object);
+    auto weak_root = il2cpp::GcHandle::Weak(&other);
+    il2cpp::GcHandle::StopRuntime();
+    targets.clear(); // The runtime destroys its own handle table before native static destructors run.
+    Require(!root && !weak_root && !root.Get() && !weak_root.Get());
+    Require(!il2cpp::GcHandle::Strong(&object) && !il2cpp::GcHandle::Weak(&object) && targets.empty());
+    root.Reset();
+    Require(frees == 3);
+    // weak_root's destructor must not call the now-invalid handle APIs either.
+  }
+  Require(frees == 3);
   std::cout << "IL2CPP GC ownership tests passed\n";
 }
