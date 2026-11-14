@@ -9,33 +9,22 @@
 #include <chrono>
 #include <cstdint>
 #include <optional>
+#include <ranges>
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
-constexpr bool IsAsciiSpace(char c)
-{ return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
-
-constexpr std::string_view StripTrailingAsciiWhitespace(std::string_view str)
+constexpr std::string_view StripAsciiWhitespace(std::string_view str)
 {
-  while (!str.empty() && IsAsciiSpace(str.back()))
+  constexpr std::string_view kSpace = " \t\n\r\f\v";
+  while (!str.empty() && kSpace.contains(str.front()))
+    str.remove_prefix(1);
+  while (!str.empty() && kSpace.contains(str.back()))
     str.remove_suffix(1);
   return str;
 }
-
-constexpr std::string_view StripLeadingAsciiWhitespace(std::string_view str)
-{
-  while (!str.empty() && IsAsciiSpace(str.front()))
-    str.remove_prefix(1);
-  return str;
-}
-
-constexpr std::string_view StripAsciiWhitespace(std::string_view str)
-{ return StripTrailingAsciiWhitespace(StripLeadingAsciiWhitespace(str)); }
-
-constexpr std::string_view StripPrefix(std::string_view str, std::string_view prefix)
-{ return str.starts_with(prefix) ? str.substr(prefix.size()) : str; }
 
 constexpr std::string AsciiStrToUpper(std::string_view s)
 {
@@ -59,15 +48,10 @@ constexpr std::string AsciiStrToLower(std::string_view s)
 constexpr std::vector<std::string> StrSplit(std::string_view input, char delimiter)
 {
   std::vector<std::string> result;
-  while (true) {
-    const auto end   = input.find(delimiter);
-    const auto token = StripAsciiWhitespace(input.substr(0, end));
-    if (!token.empty())
+  for (const auto piece : std::views::split(input, delimiter))
+    if (const auto token = StripAsciiWhitespace(std::string_view(piece)); !token.empty())
       result.emplace_back(token);
-    if (end == std::string_view::npos)
-      return result;
-    input.remove_prefix(end + 1);
-  }
+  return result;
 }
 
 // Seconds since the Unix epoch for a "YYYY-MM-DDTHH:MM:SS" server timestamp, which is UTC. A fraction or
@@ -95,6 +79,7 @@ inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
   const auto [year_, month_, day_, hour, minute, second] = values;
   const year_month_day date{std::chrono::year{year_}, std::chrono::month(static_cast<unsigned>(month_)),
                             std::chrono::day(static_cast<unsigned>(day_))};
+  // 60 allows a leap second.
   if (!date.ok() || hour > 23 || minute > 59 || second > 60)
     return std::nullopt;
   const auto time = sys_days{date} + hours{hour} + minutes{minute} + seconds{second};
@@ -102,10 +87,8 @@ inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
 }
 
 // Ship names for pinned_ships and the instant_warp_* filters are compared as words, so a setting can name a ship
-// by its last words: "Athena" matches "Academy Athena".
-
-// Upper case, '_' and '-' as spaces, '.' and '\'' dropped, single spaces, no leading "USS":
-// "U.S.S. Enterprise-D" -> "ENTERPRISE D".
+// by its last words: "Athena" matches "Academy Athena". Names are normalized first: upper case, '_' and '-' as
+// spaces, '.' and '\'' dropped, single spaces, no leading "USS": "U.S.S. Enterprise-D" -> "ENTERPRISE D".
 inline std::string NormalizeShipName(std::string_view name)
 {
   std::string normalized;
@@ -119,26 +102,22 @@ inline std::string NormalizeShipName(std::string_view name)
       continue;
     normalized.push_back(c);
   }
-  if (!normalized.empty() && normalized.back() == ' ')
+  if (normalized.ends_with(' '))
     normalized.pop_back();
-  return std::string(StripPrefix(normalized, "USS "));
+  if (normalized.starts_with("USS "))
+    normalized.erase(0, 4);
+  return normalized;
 }
 
 inline std::vector<std::string> ShipNameWords(std::string_view name)
 {
+  // Normalized names have single spaces and none at either end, so no word is empty.
   std::vector<std::string> words;
-  const auto               normalized = NormalizeShipName(name);
-  for (size_t start = 0; start < normalized.size();) {
-    const auto end = std::min(normalized.find(' ', start), normalized.size());
-    words.emplace_back(normalized.substr(start, end - start));
-    start = end + 1;
-  }
+  for (const auto word : std::views::split(NormalizeShipName(name), ' '))
+    words.emplace_back(std::string_view(word));
   return words;
 }
 
 // Whether `pattern` is the last words of `name`; both from ShipNameWords.
 inline bool ShipNameMatches(std::span<const std::string> name, std::span<const std::string> pattern)
-{
-  return !pattern.empty() && name.size() >= pattern.size()
-         && std::ranges::equal(name.subspan(name.size() - pattern.size()), pattern);
-}
+{ return !pattern.empty() && std::ranges::ends_with(name, pattern); }

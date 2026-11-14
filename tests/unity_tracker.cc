@@ -41,6 +41,7 @@ void Require(bool condition, const char* message)
     throw std::runtime_error(message);
 }
 
+// Sets the GC mark bit, the low bit of klass, which Unity's liveness pass leaves on unreachable objects.
 void Mark(Il2CppObject* object)
 { object->klass = reinterpret_cast<Il2CppClass*>(reinterpret_cast<uintptr_t>(object->klass) | 1); }
 } // namespace
@@ -51,8 +52,9 @@ int main()
   derived_class.parent = &base_class;
   leaf_class.parent    = &derived_class;
   Base first{}, middle{}, last{};
-  first.klass = last.klass = &base_class;
-  middle.klass             = &leaf_class;
+  first.klass  = &base_class;
+  middle.klass = &leaf_class;
+  last.klass   = &base_class;
 
   Require(unity::Instances<Base>().empty() && !unity::Newest<Base>(), "empty registry");
   Constructed(nullptr);

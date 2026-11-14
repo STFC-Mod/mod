@@ -1,27 +1,60 @@
 #pragma once
 
-// The mod's features: the descriptors mod.cc installs, and the calls the shortcut dispatch in hotkeys.cc makes into
-// the features that own the work. Grouped by the file that defines them.
+// The mod's features: the descriptors mod.cc installs, and the few calls one feature makes into another, mostly
+// from the shortcut dispatch in hotkeys.cc. Grouped by the file that defines them.
 
 #include "config.h"
 
+#include <chrono>
 #include <cstdint>
 
 struct NavigationZoom;
 enum class NodeDepth : int32_t;
 
-// What mod.cc installs. Only the [patches] hook groups decide what is installed, so users can avoid clashing with
-// other mods; feature settings are read inside the hooks, which keeps every feature switchable at runtime.
+// What mod.cc installs. Only the [patches] groups decide what is installed, so a clash with another mod or a game
+// update can be switched off; feature settings are read inside the hooks, so features switch on and off at runtime.
 struct Feature {
+  // Names the feature in the install log, and tags its own log lines: "[Name] ...".
   const char* name;
   // The [patches] group that installs it; null for the few that always install.
   bool Config::Patches::* group;
-  // Null for frame work that needs no hooks.
-  void (*install)();
-  // Runs every frame from the frame tick once installed, in every hotkey mode, before the shortcuts. Returns at once
-  // when its feature is off.
+  // Installs its hooks; false when they did not go in, after the library or the feature has said why. Null for frame
+  // work that needs no hooks.
+  bool (*install)();
+  // Runs every frame from the frame tick once installed, in every hotkey mode, before the shortcuts. Never runs for a
+  // feature that failed to install. Returns at once when its feature is off.
   void (*frame)() = nullptr;
 };
+
+// Frame work that only needs to run every so often, such as a scan of the UI. Game thread only.
+class Throttle
+{
+public:
+  explicit Throttle(std::chrono::steady_clock::duration interval)
+      : interval_(interval)
+  {
+  }
+  // True on the first call, then at most once per interval.
+  bool Due()
+  {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_)
+      return false;
+    next_ = now + interval_;
+    return true;
+  }
+
+private:
+  std::chrono::steady_clock::duration   interval_;
+  std::chrono::steady_clock::time_point next_{};
+};
+
+// action_queue.cc
+extern const Feature kActionQueueRecovery;
+extern const Feature kThinQueueProtection;
+extern const Feature kQueueAddressGuard;
+// Forgets the pending recovery attempts when the queue is switched off or on. Never touches the game's queues.
+void ResetQueueRecoveryTracking();
 
 // alliance_store.cc
 extern const Feature kAllianceGamesStore;
@@ -39,25 +72,36 @@ extern const Feature kBuffCrashGuard;
 // camera.cc
 extern const Feature kZoom;
 extern const Feature kPan;
+extern const Feature kInteriorZoom;
 
-// cargo.cc
+// cargo.cc. The instant counter is Windows only.
 extern const Feature kCargoFormat;
+#if _WIN32
 extern const Feature kInstantCargo;
+#endif
 
 // chat.cc
 extern const Feature kChat;
+extern const Feature kChatTitles;
 // Opens chat, or focuses side chat's input. Never swallows the key.
 void OpenChatShortcut();
 // In chat, the channel shortcuts. True when the key was used.
 bool ChatChannelShortcuts();
 
+// confirmations.cc
+extern const Feature kForbiddenTechConfirm;
+extern const Feature kRevealConfirm;
+
 // dock.cc
 extern const Feature kPinnedShips;
+extern const Feature kPinnedShipClick;
 extern const Feature kDoubleClickAssign;
 extern const Feature kAssignOnEnter;
+extern const Feature kDockSelection;
 
 // fleet_actions.cc
 extern const Feature kQueueSwitch;
+extern const Feature kAbilityButtons;
 // The pre-scan cargo hooks; installed with the hotkeys.
 void InstallFleetActions();
 // A target or object viewer card is open in space.
@@ -69,13 +113,12 @@ bool FleetShortcuts();
 // The actions on the selected fleet and the open viewer. True when the key must not reach the game.
 bool FleetActionShortcuts();
 
-// fleet_labels.cc, fed by camera.cc's zoom hooks.
+// fleet_labels.cc
 extern const Feature kFleetLabels;
-void                 FleetLabelsFollowDepth(NavigationZoom* zoom, NodeDepth depth);
-void                 FleetLabelsAfterZoom(NavigationZoom* zoom);
-
-// forbidden_tech.cc
-extern const Feature kForbiddenTechConfirm;
+// Fed by camera.cc's zoom hooks: the camera's depth on each update and system entry, then its zoom after the
+// game's own update.
+void FleetLabelsFollowDepth(NavigationZoom* zoom, NodeDepth depth);
+void FleetLabelsAfterZoom(NavigationZoom* zoom);
 
 // forbidden_tech_ship_name.cc
 extern const Feature kForbiddenTechShipName;
@@ -95,7 +138,8 @@ bool HandleShortcuts();
 
 // instant_warp.cc
 extern const Feature kInstantWarp;
-void                 CycleInstantWarpConfirmation();
+// Steps auto_confirm_instant_warp through none, warp and jump, until the next settings reload.
+void CycleInstantWarpConfirmation();
 
 // keybind_badges.cc, installed with the hotkeys.
 void InstallKeybindBadges();
@@ -115,7 +159,7 @@ extern const Feature kDailyClaimFilter;
 // officers.cc
 extern const Feature kOfficerSort;
 
-// screens.cc
+// screens.cc: shortcut helpers only, so no descriptor.
 // Presses a button a screen shortcut opened a screen for, once the screen is up. True when one was pressed.
 bool PressAwaitedButton();
 // The shortcuts that open, step through, or search game screens. True when the key must not reach the game.
@@ -135,11 +179,13 @@ extern const Feature kObjectTracker;
 
 // ui_scale.cc
 extern const Feature kUiScale;
-void                 AdjustUiScale(bool up);
-void                 AdjustUiShipScale(bool up);
-void                 AdjustUiViewerScale(bool up);
+// Steps the interface, ship or viewer scale by ui_scale_step (the viewer by a quarter of it), until the next
+// settings reload.
+void AdjustUiScale(bool up);
+void AdjustUiShipScale(bool up);
+void AdjustUiViewerScale(bool up);
 
-// window.cc
+// window.cc. Resizing and the cursor are Windows only.
 #if _WIN32
 extern const Feature kFreeResize;
 extern const Feature kCursor;
@@ -149,13 +195,3 @@ float WindowDpiScale(bool refresh = false);
 
 // sync/sync.cc
 extern const Feature kSync;
-
-extern const Feature kInteriorZoom;
-extern const Feature kChatTitles;
-extern const Feature kRevealConfirm;
-extern const Feature kActionQueueRecovery;
-extern const Feature kQueueAddressGuard;
-extern const Feature kThinQueueProtection;
-extern const Feature kPinnedShipClick;
-extern const Feature kDockSelection;
-extern const Feature kAbilityButtons;

@@ -43,7 +43,7 @@ jobs:
         shell: pwsh
         run: |
           "run_attempt=${{ github.run_attempt }}" >> $env:GITHUB_OUTPUT
-          zig build install test-toolchains test-codegen test-deps test-il2cpp test-mod test-spud `
+          zig build install test-toolchains test-codegen test-deps test-il2cpp test-mod test-sync test-spud `
             -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dtest-optimize=Debug `
             "-Dstfc_source_state_id=git:${{ github.sha }}" `
             "-Dstfc_base_commit=${{ github.sha }}" `
@@ -75,20 +75,34 @@ jobs:
           zig build install build-tests -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dtest-optimize=Debug
           python3 scripts/verify-windows-binary.py
 
+  # The native fixtures need no SDK, so they run on Linux too, where they are cheapest.
+  test-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Test
+        run: zig build test-toolchains test-codegen test-il2cpp test-mod test-sync test-launcher test-spud
+
   build-mac:
     name: build-mac (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
+          # The relocation test only has work on x86_64.
           - arch: arm64
             target: aarch64-macos.14.6
             runner: macos-26
             artifact: macos-arm64-build
+            tests: test-sync test-launcher
           - arch: x86_64
             target: x86_64-macos.14.6
             runner: macos-26-intel
             artifact: macos-x86_64-build
+            tests: test-sync test-launcher test-spud
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v7
@@ -99,26 +113,17 @@ jobs:
         run: python3 scripts/stamp-version-hash.py "${{ github.sha }}"
       - name: Build and test
         run: |
-          zig build install launcher test-toolchains test-codegen test-deps test-il2cpp test-mod test-spud \
+          zig build install launcher test-toolchains test-codegen test-deps test-il2cpp test-mod ${{ matrix.tests }} \
             -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast -Dtest-optimize=Debug --summary all
       - name: Verify portable linkage
         run: |
-          for binary in zig-out/macOSLauncher.app/Contents/MacOS/macOSLauncher zig-out/bin/stfc-community-mod-loader zig-out/lib/libstfc-community-mod.dylib; do
-            otool -L "$binary"
-            if otool -L "$binary" | grep -vE '^[[:space:]]+/usr/lib/libcurl(\.[0-9]+)*\.dylib[[:space:]]' | grep -E '/opt/homebrew/|/usr/local/(opt|Cellar)/|(^|/)lib(ssl|crypto|curl)(\.[0-9]+)*\.dylib'; then
-              echo "::error::Forbidden dynamic dependency in $binary"
-              exit 1
-            fi
-          done
+          scripts/check-mac-linkage.sh zig-out/macOSLauncher.app/Contents/MacOS/macOSLauncher \
+            zig-out/bin/stfc-community-mod-loader zig-out/lib/libstfc-community-mod.dylib
+      # The install prefix as scripts/assemble-mac-app.sh expects it.
       - name: Package intermediate build
         run: |
-          mkdir -p .artifacts/mac
-          cp zig-out/macOSLauncher.app/Contents/MacOS/macOSLauncher .artifacts/mac/
-          cp zig-out/bin/stfc-community-mod-loader zig-out/lib/libstfc-community-mod.dylib .artifacts/mac/
-          if [[ '${{ matrix.arch }}' == 'arm64' ]]; then
-            cp -R zig-out/macOSLauncher.app .artifacts/mac/
-          fi
-          tar -cf macos-${{ matrix.arch }}-build.tar -C .artifacts/mac .
+          tar -cf macos-${{ matrix.arch }}-build.tar -C zig-out \
+            macOSLauncher.app bin/stfc-community-mod-loader lib/libstfc-community-mod.dylib
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: ${{ matrix.artifact }}
@@ -211,141 +216,26 @@ jobs:
           path: .artifacts/x86_64
 
       - name: Restore architecture builds
-        shell: bash
         run: |
-          set -euo pipefail
+          for arch in arm64 x86_64; do
+            mkdir -p "zig-out/staging/$arch"
+            tar -xf ".artifacts/$arch/macos-$arch-build.tar" -C "zig-out/staging/$arch"
+          done
 
-          mkdir -p zig-out/staging/arm64
-          mkdir -p zig-out/staging/x86_64
-
-          tar -xf .artifacts/arm64/macos-arm64-build.tar \
-            -C zig-out/staging/arm64
-
-          tar -xf .artifacts/x86_64/macos-x86_64-build.tar \
-            -C zig-out/staging/x86_64
-
-          test -f zig-out/staging/arm64/macOSLauncher
-          test -f zig-out/staging/x86_64/macOSLauncher
-
-          test -f zig-out/staging/arm64/stfc-community-mod-loader
-          test -f zig-out/staging/x86_64/stfc-community-mod-loader
-
-          test -f zig-out/staging/arm64/libstfc-community-mod.dylib
-          test -f zig-out/staging/x86_64/libstfc-community-mod.dylib
-
-          test -f \
-            zig-out/staging/arm64/macOSLauncher.app/Contents/Resources/Assets.car
-
-          test -f \
-            zig-out/staging/arm64/macOSLauncher.app/Contents/Info.plist
-
-      - name: Create universal App Bundle
-        shell: bash
+      - name: Assemble universal app bundle
         run: |
-          set -euo pipefail
-
-          APP="zig-out/staging/arm64/macOSLauncher.app"
-
-          lipo -create \
-            zig-out/staging/arm64/macOSLauncher \
-            zig-out/staging/x86_64/macOSLauncher \
-            -output "$APP/Contents/MacOS/macOSLauncher"
-
-          lipo -create \
-            zig-out/staging/arm64/stfc-community-mod-loader \
-            zig-out/staging/x86_64/stfc-community-mod-loader \
-            -output "$APP/Contents/stfc-community-mod-loader"
-
-          lipo -create \
-            zig-out/staging/arm64/libstfc-community-mod.dylib \
-            zig-out/staging/x86_64/libstfc-community-mod.dylib \
-            -output "$APP/Contents/libstfc-community-mod.dylib"
-
-          cp assets/launcher.icns \
-            "$APP/Contents/Resources/"
-
-          mv \
-            zig-out/staging/arm64/macOSLauncher.app \
-            "zig-out/staging/arm64/STFC Community Mod.app"
-
-          FINAL_APP="zig-out/staging/arm64/STFC Community Mod.app"
-
-          test -f "$FINAL_APP/Contents/Info.plist"
-          test -f "$FINAL_APP/Contents/Resources/Assets.car"
-          test -f "$FINAL_APP/Contents/Resources/launcher.icns"
-          test -f "$FINAL_APP/Contents/MacOS/macOSLauncher"
-          test -f "$FINAL_APP/Contents/stfc-community-mod-loader"
-          test -f "$FINAL_APP/Contents/libstfc-community-mod.dylib"
+          scripts/assemble-mac-app.sh "zig-out/staging/STFC Community Mod.app" \
+            zig-out/staging/arm64 zig-out/staging/x86_64
 
       - name: Verify universal binaries
-        shell: bash
         run: |
           set -euo pipefail
-
-          APP="zig-out/staging/arm64/STFC Community Mod.app"
-
-          verify_universal() {
-            local file="$1"
-            local archs
-
-            archs="$(lipo -archs "$file")"
-            echo "$file: $archs"
-
-            [[ " $archs " == *" arm64 "* ]]
-            [[ " $archs " == *" x86_64 "* ]]
-          }
-
-          verify_universal \
-            "$APP/Contents/MacOS/macOSLauncher"
-
-          verify_universal \
-            "$APP/Contents/stfc-community-mod-loader"
-
-          verify_universal \
-            "$APP/Contents/libstfc-community-mod.dylib"
-
-      - name: Verify universal app linkage
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP="zig-out/staging/arm64/STFC Community Mod.app"
-
-          check_linkage() {
-            local binary="$1"
-            local deps
-
-            echo
-            echo "==> $binary"
-            deps="$(otool -L "$binary")"
-            printf '%s\n' "$deps"
-
-            if printf '%s\n' "$deps" \
-              | grep -vE '^[[:space:]]+/usr/lib/libcurl(\.[0-9]+)*\.dylib[[:space:]]' \
-              | grep -E \
-              '/opt/homebrew/|/usr/local/(opt|Cellar)/|(^|/)libssl(\.[0-9]+)*\.dylib|(^|/)libcrypto(\.[0-9]+)*\.dylib|(^|/)libcurl(\.[0-9]+)*\.dylib'
-            then
-              echo "::error file=$binary::Forbidden dynamic dependency detected"
-              return 1
-            fi
-          }
-
-          check_linkage "$APP/Contents/MacOS/macOSLauncher"
-          check_linkage "$APP/Contents/stfc-community-mod-loader"
-          check_linkage "$APP/Contents/libstfc-community-mod.dylib"
-
-      - name: Sign App Bundle
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          codesign \
-            --force \
-            --verify \
-            --verbose \
-            --deep \
-            --sign "-" \
-            "zig-out/staging/arm64/STFC Community Mod.app"
+          APP="zig-out/staging/STFC Community Mod.app"
+          for binary in MacOS/macOSLauncher stfc-community-mod-loader libstfc-community-mod.dylib; do
+            archs="$(lipo -archs "$APP/Contents/$binary")"
+            echo "$binary: $archs"
+            [[ " $archs " == *" arm64 "* && " $archs " == *" x86_64 "* ]]
+          done
 
       - name: Install packaging tools
         shell: bash
@@ -361,52 +251,17 @@ jobs:
           command -v create-dmg >/dev/null 2>&1 || brew install create-dmg
 
       - name: Package macOS mod archive
-        shell: bash
         run: |
           set -euo pipefail
-
           mkdir -p stfc-community-mod-macos-universal
-
-          tar -cf - \
-            -C "zig-out/staging/arm64/STFC Community Mod.app/Contents" \
-            libstfc-community-mod.dylib \
-            | zstd -15 -T0 \
-              -o stfc-community-mod-macos-universal/stfc-community-mod-macos-universal.tar.zst
-
-          shasum -a 256 \
-            stfc-community-mod-macos-universal/stfc-community-mod-macos-universal.tar.zst \
+          tar -cf - -C "zig-out/staging/STFC Community Mod.app/Contents" libstfc-community-mod.dylib \
+            | zstd -15 -T0 -o stfc-community-mod-macos-universal/stfc-community-mod-macos-universal.tar.zst
+          shasum -a 256 stfc-community-mod-macos-universal/stfc-community-mod-macos-universal.tar.zst \
             | awk '{print $1}' \
             > stfc-community-mod-macos-universal/stfc-community-mod-macos-universal.tar.zst.sha256
 
       - name: Create installer
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          APP="zig-out/staging/arm64/STFC Community Mod.app"
-          DMG_SOURCE="zig-out/staging/arm64/dmg-source"
-
-          mkdir -p "$DMG_SOURCE"
-          mv "$APP" "$DMG_SOURCE/"
-
-          create_dmg_options=(
-            --filesystem APFS
-            --format ULFO
-            --volname "STFC Community Mod Installer"
-            --volicon assets/launcher.icns
-            --no-internet-enable
-            --background assets/mac_installer_background.png
-            --window-pos 200 120
-            --window-size 800 400
-            --icon-size 100
-            --icon "STFC Community Mod.app" 200 190
-            --app-drop-link 600 185
-            --applescript-sleep-duration 1
-          )
-
-          create-dmg "${create_dmg_options[@]}" \
-            stfc-community-mod-installer.dmg \
-            "$DMG_SOURCE/"
+        run: scripts/create-mac-dmg.sh "zig-out/staging/STFC Community Mod.app" stfc-community-mod-installer.dmg
 
       - name: Upload installer
         uses: actions/upload-artifact@v7.0.1

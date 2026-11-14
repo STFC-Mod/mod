@@ -1,4 +1,4 @@
-// galactic_anomaly_timer: a countdown for the active galactic anomaly in the viewed system, under the HUD's
+// [graphics] galactic_anomaly_timer: a countdown for the active galactic anomaly in the viewed system, under the HUD's
 // Help All / Engage / Claim drawer. All Unity work runs on the frame tick; there are no detours of its own.
 
 #include "config.h"
@@ -18,7 +18,7 @@
 
 namespace
 {
-using Clock = std::chrono::steady_clock;
+using AnomalyClock = std::chrono::steady_clock;
 
 // The rounded key-hint background next to the native anomaly button, reused for the panel.
 unity::Sprite* NativeBackgroundSprite(HudNavigationViewController* nav)
@@ -36,7 +36,7 @@ unity::Sprite* NativeBackgroundSprite(HudNavigationViewController* nav)
   return sprite ? sprite : image->sprite();
 }
 
-unity::Image* AddImage(unity::GameObject* object, unity::Color tint, unity::Sprite* sprite)
+unity::Image* AddPanelImage(unity::GameObject* object, unity::Color tint, unity::Sprite* sprite)
 {
   auto* image = object->AddComponent<unity::Image>();
   if (!image)
@@ -46,6 +46,8 @@ unity::Image* AddImage(unity::GameObject* object, unity::Color tint, unity::Spri
   if (sprite && sprite->pixelsPerUnit() > 0) {
     image->SetSprite(sprite);
     image->SetType(unity::Image::Type::Sliced);
+    // Sliced borders are drawn at the sprite's pixel density; normalizing it to 100 keeps the corners the same size
+    // whatever the localized artwork's density is.
     image->SetPixelsPerUnitMultiplier(100 / sprite->pixelsPerUnit());
   }
   return image;
@@ -58,7 +60,7 @@ class AnomalyTimer
 public:
   void Update()
   {
-    const auto now = Clock::now();
+    const auto now = AnomalyClock::now();
     if (now < next_update_)
       return;
     next_update_ = now + std::chrono::milliseconds(250);
@@ -71,29 +73,34 @@ public:
     auto* nav = Navigation();
     // Remaining ticks of the active anomaly in the viewed system.
     const int64_t ticks = nav && nav->isActiveAndEnabled() && nav->CanShowGalacticAnomaly() ? RemainingTicks(nav) : 0;
+    auto*         label = Label();
     if (ticks <= 0) {
-      if (auto* label = Label())
-        label->transform()->parent()->gameObject()->SetActive(false);
+      if (auto* panel = label ? label->ParentObject() : nullptr)
+        panel->SetActive(false);
       return;
     }
-    if (!Label() && !Create(nav)) {
+    if (!label)
+      label = Create(nav);
+    if (!label) {
       static bool warned = false;
       if (!std::exchange(warned, true))
-        spdlog::warn("Galactic anomaly countdown: HUD creation failed; leaving the native HUD unchanged");
+        spdlog::warn("[AnomalyTimer] could not build the countdown panel; leaving the HUD unchanged");
       DestroyPanel();
       next_update_ = now + std::chrono::seconds(5);
       return;
     }
 
+    // TimeSpan ticks are 100 ns. Round up, so the last second shows as 1s rather than 0s.
     const auto seconds = ticks / 10'000'000 + (ticks % 10'000'000 != 0);
     if (seconds != shown_seconds_) {
       shown_seconds_  = seconds;
       const auto text = seconds >= 3600
                             ? fmt::format("{}h {:02}m {:02}s", seconds / 3600, seconds / 60 % 60, seconds % 60)
                             : fmt::format("{:02}m {:02}s", seconds / 60, seconds % 60);
-      Label()->SetText(text);
+      label->SetText(text);
     }
-    Label()->transform()->parent()->gameObject()->SetActive(true);
+    if (auto* panel = label->ParentObject())
+      panel->SetActive(true);
   }
 
 private:
@@ -111,7 +118,7 @@ private:
     auto* held = navigation_.Get<HudNavigationViewController>();
     if (unity::Alive(held) && held->isActiveAndEnabled())
       return held;
-    if (const auto now = Clock::now(); now >= next_discovery_) {
+    if (const auto now = AnomalyClock::now(); now >= next_discovery_) {
       next_discovery_   = now + std::chrono::seconds(1);
       auto* replacement = ScreenManager::View<HudNavigationViewController>();
       if ((replacement && replacement != held) || !unity::Alive(held)) {
@@ -131,8 +138,7 @@ private:
 
   void DestroyPanel()
   {
-    if (auto* label = Label()) {
-      auto* panel = label->transform()->parent()->gameObject();
+    if (auto* panel = Label() ? Label()->ParentObject() : nullptr) {
       panel->SetActive(false);
       unity::Destroy(panel);
     }
@@ -154,42 +160,48 @@ private:
   }
 
   // Builds the panel: the native rounded sprite twice, with a narrow inset making the border, and a countdown in
-  // the system-name font. A missing sprite still gives a visible frame.
-  bool Create(HudNavigationViewController* nav)
+  // the system-name font. A missing sprite still gives a visible frame. Returns the countdown label, or null.
+  unity::TMP_Text* Create(HudNavigationViewController* nav)
   {
     auto* helper = nav->factionInformationHelper();
-    auto* names  = helper ? helper->systemName() : nullptr;
-    auto* name   = names && names->Count() > 0 ? (*names)[0] : nullptr;
+    auto* name   = il2cpp::At(helper ? helper->systemName() : nullptr, 0);
     if (!unity::Alive(name))
-      return false;
+      return nullptr;
     auto* drawer    = ScreenManager::View<HudAllianceAndNewsViewController>();
     auto* promotion = drawer ? drawer->chestPromotion() : nullptr;
     auto* chest     = promotion ? promotion->transform() : nullptr;
     auto* parent    = chest ? chest->parent() : nullptr;
-    auto* source    = name->gameObject() ? name->gameObject()->GetComponent<unity::TextMeshProUGUI>() : nullptr;
+    auto* object    = name->gameObject();
+    auto* source    = object ? object->GetComponent<unity::TextMeshProUGUI>() : nullptr;
     auto* font      = source ? source->font() : nullptr;
     if (!parent || !font)
-      return false;
+      return nullptr;
 
     il2cpp::GcHandle panel, fill, text;
     auto*            panel_rect = unity::CreateUiObject("CommunityMod_AnomalyTimer", parent, panel);
     if (!panel_rect)
-      return false;
+      return nullptr;
     panel_rect->Place({0.5f, 0}, {0.5f, 0}, {0.5f, 1}, {198, 38}, {0, -40});
     auto* rounded = NativeBackgroundSprite(nav);
-    if (!AddImage(panel.Get<unity::GameObject>(), {0.64f, 0.34f, 0.46f, 0.85f}, rounded))
-      return Abandon(panel);
+    if (!AddPanelImage(panel.Get<unity::GameObject>(), {0.64f, 0.34f, 0.46f, 0.85f}, rounded)) {
+      Abandon(panel);
+      return nullptr;
+    }
 
     auto* fill_rect = unity::CreateUiObject("AnomalyFill", panel_rect, fill);
-    if (!fill_rect || !AddImage(fill.Get<unity::GameObject>(), {0.06f, 0.10f, 0.14f, 0.96f}, rounded))
-      return Abandon(panel);
+    if (!fill_rect || !AddPanelImage(fill.Get<unity::GameObject>(), {0.06f, 0.10f, 0.14f, 0.96f}, rounded)) {
+      Abandon(panel);
+      return nullptr;
+    }
     fill_rect->Place({0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {194, 34}, {0, 0});
     fill.Get<unity::GameObject>()->SetActive(true);
 
     auto* text_rect = unity::CreateUiObject("Countdown", panel_rect, text);
     auto* label     = text_rect ? text.Get<unity::GameObject>()->AddComponent<unity::TextMeshProUGUI>() : nullptr;
-    if (!label)
-      return Abandon(panel);
+    if (!label) {
+      Abandon(panel);
+      return nullptr;
+    }
     text_rect->Place({0.5f, 0.5f}, {0.5f, 0.5f}, {0.5f, 0.5f}, {190, 28}, {0, 0});
     label->SetFont(font);
     label->SetFontSize(22);
@@ -200,35 +212,33 @@ private:
     text.Get<unity::GameObject>()->SetActive(true);
     // The children are owned by the hierarchy once parented; only the label is kept.
     label_ = il2cpp::GcHandle::Strong(label);
-    return true;
+    return label;
   }
 
-  static bool Abandon(il2cpp::GcHandle& panel)
+  // Destroys a half-built panel.
+  static void Abandon(il2cpp::GcHandle& panel)
   {
     if (auto* object = panel.Get<unity::GameObject>(); unity::Alive(object))
       unity::Destroy(object);
-    return false;
   }
 
-  il2cpp::GcHandle  navigation_, label_;
-  Clock::time_point next_update_{}, next_discovery_{};
-  int64_t           shown_seconds_ = -1;
+  il2cpp::GcHandle         navigation_, label_;
+  AnomalyClock::time_point next_update_{}, next_discovery_{};
+  int64_t                  shown_seconds_ = -1;
 };
 
-AnomalyTimer* timer = nullptr;
-void          AnomalyTimerUpdate()
-{
-  if (timer)
-    timer->Update();
-}
+// Leaked on purpose: its GC handles must not be released by static destructors after the runtime is gone.
+AnomalyTimer* anomaly_timer = nullptr;
 
-void InstallAnomalyTimer()
+void AnomalyTimerFrame()
+{ anomaly_timer->Update(); }
+
+bool InstallAnomalyTimer()
 {
-  // Never destroyed: GC handles must not be released by static destructors after the runtime is gone.
-  timer = new AnomalyTimer;
-  spdlog::info("Galactic anomaly countdown enabled (below Help All / Engage / Claim)");
+  anomaly_timer = new AnomalyTimer;
+  return true;
 }
 } // namespace
 
 const Feature kAnomalyTimer{"AnomalyTimer", &Config::Patches::galacticanomalytimerhooks, InstallAnomalyTimer,
-                            AnomalyTimerUpdate};
+                            AnomalyTimerFrame};

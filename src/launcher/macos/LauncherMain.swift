@@ -1,28 +1,11 @@
-//
-//  LauncherMain.swift
-//  STFC Community Mod Launcher
-//
-//  Created by tashcan on 3/22/24.
-//
+// The launcher app: one fixed-size window, and quitting when it closes.
 
 import AppKit
-import Foundation
 import SwiftUI
 
-extension Scene {
-  func windowResizabilityContentSize() -> some Scene {
-    if #available(macOS 13.0, *) {
-      return windowResizability(.contentSize)
-    } else {
-      return self
-    }
-  }
-}
-
-class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
   func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-    NSApplication.shared.terminate(self)
-    return true
+    true
   }
 }
 
@@ -36,7 +19,6 @@ struct STFC_Community_Patch_LauncherApp: App {
         .frame(width: 600, height: 400)
         .fixedSize()
     }
-    .windowResizabilityContentSize()
+    .windowResizability(.contentSize)
   }
-
 }

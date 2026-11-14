@@ -44,13 +44,11 @@ struct InventoryUsePopupViewController : il2cpp::Object {
 };
 
 // Also the base of the officer roster and the other inventory-style lists.
-struct InventoryListViewController : il2cpp::Object {
+struct InventoryListViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Inventories", "InventoryListViewController">;
 
   InputFieldWidget* inputField()
   { return Field<"_inputField", InputFieldWidget*>(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
 };
 
 struct Bundle : il2cpp::Object {
@@ -67,14 +65,14 @@ struct BundleDataWidget : Widget<Bundle> {
   // ItemState flags; only the one the mod reads is named.
   static constexpr int32_t kCooldownTimerOn = 16384;
 
-  int32_t CurrentState()
+  int32_t currentState()
   { return Field<"_currentState", int32_t>(); }
-  void AuxViewButtonPressedHandler()
-  { Call<"AuxViewButtonPressedHandler">(); }
-
+  inline InventoryTooltipTriggerWidget* invTooltip();
   // Set by OnDidBindContext after the card set up its tooltip.
   inline ShopListScrollerViewController* scrollerController();
-  inline InventoryTooltipTriggerWidget*  invTooltip();
+
+  void AuxViewButtonPressedHandler()
+  { Call<"AuxViewButtonPressedHandler">(); }
 };
 
 struct DrawerContext : il2cpp::Object {
@@ -246,6 +244,13 @@ struct SmartScrollerBase : il2cpp::Object {
   std::optional<float> ScrollPosition()
   { return TryCall<"get_ScrollPosition", float()>(); }
 
+  // How many cards are spawned; empty when the pool is missing or its count could not be read.
+  std::optional<int32_t> SpawnedCount()
+  {
+    auto* items = spawnedItems();
+    return items ? items->TryCall<"get_Count", int32_t()>() : std::nullopt;
+  }
+
   // The tooltip widget on a spawned card, active or not.
   static InventoryTooltipTriggerWidget* CardTooltip(unity::Component* card)
   {
@@ -264,6 +269,9 @@ struct AllianceGamesStoreContext : il2cpp::Object {
   { return TryCall<"get_IsFetchingBundlesInProgress", bool()>(); }
   int32_t BundlesCount()
   { return Get<"BundlesCount", int32_t>(); }
+  // Rebuilds the store's currency list from its bundles.
+  bool UpdateStoreCurrency()
+  { return TryCall<"UpdateStoreCurrency", void()>(); }
   // How many soft currencies the store shows.
   std::optional<int32_t> CurrencyCount()
   {
@@ -271,9 +279,6 @@ struct AllianceGamesStoreContext : il2cpp::Object {
     auto* soft       = currencies ? currencies->Get<"SoftResources", il2cpp::List<il2cpp::Object*>*>() : nullptr;
     return soft ? soft->TryCall<"get_Count", int32_t()>() : std::nullopt;
   }
-  // Rebuilds the store's currency list from its bundles.
-  bool UpdateStoreCurrency()
-  { return TryCall<"UpdateStoreCurrency", void()>(); }
 };
 
 struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController {
@@ -284,42 +289,12 @@ struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController
   { return Get<"AllianceGamesContext", AllianceGamesStoreContext*>(); }
 };
 
-ShopListScrollerViewController* BundleDataWidget::scrollerController()
-{ return Field<"_scrollerController", ShopListScrollerViewController*>(); }
 InventoryTooltipTriggerWidget* BundleDataWidget::invTooltip()
 { return Field<"_invTooltip", InventoryTooltipTriggerWidget*>(); }
+ShopListScrollerViewController* BundleDataWidget::scrollerController()
+{ return Field<"_scrollerController", ShopListScrollerViewController*>(); }
 
-// Whether the client still has every field the store reads or writes. The store swaps tooltip components through
-// these, so it does not install where one would read as zero.
-inline bool AllianceGamesStoreFieldsPresent()
-{
-  using Widget   = InventoryTooltipTriggerWidget::Class;
-  using Trigger  = TooltipTrigger::Class;
-  using Scroller = SmartScrollerBase::Class;
-  using Card     = BundleDataWidget::Class;
-  return Widget::HasField<"_tooltipTrigger", TooltipTrigger*>()
-         & Widget::HasField<"_tooltipActionTrigger", TooltipActionTrigger*>()
-         & Widget::HasField<"_searchActionLocaleSetting", ActionLocaleSetting*>()
-         & Widget::HasField<"_actionLocaleSetting", ActionLocaleSetting*>()
-         & Widget::HasField<"_settings", ActionLocaleSettingsList*>()
-         & Trigger::HasField<"_showHeader", OverridableBool>()
-         & Trigger::HasField<"_showDescription", OverridableBool>() & Trigger::HasField<"_header", LocaleTextContext*>()
-         & Trigger::HasField<"_description", LocaleTextContext*>() & Trigger::HasField<"_overrideLocale", bool>()
-         & Trigger::HasField<"_anchorOverride", int32_t>() & Trigger::HasField<"_sizeOverride", unity::Vector2>()
-         & Trigger::HasField<"_positionOverrideOffset", unity::Vector2>()
-         & Trigger::HasField<"_positionOverrideTarget", unity::Transform*>()
-         & Trigger::HasField<"_isInteractable", bool>()
-         & Trigger::HasField<"<DescriptionOverrideText>k__BackingField", Il2CppString*>()
-         & Trigger::HasField<"_loader", TooltipLoadAndShow*>()
-         & ShopListScrollerViewController::Class::HasField<"_smartScroller", il2cpp::Object*>()
-         & Scroller::HasField<"_spawnedItems", il2cpp::List<unity::Component*>*>()
-         & Card::HasField<"_invTooltip", InventoryTooltipTriggerWidget*>()
-         & Card::HasField<"_scrollerController", ShopListScrollerViewController*>()
-         & Scroller::HasField<"_regeneratingContent", bool>()
-         & Scroller::HasField<"_spawnerCoroutine", il2cpp::Object*>()
-         & Scroller::HasField<"_dataHeldWhilstInitializing", il2cpp::Object*>();
-}
-
+// Shows the shop's reveal sequences and offer popups. Only hooked.
 using ShopSceneManager = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;
 
 // The forbidden tech inventory tiles and the large selected-item panel.

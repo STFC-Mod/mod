@@ -1,5 +1,7 @@
 #pragma once
 
+// Lets a test define the IL2CPP exports the library calls, as API(ret, name, params) { body } END_API.
+
 #include <il2cpp-config.h>
 #if _WIN32
 #undef IL2CPP_IMPORT

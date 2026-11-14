@@ -1,10 +1,11 @@
 #pragma once
 
-namespace ChatStartup {
+namespace ChatStartup
+{
 // Pure readiness gate: a false sample restarts the grace period. Completion is
 // latched so closing chat manually never causes another automatic open.
 struct Gate {
-  bool completed = false;
+  bool   completed   = false;
   double ready_since = -1;
 
   bool Tick(bool ready, bool already_open, double now)

@@ -1,5 +1,8 @@
-#include <cstdio>
+// Applies one librsync delta for the Swift launcher; see rsync.h. The tests link it without Swift.
+
 #include <librsync.h>
+
+#include <cstdio>
 #include <memory>
 
 extern "C" {

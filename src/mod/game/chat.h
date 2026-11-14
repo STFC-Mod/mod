@@ -1,10 +1,12 @@
 #pragma once
 
-// Chat manager and chat view controllers.
+// The chat manager, the full-screen and side chat views, and the chat message rows.
 
 #include "ui.h"
 
 #include <il2cpp/il2cpp.h>
+
+#include <cstdint>
 
 enum class ChatChannelCategory : int32_t {
   None            = -1,
@@ -25,6 +27,19 @@ enum class ChatViewMode : int32_t {
 struct ChatManager : MonoSingleton<ChatManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Chat", "ChatManager">;
 
+  bool isContextInitialised()
+  { return Field<"_isContextInitialised", bool>(); }
+  bool IsSideChatAllowed()
+  { return Get<"IsSideChatAllowed", bool>(); }
+  bool IsSideChatOpen()
+  { return Get<"IsSideChatOpen", bool>(); }
+  void SetViewMode(ChatViewMode value)
+  { Set<"ViewMode">(value); }
+
+  bool CanSeeNewbieChat()
+  { return Call<"CanSeeNewbieChat", bool>(); }
+  bool CanSeeRegionalChat()
+  { return Call<"CanSeeRegionalChat", bool>(); }
   void OpenChannel(ChatChannelCategory category = ChatChannelCategory::Alliance)
   { Call<"OpenChannel">(category, il2cpp::NewString("")); }
 
@@ -33,20 +48,6 @@ struct ChatManager : MonoSingleton<ChatManager> {
     SetViewMode(viewMode);
     OpenChannel(category);
   }
-
-  bool CanSeeNewbieChat()
-  { return Call<"CanSeeNewbieChat", bool>(); }
-  bool CanSeeRegionalChat()
-  { return Call<"CanSeeRegionalChat", bool>(); }
-
-  bool IsSideChatOpen()
-  { return Get<"IsSideChatOpen", bool>(); }
-  bool IsSideChatAllowed()
-  { return Get<"IsSideChatAllowed", bool>(); }
-  bool isContextInitialised()
-  { return Field<"_isContextInitialised", bool>(); }
-  void SetViewMode(ChatViewMode value)
-  { Set<"ViewMode">(value); }
 };
 
 struct SwipeScroller : il2cpp::Object {
@@ -86,16 +87,18 @@ struct FullScreenChatViewController : il2cpp::Object {
   { return Field<"_categoriesTabBarViewController", TabBarViewController*>(); }
 };
 
-struct PlayerTitleWidget : il2cpp::Object {
+struct PlayerTitleWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget">;
 };
-struct UserProfileWidget : il2cpp::Object {
+
+// A player's name, avatar and title, on chat rows and other screens.
+struct UserProfileWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileWidget">;
+
   PlayerTitleWidget* playerTitleWidget()
   { return Field<"_playerTitleWidget", PlayerTitleWidget*>(); }
 };
-struct ChatMessageWidget : il2cpp::Object {
+
+struct ChatMessageWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Chat", "ChatMessageWidget">;
-  UserProfileWidget* userProfileWidget()
-  { return Field<"_userProfileWidget", UserProfileWidget*>(); }
 };

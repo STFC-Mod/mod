@@ -1,7 +1,7 @@
 # Contribute to STFC Community Mod
 
 Send pull requests to **`dev`**.
-Use **Zig 0.16.0** and run commands from the repository root.
+Use **Zig 0.16.0 or 0.17.0** and run commands from the repository root. `build.zig.zon` names 0.16.0, which version managers such as anyzig pick by default.
 Zig downloads dependencies and checks the hashes in `build.zig.zon`. No submodules or XMake installation are needed.
 
 ## Build for your platform
@@ -23,7 +23,7 @@ zig build launcher -Dtarget=aarch64-macos.14.6
 ```
 
 For Intel, replace `aarch64` with `x86_64`.
-Both targets require macOS 14.6 or later.
+Both targets require macOS 14.6 or later. `macos_min` in `zig/ctx.zig` holds that version for the build.
 The Swift launcher and app assets require a macOS host with Xcode.
 The C++ mod and loader can be cross-compiled with a supplied SDK.
 
@@ -31,16 +31,19 @@ To package a universal app and disk image on macOS:
 
 ```sh
 scripts/package-mac-app.sh release
-scripts/create-mac-dmg.sh release
+scripts/create-mac-dmg.sh "zig-out/universal/release/STFC Community Mod.app"
 ```
 
-To build only the universal mod and loader:
+`scripts/assemble-mac-app.sh` builds the signed bundle from per-architecture install prefixes.
+The packaging script, the development helper, and CI all package through it.
+
+To build only the universal mod and loader, on any host with a macOS SDK:
 
 ```sh
 zig build macos-universal -Doptimize=ReleaseFast
 ```
 
-The development helper also supports build, run, debug, and crash-log actions:
+The development helper builds one architecture and runs, debugs, or lists crash reports:
 
 ```sh
 scripts/mac-build-test-debug.sh build -m debug
@@ -81,7 +84,8 @@ To reset build outputs, remove `.zig-cache` and `zig-out`. Keep `.cache/toolchai
 Windows release builds enable link-time optimization. Disable it with `-Dlto=false`.
 The Swift launcher compiles as one module and links after the native archives are ready.
 macOS `ReleaseFast` builds batch feature sources to share header parsing; sync sources compile separately.
-Zig 0.16 does not support Mach-O LTO, so macOS builds use ordinary optimized compilation.
+A batch is one translation unit, so it is also the only build that catches two features with the same file-scope name.
+Zig does not support Mach-O LTO, so macOS builds use ordinary optimized compilation.
 
 | Option | Effect |
 | --- | --- |
@@ -93,7 +97,7 @@ Zig 0.16 does not support Mach-O LTO, so macOS builds use ordinary optimized com
 
 `[patches]` switches work in every build.
 For library-only checks, use `zig build il2cpp`, `zig build unity`, or `zig build mods` with the required target.
-Dependency build steps are `dep-spud`, `dep-protobuf`, and `dep-net`.
+Dependency build steps are `dep-spud`, `dep-protobuf`, `dep-net`, and `dep-spdlog`.
 
 ## Run checks before submitting
 
@@ -112,13 +116,13 @@ Choose the relevant native tests:
 | Command | Coverage |
 | --- | --- |
 | `zig build test-il2cpp` | Typed bindings, keyboard snapshots, GC handles, and Unity instance tracking |
-| `zig build test-mod` | Settings parsing and reload, shortcuts, text helpers, and English example settings |
+| `zig build test-mod` | Settings parsing and reload, shortcuts, text helpers, English example settings, and the action queue decisions |
 | `zig build test-sync` | Wire fixtures, retries, removals, target changes, session isolation, and concurrent updates |
 | `zig build test-spud` | x64 trampoline relocation, including RIP-relative instructions before a call |
 | `zig build test-launcher` | Real rsync deltas, corrupt patches, missing inputs, and output errors on Linux or macOS; 7z extraction fixtures on macOS |
 
-These tests need no game. The boundary and mod tests need no platform SDK on Linux.
-Tests must run on a matching operating system and architecture.
+These tests need no game or platform SDK, so they all run on Linux; CI runs them there and on both macOS
+architectures. Tests must run on a matching operating system and architecture.
 To compile Windows tests without running them:
 
 ```sh
@@ -126,13 +130,14 @@ zig build mods build-tests -Dtarget=x86_64-windows-msvc
 ```
 
 Before submitting core mod changes, also run the relevant platform build.
-For macOS, use:
+For feature changes on macOS, build `ReleaseFast` so feature batching checks for clashing names:
 
 ```sh
-zig build mods -Dtarget=aarch64-macos.14.6
+zig build mods -Dtarget=aarch64-macos.14.6 -Doptimize=ReleaseFast
 ```
 
-`test-toolchains` checks SDK provisioning. `test-codegen` checks protobuf message selection.
+`test-toolchains` checks SDK provisioning and the Mach-O archive extractor. `test-codegen` checks protobuf message
+selection.
 `test-deps` checks dependency behavior and networking.
 For a local HTTPS fixture, pass its URL and CA file:
 
@@ -202,6 +207,8 @@ python3 scripts/check-il2cpp-dump.py diff /path/to/old/dump.cs /path/to/new/dump
 ```
 
 The script finds missing classes, members, and hook targets, plus static and arity changes.
+It follows signature-checked hook lookups and `HasField`/`HasProperty` checks, including through a local
+`using Alias = Binding::Class;`.
 It uses text matching. Runtime type checks and in-game validation remain necessary.
 
 ### Data sync ownership
@@ -213,8 +220,7 @@ It uses text matching. Runtime type checks and in-game validation remain necessa
 | `sync/state.cc` | Comparisons, removals, and per-target acknowledgements |
 | `sync/upload.cc` | Sessions, the record store, target workers, and HTTP delivery |
 | `sync/battlelogs.cc` | Battle-journal fetching |
-| `sync/fleets.cc` | Client fleet records: state changes, snapshots, and late re-reads, on the game thread |
-| `sync/fleet_watch.cc` | Fleet state polling, baselines, and transitions for fleet sync |
+| `sync/fleets.cc` | Client fleet records: slot polling, baselines, state changes, snapshots, and late re-reads, on the game thread |
 
 Payload construction and HTTP run outside the store lock.
 Session generations prevent old responses and acknowledgements from changing a new login.
@@ -238,6 +244,7 @@ The build generates C++ for the entry-point messages in `zig/deps/protobuf_roots
 Add a fully qualified message name there when a new consumer needs it. Nested messages and map entries are included automatically.
 If its schema is not already compiled, add its `.pb.cc` file to the source selection in `zig/protobuf.zig`.
 The complete source schemas and their enum catalogs remain in `src/mod/game/proto/`.
+Sync messages the game does not declare, such as `MyDeployedFleetsResponse`, live in `stfc.sync.proto` so regenerating the game schemas keeps them.
 
 The selector copies retained message descriptors without changing their fields, options, or wire numbers.
 Run `zig build test-codegen test-sync` after changing selection or schemas.
@@ -265,6 +272,7 @@ Windows build-identity options have matching environment fallbacks:
 | `stfc_build_channel` | `STFC_BUILD_CHANNEL` |
 
 Prefix options with `-D`, as in `-Dstfc_build_channel=local`.
+Zig 0.17 cannot track environment variables in its configure cache, so reading a fallback configures the build again on every run.
 Values accept 1 to 160 ASCII letters, digits, or `._:+/-`.
 The DLL version resource contains the same values.
 Keep CI artifact names compatible with the upstream Windows attestation and macOS release jobs.

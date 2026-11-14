@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 // What a shortcut does. Each [shortcuts] setting binds key chords to one action.
@@ -47,7 +48,7 @@ private:
 
 namespace Shortcut
 {
-using Bindings = std::array<std::vector<KeyChord>, static_cast<size_t>(Action::kCount)>;
+using Bindings = std::array<std::vector<KeyChord>, std::to_underlying(Action::kCount)>;
 
 // Parses [shortcuts] without changing live input. Records effective bindings and their sources in `parsed`.
 Bindings Parse(const toml::table& config, toml::table& parsed, bool extended, bool experimental);

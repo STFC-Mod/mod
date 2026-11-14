@@ -1,20 +1,18 @@
+// Binds the IL2CPP exports from the loaded GameAssembly image on macOS. Windows links them through GameAssembly.lib.
+
 #include <il2cpp/api.h>
 
 #include <stdexcept>
 
 #if !_WIN32
 #include <dlfcn.h>
-#if defined(__cplusplus)
 extern "C" {
-#endif // __cplusplus
 #define DO_API(r, n, p) n##_t n;
 #define DO_API_NO_RETURN(r, n, p) DO_API(r, n, p)
 #include "il2cpp-api-functions.h"
 #undef DO_API
 #undef DO_API_NO_RETURN
-#if defined(__cplusplus)
 }
-#endif // __cplusplus
 #endif
 
 void il2cpp::Initialize(void* assembly)
@@ -28,6 +26,7 @@ void il2cpp::Initialize(void* assembly)
 #include <il2cpp-api-functions.h>
 #undef DO_API
 #undef DO_API_NO_RETURN
+  // The exports the libraries call. Failing startup here beats calling through null on first use.
 #define REQUIRE_API(name)                                                                                              \
   if (!name)                                                                                                           \
     throw std::runtime_error("missing IL2CPP export: " #name);
@@ -45,7 +44,6 @@ void il2cpp::Initialize(void* assembly)
   REQUIRE_API(il2cpp_class_get_declaring_type)
   REQUIRE_API(il2cpp_class_get_parent)
   REQUIRE_API(il2cpp_class_get_methods)
-  REQUIRE_API(il2cpp_class_get_method_from_name)
   REQUIRE_API(il2cpp_class_get_property_from_name)
   REQUIRE_API(il2cpp_class_get_field_from_name)
   REQUIRE_API(il2cpp_class_get_nested_types)
@@ -73,6 +71,10 @@ void il2cpp::Initialize(void* assembly)
   REQUIRE_API(il2cpp_gchandle_get_target)
   REQUIRE_API(il2cpp_gchandle_free)
   REQUIRE_API(il2cpp_resolve_icall)
+  REQUIRE_API(il2cpp_string_new_len)
+  REQUIRE_API(il2cpp_value_box)
+  // The object tracker detours it to forget objects the GC frees without OnDestroy.
+  REQUIRE_API(il2cpp_unity_liveness_finalize)
 #undef REQUIRE_API
 #else
   (void)assembly;

@@ -8,17 +8,15 @@
 #include <il2cpp/il2cpp.h>
 
 #include <ranges>
+#include <string_view>
 #include <vector>
 
 namespace unity
 {
 namespace detail
 {
-  void Constructed(Il2CppObject* object);
-  void Destroyed(Il2CppObject* object);
-  // True the first time a native method is seen: constructors and OnDestroy often resolve to one shared base
-  // implementation, which must be detoured only once.
-  bool                       FirstDetour(void* native);
+  void                       Constructed(Il2CppObject* object);
+  void                       Destroyed(Il2CppObject* object);
   void                       StartTracking();
   Il2CppObject*              Newest(Il2CppClass* klass);
   std::vector<Il2CppObject*> Instances(Il2CppClass* klass);
@@ -37,15 +35,20 @@ namespace detail
 } // namespace detail
 
 // Starts tracking T and its subclasses. Call while installing hooks, before T's instances are created: instances
-// that already exist are not found. Alternate parameterless lifecycle methods support pooled components.
+// that already exist are not found. Pooled components pass the parameterless methods their pool uses instead of
+// the constructor and OnDestroy. Tracking a class again does nothing; the first call's lifecycle methods stay.
 template <typename T> void Track(std::string_view created = ".ctor", std::string_view released = "OnDestroy")
 {
-  detail::StartTracking();
-  // Both lifecycle methods are parameterless; Unity's constructor and OnDestroy are the defaults.
-  if (auto ctor = T::Class::Method(created, 0); ctor && detail::FirstDetour(ctor.Pointer()))
-    IL2CPP_HOOK(ctor, detail::Ctor_Hook);
-  if (auto on_destroy = T::Class::Method(released, 0); on_destroy && detail::FirstDetour(on_destroy.Pointer()))
-    IL2CPP_HOOK(on_destroy, detail::OnDestroy_Hook);
+  [[maybe_unused]] static const bool tracked = [&] {
+    detail::StartTracking();
+    // One set: without its release hook, a pooled component would stay tracked after the pool took it back.
+    // Classes often share one constructor or OnDestroy body, which then carries a chained hook per tracked class;
+    // tracking, untracking and the finalizer registration all tolerate running more than once for one object.
+    il2cpp::HookSet hooks("tracking " + il2cpp::ClassName(T::Class::Raw()));
+    IL2CPP_STAGE(hooks, T::Class::Method(created, 0), detail::Ctor_Hook);
+    IL2CPP_STAGE(hooks, T::Class::Method(released, 0), detail::OnDestroy_Hook);
+    return hooks.Commit();
+  }();
 }
 
 // The newest live instance of T, or null. Only finds classes passed to Track.

@@ -1,12 +1,14 @@
 // The camera in system view and at the station: the extended zoom range, keyboard zoom and its presets, planet
-// sprite scaling, keyboard panning, pan momentum and the target camera lock, keyboard rotation around the station, and
-// held touches that keep panning. Fleet label detail, which follows the zoom, is in fleet_labels.cc.
+// sprite scaling, keyboard panning, pan momentum and the target camera lock, keyboard rotation around the station,
+// held touches that keep panning, and [graphics] interior_zoom_scale inside the station. Fleet label detail, which
+// follows the zoom, is in fleet_labels.cc; Haven's camera is in haven.cc.
 
 #include "config.h"
 #include "features/features.h"
 #include "shortcuts.h"
 
 #include "game/app.h"
+#include "game/camera.h"
 #include "game/navigation.h"
 #include "game/ui.h"
 
@@ -16,9 +18,9 @@
 #include <unity/input.h>
 #include <unity/ui.h>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <optional>
-#include <ranges>
 #include <unordered_map>
 #include <utility>
 
@@ -29,7 +31,8 @@ namespace
 // Entering a system jumps to default_system_zoom on the next camera update.
 bool zoom_to_default = false;
 
-// Camera distance as a share of the zoom range, scaled to the configured maximum (the unit the presets use).
+// Presets and default_system_zoom are in zoom units: the camera distance's place in [minimum, maximum] mapped onto
+// [0, graphics.zoom], so they keep their meaning when the game moves the range. ZoomAtMouse(absolute) is the inverse.
 float CurrentZoom(NavigationZoom* zoom)
 { return (zoom->Distance() - zoom->minimum()) / (zoom->maximum() - zoom->minimum()) * Config::Get().graphics.zoom; }
 
@@ -37,17 +40,17 @@ void StorePreset(const char* label, float& preset, NavigationZoom* zoom)
 {
   const auto old = preset;
   preset         = CurrentZoom(zoom);
-  spdlog::info("Changing {} from {} to {}", label, old, preset);
+  spdlog::info("[Zoom] {} set from {} to {}", label, old, preset);
 }
 
-struct Preset {
+struct ZoomPreset {
   Action store;
   Action go;
   float Config::Graphics::* value;
   const char*               label;
 };
 
-constexpr Preset kPresets[] = {
+constexpr ZoomPreset kZoomPresets[] = {
     {Action::kSetZoomPreset1, Action::kZoomPreset1, &Config::Graphics::system_zoom_preset_1, "System Preset 1"},
     {Action::kSetZoomPreset2, Action::kZoomPreset2, &Config::Graphics::system_zoom_preset_2, "System Preset 2"},
     {Action::kSetZoomPreset3, Action::kZoomPreset3, &Config::Graphics::system_zoom_preset_3, "System Preset 3"},
@@ -55,14 +58,19 @@ constexpr Preset kPresets[] = {
     {Action::kSetZoomPreset5, Action::kZoomPreset5, &Config::Graphics::system_zoom_preset_5, "System Preset 5"},
 };
 
-// Widens the system view's zoom range to the configured maximum and pushes the far clip plane out with it.
+// Widens the system view's zoom range to the configured maximum and pushes the far clip plane out with it. A radius of
+// 0 leaves the far ratios alone and only reapplies the camera settings.
 void ApplyZoomRange(NavigationZoom* zoom, float radius)
 {
   const auto max_zoom = Config::Get().graphics.zoom;
+  // The far ratios are multiples of the system's view radius, so max_zoom / radius puts the extended stop at max_zoom.
+  // The normal stop at 0.55 of that is carried over from the original mod.
   if (radius > 0.0f) {
     zoom->SetFarRatioSystemNormal(0.55f * max_zoom / radius);
     zoom->SetFarRatioSystemExtended(max_zoom / radius);
   }
+  // At max_zoom the camera still has to reach the far side of the system and its backdrop, hence the 3.75x clip.
+  // Clearing to black instead of the skybox hides the void past the backdrop's edge.
   if (auto* camera = zoom->sceneCamera()) {
     camera->SetFarClipPlane(max_zoom * 3.75f);
     camera->SetClearFlags(unity::Camera::ClearFlags::SolidColor);
@@ -70,7 +78,8 @@ void ApplyZoomRange(NavigationZoom* zoom, float radius)
   }
 }
 
-// The game resets the range now and then; reapply it around every update.
+// The game resets the range now and then; reapply it around every update. _zoomtotal caches maximum - minimum and
+// must follow the widened maximum.
 void KeepZoomRange(NavigationZoom* zoom)
 {
   const auto max_zoom = Config::Get().graphics.zoom;
@@ -83,7 +92,7 @@ void KeepZoomRange(NavigationZoom* zoom)
     zoom->SetZoomtotal(total);
 }
 
-// Zooms around the mouse pointer, either by `delta` or (with `absolute`) to a preset value.
+// Zooms around the mouse pointer, either by a step of `value` or, with `absolute`, to `value` in zoom units.
 void ZoomAtMouse(NavigationZoom* zoom, float value, bool absolute)
 {
   const auto mouse = unity::Input::mousePosition();
@@ -100,50 +109,44 @@ void ZoomAtMouse(NavigationZoom* zoom, float value, bool absolute)
 }
 
 // Keyboard zoom: Q/E zoom by keyboard_zoom_speed per second, presets jump, SHIFT-F1.. store the current zoom.
-// Returns false when a preset was stored, which skips the game's update for that frame.
+// ZoomMin goes all the way out (graphics.zoom) and ZoomMax close in. Returns false when a preset was stored, which
+// skips the game's update for that frame.
 bool KeyboardZoom(NavigationZoom* zoom)
 {
-  auto&      config    = Config::Get();
-  const bool shortcuts = config.control.hotkeys_enabled && !config.control.use_scopely_hotkeys;
+  auto& config = Config::Get();
+  if (!config.control.hotkeys_enabled || config.control.use_scopely_hotkeys)
+    return true;
 
-  float target      = 0.0f;
-  bool  from_preset = false;
-  if (shortcuts) {
-    for (const auto& preset : kPresets) {
-      if (Shortcut::IsDown(preset.store)) {
-        StorePreset(preset.label, config.graphics.*preset.value, zoom);
-        return false;
-      }
-    }
-    if (Shortcut::IsDown(Action::kSetZoomDefault)) {
-      StorePreset("System Default", config.graphics.default_system_zoom, zoom);
+  for (const auto& preset : kZoomPresets)
+    if (Shortcut::IsDown(preset.store)) {
+      StorePreset(preset.label, config.graphics.*preset.value, zoom);
       return false;
     }
-    for (const auto& preset : kPresets) {
-      if (Shortcut::IsDown(preset.go)) {
-        target      = config.graphics.*preset.value;
-        from_preset = true;
-        break;
-      }
-    }
-    if (config.control.hotkeys_extended) {
-      if (Shortcut::IsDown(Action::kZoomReset))
-        target = config.graphics.default_system_zoom;
-      else if (Shortcut::IsDown(Action::kZoomMin))
-        target = config.graphics.zoom;
-      else if (Shortcut::IsDown(Action::kZoomMax))
-        target = 100.0f;
-    }
+  if (Shortcut::IsDown(Action::kSetZoomDefault)) {
+    StorePreset("System Default", config.graphics.default_system_zoom, zoom);
+    return false;
   }
-  if (target != 0.0f) {
+
+  // An extended shortcut held with a preset wins the jump, but the preset still counts for use_presets_as_default.
+  const auto* preset = std::ranges::find_if(kZoomPresets, [](const ZoomPreset& p) { return Shortcut::IsDown(p.go); });
+  const bool  from_preset = preset != std::ranges::end(kZoomPresets);
+  float       target      = from_preset ? config.graphics.*preset->value : 0.0f;
+  if (config.control.hotkeys_extended) {
+    if (Shortcut::IsDown(Action::kZoomReset))
+      target = config.graphics.default_system_zoom;
+    else if (Shortcut::IsDown(Action::kZoomMin))
+      target = config.graphics.zoom;
+    else if (Shortcut::IsDown(Action::kZoomMax))
+      target = 100.0f;
+  }
+
+  const float step = config.graphics.keyboard_zoom_speed * unity::Time::deltaTime();
+  if (target != 0.0f)
     ZoomAtMouse(zoom, target, true);
-  } else {
-    const float step = config.graphics.keyboard_zoom_speed * unity::Time::deltaTime();
-    if (shortcuts && Shortcut::IsPressed(Action::kZoomIn))
-      ZoomAtMouse(zoom, step, false);
-    else if (shortcuts && Shortcut::IsPressed(Action::kZoomOut))
-      ZoomAtMouse(zoom, -step, false);
-  }
+  else if (Shortcut::IsPressed(Action::kZoomIn))
+    ZoomAtMouse(zoom, step, false);
+  else if (Shortcut::IsPressed(Action::kZoomOut))
+    ZoomAtMouse(zoom, -step, false);
 
   // With use_presets_as_default, jumping to a preset also makes it the zoom used on entering a system.
   if (from_preset && target > 0.0f && config.graphics.use_presets_as_default)
@@ -193,6 +196,10 @@ void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom* _this, NodeDept
 // Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them and asks for them on
 // every zoom, so each transform remembers the size it was scaled to and is left alone while it still has it.
 // Planets differ in base size, so this is per transform: one shared value made two planets rescale each other.
+//
+// A backdrop that was just created or reloaded has its authored scale again and is always scaled. The getter is
+// hooked, so ScaleAuthoredBackdrop asks for the renderable with authored_backdrop set; backdrop_revision counts
+// CreateBackdrop calls so Populate can tell whether one ran.
 bool     authored_backdrop = false;
 uint64_t backdrop_revision = 0;
 
@@ -202,7 +209,10 @@ void ScaleFlatRenderable(unity::Component* renderable, bool authored)
   constexpr size_t                                    kRemembered = 256;
   static std::unordered_map<unity::Transform*, float> scaled;
   const float                                         factor = Config::Get().graphics.fr_scale;
-  auto* transform = renderable && factor > 0.0f && factor != 1.0f ? renderable->transform() : nullptr;
+  // Written so a NaN fr_scale, which the reader accepts, skips scaling too.
+  if (!renderable || !(factor > 0.0f) || factor == 1.0f)
+    return;
+  auto* transform = renderable->transform();
   if (!transform)
     return;
   const auto scale = transform->localScale();
@@ -210,8 +220,9 @@ void ScaleFlatRenderable(unity::Component* renderable, bool authored)
     return;
   if (scaled.size() >= kRemembered)
     scaled.clear();
-  transform->SetLocalScale({scale.x * factor, scale.y * factor, scale.z * factor});
-  scaled.insert_or_assign(transform, scale.x * factor);
+  const auto new_scale = scale * factor;
+  transform->SetLocalScale(new_scale);
+  scaled.insert_or_assign(transform, new_scale.x);
 }
 
 unity::Component* PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils* _this)
@@ -226,8 +237,7 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
                                                    float normalized)
 {
   original(_this, distance, normalized);
-  if (_this)
-    _this->FlatRenderable();
+  _this->FlatRenderable();
 }
 
 void ScaleAuthoredBackdrop(PlanetViewUtils* view)
@@ -241,7 +251,7 @@ void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, 
                                          Il2CppObject* resource, bool using_default)
 {
   original(_this, backdrop, resource, using_default);
-  if (_this && resource) {
+  if (resource) {
     ++backdrop_revision;
     ScaleAuthoredBackdrop(_this);
   }
@@ -250,11 +260,11 @@ void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, 
 void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* system, int64_t node_id,
                                    NodeDepth depth)
 {
-  auto*      previous = _this ? _this->Population() : nullptr;
+  auto*      previous = _this->popData();
   const auto revision = backdrop_revision;
   original(_this, system, node_id, depth);
-  auto* population = _this ? _this->Population() : nullptr;
-  // Cached variation backdrops reload authored scale without calling CreateBackdrop.
+  auto* population = _this->popData();
+  // A cached variation backdrop reloads its authored scale without calling CreateBackdrop.
   if (depth == NodeDepth::SolarSystem && population && population != previous && population->VariationCollection()
       && revision == backdrop_revision)
     ScaleAuthoredBackdrop(_this);
@@ -292,9 +302,10 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   if (disable_target_camera_lock && _this->trackingPOI())
     _this->SetTrackingPOI(nullptr);
   // An arrow held for a CTRL-arrow style shortcut must not pan as well, natively or through the mod.
-  const bool arrow_owned = Shortcut::Owns(unity::KeyCode::LeftArrow) || Shortcut::Owns(unity::KeyCode::RightArrow)
-                           || Shortcut::Owns(unity::KeyCode::UpArrow) || Shortcut::Owns(unity::KeyCode::DownArrow);
-  const bool keyboard    = config.control.hotkeys_enabled && !config.ui.disable_move_keys && !arrow_owned;
+  constexpr std::array kArrows{unity::KeyCode::LeftArrow, unity::KeyCode::RightArrow, unity::KeyCode::UpArrow,
+                               unity::KeyCode::DownArrow};
+  const bool           arrow_owned = std::ranges::any_of(kArrows, Shortcut::Owns);
+  const bool           keyboard    = config.control.hotkeys_enabled && !config.ui.disable_move_keys && !arrow_owned;
 
   // With the game's own hotkeys, its LateUpdate pans and glides by itself. The mod still applies its momentum falloff
   // to that glide, without moving the camera a second time.
@@ -309,25 +320,27 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   const bool pointer = PointerHeld() || _this->panningStarted();
   bool       by_keys = false;
   if (keyboard && !native && !blocked && !pointer && KeyboardPanAllowed()) {
-    // Opposite bindings cancel; normalize diagonals like the native 2D composite.
+    // Opposite bindings cancel; normalize diagonals like the native 2D composite. MoveCamera takes a drag, and
+    // dragging left moves the view right, hence the negation.
     const float x = float(Shortcut::IsPressed(Action::kMoveRight)) - float(Shortcut::IsPressed(Action::kMoveLeft));
     const float y = float(Shortcut::IsPressed(Action::kMoveUp)) - float(Shortcut::IsPressed(Action::kMoveDown));
     if (const float length = std::sqrt(x * x + y * y); length > 0.0f) {
-      d.x     = -x / length * _this->keyboardDeltaScaler();
-      d.y     = -y / length * _this->keyboardDeltaScaler();
-      by_keys = true;
-      _this->MoveCamera(unity::Vector2{d.x * _this->deltaScaler(), d.y * _this->deltaScaler()}, true);
+      const float speed = _this->keyboardDeltaScaler();
+      d                 = {-x / length * speed, -y / length * speed};
+      by_keys           = true;
+      const float scale = _this->deltaScaler();
+      _this->MoveCamera(d * scale, true);
     }
   }
 
   if (blocked) {
     d = {};
   } else if (!by_keys && !pointer) {
+    // Glide: the last drag or key delta shrinks by the falloff every frame.
     const auto falloff = config.graphics.system_pan_momentum_falloff;
-    d.x *= falloff;
-    d.y *= falloff;
+    d                  = d * falloff;
     if (!native)
-      _this->MoveCamera(unity::Vector2{d.x, d.y}, true);
+      _this->MoveCamera(d, true);
   }
   _this->SetLastDelta(d);
   _this->SetFarMagRadiusRatioSystemExtended(_this->farMagRadiusRatioSystemNormal());
@@ -348,9 +361,9 @@ void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* 
   constexpr float kDegreesPerSecond = 45.0f;
   const float     step              = kDegreesPerSecond * unity::Time::deltaTime();
   if (Shortcut::IsPressed(Action::kMoveLeft))
-    _this->SetRotationAngleDelta(_this->RotationAngleDelta() - step);
+    _this->SetRotationAngleDelta(_this->rotationAngleDelta() - step);
   if (Shortcut::IsPressed(Action::kMoveRight))
-    _this->SetRotationAngleDelta(_this->RotationAngleDelta() + step);
+    _this->SetRotationAngleDelta(_this->rotationAngleDelta() + step);
 }
 
 // A held touch reports Stationary, which the game's pan ignores; report it as moving so drags keep panning.
@@ -362,34 +375,83 @@ TKTouch* TKTouch_populateWithPosition_Hook(auto original, TKTouch* _this, uintpt
   return touch;
 }
 
-void InstallZoom()
+// --- Station interior zoom ---
+//
+// The interior view blends from a fixed close frame out to an orbit pinned at one radius, so its far stop is that
+// orbit's radius. Widening the orbit's [min, max] lets the zoom go further. The same radius bounds the exterior station
+// camera, so it is widened only inside the interior and put back everywhere else.
+
+// Each radius's own range, as found before widening. Keyed by the radius constraint, not the orbit: the orbit is
+// recreated across transitions while its radius persists, so an orbit key left the exterior at a widened radius it
+// never restored. The interior has one radius, so this stays tiny; keys are compared only, never dereferenced.
+std::unordered_map<FloatConstraint*, std::pair<float, float>> native_interior_radius;
+
+void OrbitFrameProvider_UpdateConstrains_Hook(auto original, OrbitFrameProvider* _this, unity::Camera* primary_camera)
 {
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("Populate", 3), PlanetViewUtils_Populate_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method(
-                  "CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"}),
-              PlanetViewUtils_CreateBackdrop_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode",
-                                                                "SystemVariationConfigCollection", "System.Boolean"}),
-              PlanetViewUtils_CreateBackdrop_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("CameraZoomedEventHandler"),
-              PlanetViewUtils_CameraZoomedEventHandler_Hook);
-  IL2CPP_HOOK(PlanetViewUtils::Class::Method("get_FlatRenderable"), PlanetViewUtils_get_FlatRenderable_Hook);
-  IL2CPP_HOOK(NavigationZoom::Class::Method("Update"), NavigationZoom_Update_Hook);
+  auto* constraint = _this->constraint();
+  if (auto* radius = constraint ? constraint->radius() : nullptr) {
+    auto*       sections = Hub::Sections();
+    const bool  interior = sections && sections->CurrentSection() == SectionID::Starbase_Interior;
+    const float scale    = Config::Get().graphics.interior_zoom_scale;
+    if (interior && std::isfinite(scale) && scale > 1.0f) {
+      // Recorded on first sight and always scaled from there, so doing this every frame cannot compound.
+      const auto [low, high] = native_interior_radius.try_emplace(radius, radius->min(), radius->max()).first->second;
+      radius->SetMin(low * scale);
+      radius->SetMax(high * scale);
+    } else if (const auto native = native_interior_radius.find(radius); native != native_interior_radius.end()) {
+      // Left wider, the exterior view stays zoomed out and its station labels drop out of range.
+      const auto [low, high] = native->second;
+      radius->SetMin(low);
+      radius->SetMax(high);
+    }
+  }
+  // The game clamps the camera against the widened or restored range.
+  original(_this, primary_camera);
+}
+
+bool InstallZoom()
+{
+  il2cpp::HookSet hooks("Zoom");
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("Populate", 3), PlanetViewUtils_Populate_Hook);
+  IL2CPP_STAGE(hooks,
+               PlanetViewUtils::Class::Method(
+                   "CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"}),
+               PlanetViewUtils_CreateBackdrop_Hook);
+  IL2CPP_STAGE(hooks,
+               PlanetViewUtils::Class::Method("CreateBackdrop", {"Digit.PrimeServer.Models.ITreeNode",
+                                                                 "SystemVariationConfigCollection", "System.Boolean"}),
+               PlanetViewUtils_CreateBackdrop_Hook);
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("CameraZoomedEventHandler"),
+               PlanetViewUtils_CameraZoomedEventHandler_Hook);
+  IL2CPP_STAGE(hooks, PlanetViewUtils::Class::Method("get_FlatRenderable"), PlanetViewUtils_get_FlatRenderable_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("Update"), NavigationZoom_Update_Hook);
   // TODO: SetDepth has only ever been detoured on Windows and the reason was not recorded; check its prologue
   // against SPUD's overwrite size before enabling it on macOS.
 #if _WIN32
-  IL2CPP_HOOK(NavigationZoom::Class::Method("SetDepth"), NavigationZoom_SetDepth_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("SetDepth"), NavigationZoom_SetDepth_Hook);
 #endif
-  IL2CPP_HOOK(NavigationZoom::Class::Method("SetViewParameters"), NavigationZoom_SetViewParameters_Hook);
+  IL2CPP_STAGE(hooks, NavigationZoom::Class::Method("SetViewParameters"), NavigationZoom_SetViewParameters_Hook);
+  return hooks.Commit();
 }
 
-void InstallPan()
+bool InstallPan()
 {
-  IL2CPP_HOOK(OrbitFrameProvider::Class::Method("UpdateInputData"), OrbitFrameProvider_UpdateInputData_Hook);
-  IL2CPP_HOOK(TKTouch::Class::Method("populateWithPosition"), TKTouch_populateWithPosition_Hook);
-  IL2CPP_HOOK(NavigationPan::Class::Method("LateUpdate"), NavigationPan_LateUpdate_Hook);
+  il2cpp::HookSet hooks("Pan");
+  IL2CPP_STAGE(hooks, OrbitFrameProvider::Class::Method("UpdateInputData"), OrbitFrameProvider_UpdateInputData_Hook);
+  IL2CPP_STAGE(hooks, TKTouch::Class::Method("populateWithPosition"), TKTouch_populateWithPosition_Hook);
+  IL2CPP_STAGE(hooks, NavigationPan::Class::Method("LateUpdate"), NavigationPan_LateUpdate_Hook);
+  return hooks.Commit();
+}
+
+bool InstallInteriorZoom()
+{
+  il2cpp::HookSet hooks("InteriorZoom");
+  IL2CPP_STAGE(hooks, OrbitFrameProvider::Class::Method<void(unity::Camera*)>("UpdateConstrains"),
+               OrbitFrameProvider_UpdateConstrains_Hook);
+  return hooks.Commit();
 }
 } // namespace
 
 const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom};
 const Feature kPan{"Pan", &Config::Patches::panhooks, InstallPan};
+const Feature kInteriorZoom{"InteriorZoom", &Config::Patches::interiorzoomhooks, InstallInteriorZoom};

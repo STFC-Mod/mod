@@ -14,6 +14,7 @@ Features depend on the game client. A client update can break a hook until the m
 | UI scale | Adjust the main interface, object viewers, and system-view ship models separately. |
 | System zoom | Set the maximum range, entry zoom, keyboard speed, and five presets. Save a preset or the current zoom as the default. |
 | Camera movement | Pan with configurable keys and set momentum falloff. Keyboard panning can be disabled. The camera can also stop following a selected target, so you can pan away from it. |
+| Station interior | Zoom further out inside the station. `graphics.interior_zoom_scale` multiplies the native distance; `1.0` keeps it. |
 | Haven | Extend camera range while keeping road surfaces above the ground. `graphics.haven_zoom = 0.0` uses the native range. |
 | Fleet labels | Choose native, expanded, compact, or zoom-threshold detail separately for player and non-player fleets. |
 | Window and cursor | Resize the game window freely on Windows and control whether the game replaces the system cursor. |
@@ -41,20 +42,23 @@ The [shortcut reference](KEYMAPPING.md) lists the defaults.
 | Area | Behavior |
 | --- | --- |
 | Kir'Shara queue | Start with queuing enabled, add targets, clear the queue, or toggle it. Requires ownership of the artifact. |
+| Kir'Shara fixes | Keep a queue moving when its target vanishes mid-course or the watchdog prunes it, and keep it from being cleared when moving another ship briefly misreports the fleet's position. `control.kirshara_fixes = false` turns all three off. |
 | Instant warp | Show the confirmation, use regular warp, or jump automatically. Ship-name filters can override the choice. |
 | Target previews | Show cargo by target type, toggle cargo view, and close viewers with Escape. Locate and recall can remain enabled while previews are open. |
 | Cargo numbers | Choose decimal places for abbreviated totals. Supported Windows clients can skip the count-up animation. |
-| Ship assignment | Select adjacent ships with arrow keys, double-click to assign, and pin named ships while preserving sort order. |
+| Ship assignment | Select adjacent ships with arrow keys, double-click to assign, and pin named ships while preserving sort order. Shift+click a ship tile to pin or unpin it; only the `pinned_ships` line of the settings file changes. |
 | Officer sorting | Restore **Below Deck Ability** in roster and assignment screens. |
 | Ship power | Show out-of-dock power while a ship is docked. |
-| Forbidden Tech | Automatically confirm level and tier upgrades when enabled. The selected item shows the ship it is equipped on, including ships without a dock. |
+| Forbidden Tech | The selected item shows the ship it is equipped on, including ships without a dock. |
+| Confirmations | Skip the confirmation for Forbidden Tech upgrades, the Alliance contribution max-level warning, and the U.S.S. Excelsior's Decloaking Deflector. Each is off by default. |
 
 ## Rewards and interface
 
 - Skip chest reveals, open bulk gift claims, and leave the section after the supported gift-collection flow.
 - Extend Alliance donations and, on Windows, supported tagged chest-purchase sliders.
 - Limit Daily Goals **Claim All** to selected Federation, Klingon, or Romulan goals. Its toggle can start enabled each session.
-- Hide Galaxy or Veil Chat. Set supported HUD buttons to automatic, always shown, or always hidden.
+  `ui.daily_bulk_claim_factions` lists the factions; blank means all three, and `none` by itself excludes all of them. Other dailies stay eligible.
+- Hide Galaxy or Veil Chat, and player titles under chat names. Set supported HUD buttons to automatic, always shown, or always hidden.
 - Open alliance side chat once per login, once the station and chat have finished loading, and set side chat's
   starting width. Both are off by default.
 - Hide **Exchange All** in the artifact-shards popup while retaining single exchanges.

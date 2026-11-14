@@ -16,48 +16,45 @@ inline std::string FormatPlaceholders(std::string_view text, std::span<const std
 {
   std::string result;
   result.reserve(text.size());
-  for (size_t pos = 0; pos < text.size();) {
-    if (text[pos] == '{') {
-      const auto* first         = text.data() + pos + 1;
-      size_t      index         = 0;
-      const auto [after, error] = std::from_chars(first, text.data() + text.size(), index);
-      if (error == std::errc{} && after != text.data() + text.size() && (*after == '}' || *after == ':')
-          && !(first[0] == '0' && after != first + 1) && index < values.size() && !values[index].empty()) {
-        const auto offset = static_cast<size_t>(after - text.data());
-        const auto end    = text.find('}', offset);
-        if (end == std::string_view::npos) {
-          result += text.substr(pos);
-          break;
-        }
-        const auto& value  = values[index];
-        const auto  format = *after == ':' ? text.substr(offset + 1, end - offset - 1) : std::string_view{};
-        if (format.find_first_not_of('0') == std::string_view::npos && value.size() < format.size())
-          result.append(format.size() - value.size(), '0');
-        // Only the template is scanned; a player name containing "{1}" stays literal.
-        result += value;
-        pos = end + 1;
-        continue;
-      }
+  for (auto open = text.find('{'); open != std::string_view::npos; open = text.find('{')) {
+    result += text.substr(0, open);
+    text.remove_prefix(open + 1);
+    // An index without leading zeros, then '}' or ":format}". Digits hold no '}', so `close` is never before
+    // `digits` and a found one leaves text[digits] in range.
+    size_t index            = 0;
+    const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), index);
+    const auto digits       = static_cast<size_t>(end - text.data());
+    const auto close        = text.find('}');
+    if (error != std::errc{} || (digits > 1 && text[0] == '0') || close == std::string_view::npos
+        || (text[digits] != '}' && text[digits] != ':') || index >= values.size() || values[index].empty()) {
+      result += '{';
+      continue;
     }
-    result += text[pos++];
+    const auto& value  = values[index];
+    const auto  format = text[digits] == ':' ? text.substr(digits + 1, close - digits - 1) : std::string_view{};
+    if (format.find_first_not_of('0') == std::string_view::npos && value.size() < format.size())
+      result.append(format.size() - value.size(), '0');
+    // Only the template is scanned; a player name containing "{1}" stays literal.
+    result += value;
+    text.remove_prefix(close + 1);
   }
+  result += text;
   return result;
 }
 
-// Removes Unity rich text tags such as <color=#FF0000>, <b> and </size>.
+// Removes Unity rich text tags such as <color=#FF0000>, <b> and </size>. An unclosed '<' is text.
 inline std::string StripRichText(std::string_view text)
 {
   std::string result;
   result.reserve(text.size());
-  for (size_t i = 0; i < text.size();) {
-    if (text[i] == '<') {
-      if (const auto end = text.find('>', i); end != std::string_view::npos) {
-        i = end + 1;
-        continue;
-      }
-    }
-    result += text[i++];
+  for (auto open = text.find('<'); open != std::string_view::npos; open = text.find('<')) {
+    const auto close = text.find('>', open);
+    if (close == std::string_view::npos)
+      break;
+    result += text.substr(0, open);
+    text.remove_prefix(close + 1);
   }
+  result += text;
   return result;
 }
 

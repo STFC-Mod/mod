@@ -1,28 +1,39 @@
-// Typed bindings against a controlled managed runtime: lookup, signature checks, native calls,
-// fields, dispatch, and failure reporting.
+// Typed bindings against a controlled managed runtime: lookup, signature checks, native calls, fields, dispatch,
+// failure reporting, hook sets and strings, plus the Unity keyboard and focus snapshots built on them.
+
 #include "il2cpp_test_api.h"
+#include <il2cpp/hook.h>
 #include <unity/input.h>
 #include <unity/ui.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <deque>
 #include <iostream>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace
 {
-void Require(bool condition, const char* message);
+void Require(bool condition, const char* what)
+{
+  if (!condition)
+    throw std::runtime_error(what);
+}
 
-int                                                        input_frame = 0, held_reads = 0, down_reads = 0;
-bool                                                       any_held = false, any_down = false;
-std::array<bool, static_cast<size_t>(unity::KeyCode::Max)> held_keys{}, down_keys{};
+int                                                       input_frame = 0, held_reads = 0, down_reads = 0;
+bool                                                      any_held = false, any_down = false;
+std::array<bool, std::to_underlying(unity::KeyCode::Max)> held_keys{}, down_keys{};
 
 void KeyboardSnapshot()
 {
@@ -32,9 +43,9 @@ void KeyboardSnapshot()
   Require(held_reads == 0 && down_reads == 0, "idle keyboard avoids key queries");
 
   ++input_frame;
-  any_held = any_down                        = true;
-  held_keys[static_cast<size_t>(KeyCode::A)] = true;
-  down_keys[static_cast<size_t>(KeyCode::A)] = true;
+  any_held = any_down                       = true;
+  held_keys[std::to_underlying(KeyCode::A)] = true;
+  down_keys[std::to_underlying(KeyCode::A)] = true;
   Key::Poll();
   for (int i = 0; i < 100; ++i) {
     Key::Poll();
@@ -43,8 +54,8 @@ void KeyboardSnapshot()
   }
   Require(held_reads == 2 && down_reads == 2, "each key is queried once per state per frame");
   ++input_frame;
-  held_keys[static_cast<size_t>(KeyCode::A)] = false;
-  down_keys[static_cast<size_t>(KeyCode::A)] = false;
+  held_keys[std::to_underlying(KeyCode::A)] = false;
+  down_keys[std::to_underlying(KeyCode::A)] = false;
   Key::Poll();
   Require(!Key::Pressed(KeyCode::A) && !Key::Down(KeyCode::A), "new frames refresh the snapshot");
   Require(held_reads == 3 && down_reads == 3, "new frame queries keys again");
@@ -75,7 +86,8 @@ std::deque<Il2CppType>                             field_types;
 std::unordered_map<const Il2CppClass*, FakeClass*> registry;
 std::vector<std::string>                           errors;
 std::vector<const Il2CppClass*>                    initialized;
-int                                                method_lookups = 0;
+// Method table walks started, one per class visited.
+int method_lookups = 0;
 
 FakeClass& Define(const char* namespaze, const char* name, Il2CppTypeEnum type, FakeClass* parent = nullptr,
                   int32_t value_size = 0)
@@ -409,11 +421,10 @@ API(const Il2CppImage*, il2cpp_get_corlib, ())
 END_API
 API(Il2CppClass*, il2cpp_class_from_name, (const Il2CppImage*, const char* namespaze, const char* name))
 {
-  for (auto& fake : classes) {
-    if (!std::strcmp(fake.klass.namespaze, namespaze) && !std::strcmp(fake.klass.name, name))
-      return &fake.klass;
-  }
-  return nullptr;
+  const auto fake = std::ranges::find_if(classes, [&](const FakeClass& fake) {
+    return std::string_view(fake.klass.namespaze) == namespaze && std::string_view(fake.klass.name) == name;
+  });
+  return fake == classes.end() ? nullptr : &fake->klass;
 }
 END_API
 API(const char*, il2cpp_class_get_name, (Il2CppClass * klass))
@@ -441,33 +452,19 @@ END_API
 API(const MethodInfo*, il2cpp_class_get_methods, (Il2CppClass * klass, void** iter))
 {
   auto index = reinterpret_cast<size_t>(*iter);
+  method_lookups += index == 0;
   if (index >= klass->method_count)
     return nullptr;
   *iter = reinterpret_cast<void*>(index + 1);
   return klass->methods[index];
 }
 END_API
-API(const MethodInfo*, il2cpp_class_get_method_from_name, (Il2CppClass * klass, const char* name, int count))
-{
-  ++method_lookups;
-  for (; klass; klass = klass->parent) {
-    for (uint16_t i = 0; i < klass->method_count; ++i) {
-      auto* method = klass->methods[i];
-      if (!std::strcmp(method->name, name) && (count < 0 || method->parameters_count == count))
-        return method;
-    }
-  }
-  return nullptr;
-}
-END_API
 API(const PropertyInfo*, il2cpp_class_get_property_from_name, (Il2CppClass * klass, const char* name))
 {
-  for (; klass; klass = klass->parent) {
-    for (auto& property : Fake(klass).properties) {
-      if (!std::strcmp(property.name, name))
+  for (; klass; klass = klass->parent)
+    for (auto& property : Fake(klass).properties)
+      if (std::string_view(property.name) == name)
         return &property;
-    }
-  }
   return nullptr;
 }
 END_API
@@ -479,12 +476,10 @@ API(const MethodInfo*, il2cpp_property_get_set_method, (PropertyInfo * property)
 END_API
 API(FieldInfo*, il2cpp_class_get_field_from_name, (Il2CppClass * klass, const char* name))
 {
-  for (; klass; klass = klass->parent) {
-    for (auto& field : Fake(klass).fields) {
-      if (!std::strcmp(field.name, name))
+  for (; klass; klass = klass->parent)
+    for (auto& field : Fake(klass).fields)
+      if (std::string_view(field.name) == name)
         return &field;
-    }
-  }
   return nullptr;
 }
 END_API
@@ -502,11 +497,11 @@ API(Il2CppMethodPointer, il2cpp_resolve_icall, (const char* name))
   static constexpr auto down   = +[]() { return any_down; };
   static constexpr auto key    = +[](unity::KeyCode key) {
     ++held_reads;
-    return held_keys[static_cast<size_t>(key)];
+    return held_keys[std::to_underlying(key)];
   };
   static constexpr auto key_down = +[](unity::KeyCode key) {
     ++down_reads;
-    return down_keys[static_cast<size_t>(key)];
+    return down_keys[std::to_underlying(key)];
   };
   const std::pair<std::string_view, Il2CppMethodPointer> calls[] = {
       {"Test::Answer()", reinterpret_cast<Il2CppMethodPointer>(answer)},
@@ -516,10 +511,8 @@ API(Il2CppMethodPointer, il2cpp_resolve_icall, (const char* name))
       {"UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)", reinterpret_cast<Il2CppMethodPointer>(key)},
       {"UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)", reinterpret_cast<Il2CppMethodPointer>(key_down)},
   };
-  for (const auto& [key, function] : calls)
-    if (key == name)
-      return function;
-  return nullptr;
+  const auto* call = std::ranges::find(calls, name, &std::pair<std::string_view, Il2CppMethodPointer>::first);
+  return call == std::end(calls) ? nullptr : call->second;
 }
 END_API
 API(Il2CppObject*, il2cpp_type_get_object, (const Il2CppType*))
@@ -547,10 +540,9 @@ API(bool, il2cpp_class_is_assignable_from, (Il2CppClass * klass, Il2CppClass* ot
     std::fprintf(stderr, "il2cpp_class_is_assignable_from called with a null class\n");
     std::abort();
   }
-  for (; other; other = other->parent) {
+  for (; other; other = other->parent)
     if (other == klass)
       return true;
-  }
   return false;
 }
 END_API
@@ -559,12 +551,10 @@ API(void, il2cpp_runtime_class_init, (Il2CppClass * klass))
 END_API
 API(const MethodInfo*, il2cpp_object_get_virtual_method, (Il2CppObject * object, const MethodInfo* method))
 {
-  for (auto* klass = object->klass; klass; klass = klass->parent) {
-    for (uint16_t i = 0; i < klass->method_count; ++i) {
-      if (!std::strcmp(klass->methods[i]->name, method->name))
-        return klass->methods[i];
-    }
-  }
+  for (auto* klass = object->klass; klass; klass = klass->parent)
+    for (const auto* candidate : std::span(klass->methods, klass->method_count))
+      if (std::string_view(candidate->name) == method->name)
+        return candidate;
   return nullptr;
 }
 END_API
@@ -647,18 +637,29 @@ struct Gone : il2cpp::Object {
 };
 enum class State : int32_t { kIdle = 0, kBusy = 2 };
 
-void Require(bool condition, const char* what)
+// Detour targets for the hook set test, long enough for SPUD's patch.
+[[gnu::noinline]] int Scaled(int value)
 {
-  if (!condition)
-    throw std::runtime_error(what);
+  volatile int result = value;
+  for (int i = 0; i < 2; ++i)
+    result = result * 3 + 1;
+  return result - value;
 }
+[[gnu::noinline]] int Offset(int value)
+{
+  volatile int result = value;
+  for (int i = 0; i < 2; ++i)
+    result = result + 5;
+  return result * 2;
+}
+int Scaled_Hook(auto original, int value)
+{ return original(value) + 100; }
+int Offset_Hook(auto original, int value)
+{ return original(value) + 1000; }
 
 size_t ErrorsMentioning(std::string_view text)
 {
-  size_t count = 0;
-  for (auto& error : errors)
-    count += error.find(text) != std::string::npos;
-  return count;
+  return std::ranges::count_if(errors, [text](const std::string& error) { return error.contains(text); });
 }
 } // namespace
 
@@ -670,7 +671,7 @@ int main()
 
   // Properties call the generated getter with the receiver and its MethodInfo.
   Require(base->Count() == 7 && seen_self == &base_object.header, "property getter receiver");
-  Require(seen_method && !std::strcmp(seen_method->name, "get_Count"), "trailing MethodInfo");
+  Require(seen_method && std::string_view(seen_method->name) == "get_Count", "trailing MethodInfo");
   base->SetCount(9);
   Require(base->Count() == 9, "property setter");
   Require(base->Position().y == 2.f, "struct return");
@@ -708,13 +709,13 @@ int main()
 
   // Virtual calls dispatch on the receiver; non-virtual calls do not.
   auto* derived = reinterpret_cast<Derived*>(&derived_object);
-  Require(!std::strcmp(base->Describe(), "base"), "base dispatch");
-  Require(!std::strcmp(static_cast<Base*>(derived)->Describe(), "derived"), "virtual dispatch");
+  Require(std::string_view(base->Describe()) == "base", "base dispatch");
+  Require(std::string_view(static_cast<Base*>(derived)->Describe()) == "derived", "virtual dispatch");
 
   // Static members initialize their class.
   Require(Base::Class::Call<"Twice", int32_t>(int32_t{21}) == 42, "static call");
   Require(Base::Class::Get<"Instance", Base*>() == base, "static property");
-  Require(std::find(initialized.begin(), initialized.end(), &base_class.klass) != initialized.end(), "class init");
+  Require(std::ranges::contains(initialized, &base_class.klass), "class init");
 
   // Construction runs the matching constructor.
   auto* made = il2cpp::New<Base>(int32_t{12});
@@ -725,9 +726,12 @@ int main()
 
   // Lookups happen once per binding, not per call.
   const int lookups = method_lookups;
+  base->Call<"Select", void(bool)>(false);
+  Require(method_lookups > lookups, "first call looks the method up");
+  const int resolved = method_lookups;
   for (int i = 0; i < 3; ++i)
-    base->Call<"Select">(int32_t{i});
-  Require(method_lookups == lookups, "cached method lookup");
+    base->Call<"Select", void(bool)>(i == 1);
+  Require(method_lookups == resolved && seen_overload == "bool", "cached method lookup");
 
   // Missing and drifted members are reported once and return defaults without calling native code.
   const int calls = native_calls;
@@ -751,8 +755,8 @@ int main()
   Require(ErrorsMentioning("Game.Base.Explode threw: NullReferenceException") == 1, "exception reported once");
 
   // Internal calls run when present; a missing one is reported once and returns the default.
-  static const auto answer  = il2cpp::ResolveICall<int32_t()>("Test::Answer()");
-  static const auto renamed = il2cpp::ResolveICall<int32_t()>("Test::Renamed()");
+  static const auto answer  = il2cpp::ICall<int32_t()>("Test::Answer()");
+  static const auto renamed = il2cpp::ICall<int32_t()>("Test::Renamed()");
   Require(answer && answer() == 42, "internal call");
   Require(!renamed && renamed() == 0 && renamed() == 0, "missing internal call returns the default");
   Require(ErrorsMentioning("missing internal call Test::Renamed()") == 1, "missing internal call reported once");
@@ -768,9 +772,17 @@ int main()
   for (auto* item : *second)
     items += item != nullptr;
   Require(items == 3 && (*first)[0] == &list_a.header, "list iteration");
-  Require(first->Method<int32_t()>("get_Count").Pointer() == reinterpret_cast<void*>(&ListA_get_Count),
-          "runtime collection method schema");
-  Require(!first->Method<int32_t(int32_t)>("get_Item"), "runtime collection schema rejects a value result");
+  Require(std::ranges::count(*second, nullptr) == 0 && std::ranges::distance(il2cpp::Items(second)) == 3,
+          "lists are ranges");
+  Require(il2cpp::At(first, 0) == &list_a.header && il2cpp::At(first, 2) == nullptr && il2cpp::At(first, -1) == nullptr,
+          "list At checks the index");
+  il2cpp::List<Il2CppObject*>*  no_list  = nullptr;
+  il2cpp::Array<Il2CppObject*>* no_array = nullptr;
+  Require(il2cpp::Items(no_list).empty() && il2cpp::Items(no_array).empty() && il2cpp::At(no_list, 0) == nullptr
+              && il2cpp::At(no_array, 0) == nullptr,
+          "a null collection reads as empty");
+  Require(first->HasMethod<int32_t()>("get_Count"), "runtime collection method schema");
+  Require(!first->HasMethod<int32_t(int32_t)>("get_Item"), "runtime collection schema rejects a value result");
 
   first->Set(1, &other_object.header);
   Require(seen_self == &list_a.header && seen_int == 1 && list_a.target == &other_object.header,
@@ -806,6 +818,43 @@ int main()
   Require(Base::Class::HasField<"_count", int32_t>(), "instance field schema accepts the declared type");
   Require(!Base::Class::HasField<"_count", Other*>(), "instance field schema rejects an incompatible type");
   Require(!Base::Class::HasField<"s_flag", int32_t>(), "instance field schema rejects a static field");
+  Require(Base::Class::HasProperty<"Count", int32_t>(), "property schema accepts the declared type");
+  Require(!Base::Class::HasProperty<"Count", Other*>(), "property schema rejects an incompatible type");
+
+  // Static hook lookups check the signature without running the class constructor ahead of the game.
+  initialized.clear();
+  Require(Base::Class::StaticMethod<int32_t(int32_t)>("Twice").Pointer() == reinterpret_cast<void*>(&Base_Twice),
+          "typed static hook lookup");
+  Require(initialized.empty(), "a static hook lookup leaves the class uninitialized");
+  Require(!Base::Class::StaticMethod<void(bool)>("Select"), "static hook lookup rejects an instance method");
+
+  // Boxed primitives unbox only as their own type.
+  Il2CppObject boxed{};
+  boxed.klass    = &int_class.klass;
+  int32_t number = 0;
+  int64_t wide   = 7;
+  Require(il2cpp::Unbox(&boxed, number) && number == shared_result, "unbox the boxed type");
+  Require(!il2cpp::Unbox(&boxed, wide) && wide == 7, "unbox rejects another type and leaves the value");
+  Require(!il2cpp::Unbox(static_cast<Il2CppObject*>(nullptr), number), "unbox rejects null");
+
+  // A hook set installs every hook or none: a missing member, or a null address, leaves its targets untouched.
+  {
+    const int       scaled_before = Scaled(2);
+    il2cpp::HookSet incomplete("Incomplete");
+    IL2CPP_STAGE(incomplete, il2cpp::Method(), Scaled_Hook);
+    IL2CPP_STAGE_AT(incomplete, &Scaled, Scaled_Hook);
+    Require(!incomplete.Commit() && Scaled(2) == scaled_before, "a set with a missing method installs nothing");
+    Require(ErrorsMentioning("Incomplete not installed: a method it hooks is missing") == 1,
+            "an incomplete set says what it cost");
+#if defined(__x86_64__) || defined(_M_X64)
+    const int       offset_before = Offset(2);
+    il2cpp::HookSet complete("Complete");
+    IL2CPP_STAGE_AT(complete, &Scaled, Scaled_Hook);
+    IL2CPP_STAGE_AT(complete, &Offset, Offset_Hook);
+    Require(complete.Commit() && Scaled(2) == scaled_before + 100 && Offset(2) == offset_before + 1000,
+            "a complete set installs every hook");
+#endif
+  }
 
   // Managed strings convert to UTF-8, and compare with ASCII without converting.
   const auto utf16 = [](std::u16string_view text) {

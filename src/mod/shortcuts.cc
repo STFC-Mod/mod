@@ -1,3 +1,6 @@
+// Owns the shortcut catalog from shortcuts.def: parsing [shortcuts] into key chords, the live bindings, and
+// matching them against this frame's input.
+
 #include "shortcuts.h"
 
 #include "text.h"
@@ -9,10 +12,16 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <format>
 #include <optional>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace
 {
+// --- Key names ---
+
 // A key name from the settings file, and its keybind badge text when that differs from the name. The badge font
 // has few glyphs, so long names are shortened and the symbols the modifier notation uses are spelled out.
 struct KeyName {
@@ -140,39 +149,36 @@ std::optional<KeyName> FindKey(std::string_view name)
     const auto [end, error] = std::from_chars(digits.data(), digits.data() + digits.size(), number);
     if (error == std::errc{} && end == digits.data() + digits.size() && number >= range.first && number <= range.last
         && digits == std::to_string(number))
-      return KeyName{name, static_cast<unity::KeyCode>(static_cast<int32_t>(range.key) + number - range.first)};
+      return KeyName{name, static_cast<unity::KeyCode>(std::to_underlying(range.key) + number - range.first)};
   }
   const auto it = std::ranges::find(kKeys, name, &KeyName::name);
   return it == std::end(kKeys) ? std::nullopt : std::optional(*it);
 }
 
-const KeyChord::Modifier* FindModifier(std::string_view name)
-{
-  const auto it = std::ranges::find(kModifiers, name, &KeyChord::Modifier::name);
-  return it == std::end(kModifiers) ? nullptr : it;
-}
-
-Shortcut::Bindings bindings;
-
 std::string DescribeChords(const std::vector<KeyChord>& chords)
 {
   std::string text;
-  for (const auto& chord : chords) {
-    if (!text.empty())
-      text += " | ";
-    text += chord.Text();
-  }
+  for (const auto& chord : chords)
+    text += (text.empty() ? "" : " | ") + chord.Text();
   return text;
 }
 
+// --- Matching ---
+
+// The live bindings, replaced whole by Set. Game thread only, like the input they are matched against.
+Shortcut::Bindings bindings;
+
+const std::vector<KeyChord>& ChordsOf(Action action)
+{ return bindings[std::to_underlying(action)]; }
+
 // Keys that completed a binding with modifiers, until released. A plain binding on the same key waits for the
-// release, so letting go of CTRL before PGUP does not turn a held CTRL-PGUP into PGUP.
+// release, so letting go of CTRL before PGUP does not turn a held CTRL-PGUP into PGUP. At most one entry per key.
 std::vector<unity::KeyCode> used_keys;
 
 bool IsUsed(unity::KeyCode key)
 {
   std::erase_if(used_keys, [](unity::KeyCode used) { return !unity::Key::Pressed(used); });
-  return std::ranges::find(used_keys, key) != used_keys.end();
+  return std::ranges::contains(used_keys, key);
 }
 
 bool ModifiersHeld(const KeyChord& chord)
@@ -183,18 +189,26 @@ bool ModifiersHeld(const KeyChord& chord)
 
 template <bool (*KeyState)(unity::KeyCode)> bool Matches(Action action)
 {
-  for (const auto& chord : bindings[static_cast<size_t>(action)]) {
+  for (const auto& chord : ChordsOf(action)) {
     if (chord.key == unity::KeyCode::None || !KeyState(chord.key))
       continue;
-    if (chord.modifiers.empty() ? unity::Key::IsModified() || IsUsed(chord.key) : !ModifiersHeld(chord))
-      continue;
-    if (!chord.modifiers.empty() && std::ranges::find(used_keys, chord.key) == used_keys.end())
-      used_keys.push_back(chord.key);
+    if (chord.modifiers.empty()) {
+      if (unity::Key::IsModified() || IsUsed(chord.key))
+        continue;
+    } else {
+      if (!ModifiersHeld(chord))
+        continue;
+      if (!std::ranges::contains(used_keys, chord.key))
+        used_keys.push_back(chord.key);
+    }
     return true;
   }
   return false;
 }
 
+// --- Settings ---
+
+// Which [control] switches a shortcut needs: hotkeys_extended, or that and enable_experimental.
 enum class Tier { kAlways, kExtended, kExperimental };
 
 struct Setting {
@@ -211,7 +225,7 @@ constexpr Setting kSettings[] = {
 #include "shortcuts.def"
 #undef SHORTCUT
 };
-static_assert(std::size(kSettings) == static_cast<size_t>(Action::kCount));
+static_assert(std::size(kSettings) == std::to_underlying(Action::kCount));
 
 // Binds every chord in `value` ("CTRL-G|F8"). Reports whether any was valid.
 bool BindChords(std::vector<KeyChord>& chords, std::string_view key, std::string_view value)
@@ -222,43 +236,42 @@ bool BindChords(std::vector<KeyChord>& chords, std::string_view key, std::string
       chords.push_back(std::move(chord));
       bound = true;
     } else {
-      spdlog::warn("Invalid shortcut token [shortcuts].{} token='{}' value='{}'; ignoring token.", key, text, value);
+      spdlog::warn("invalid config value shortcuts.{}: '{}'; ignoring the chord '{}'", key, value, text);
     }
   }
   return bound;
 }
 
-// Binds one [shortcuts] setting and records the effective binding, and where it came from, in `out`.
-void LoadSetting(const toml::table* shortcuts, toml::table& out, toml::table& out_source, const Setting& setting,
+// Binds one [shortcuts] setting into `chords`, and records the binding and where it came from (default, config,
+// alias:<key> or invalid) for the vars file.
+void BindSetting(const toml::table* shortcuts, toml::table& effective, toml::table& sources, const Setting& setting,
                  std::vector<KeyChord>& chords)
 {
   // The setting itself, else the first deprecated alias present, else the default.
   std::string_view  key  = setting.key;
   const toml::node* node = shortcuts ? shortcuts->get(key) : nullptr;
   for (const auto alias : setting.aliases) {
-    if (alias.empty() || !shortcuts || !shortcuts->contains(alias))
+    const auto* alias_node = shortcuts && !alias.empty() ? shortcuts->get(alias) : nullptr;
+    if (!alias_node)
       continue;
     if (node) {
-      spdlog::warn("Ignoring deprecated shortcut alias [shortcuts].{} because [shortcuts].{} is set.", alias,
-                   setting.key);
+      spdlog::warn("deprecated config value shortcuts.{}; ignored because shortcuts.{} is set", alias, setting.key);
       continue;
     }
-    spdlog::warn("Deprecated shortcut alias [shortcuts].{} is supported for compatibility; use [shortcuts].{}.", alias,
-                 setting.key);
+    spdlog::warn("deprecated config value shortcuts.{}; use shortcuts.{}", alias, setting.key);
     key  = alias;
-    node = shortcuts->get(alias);
+    node = alias_node;
     break;
   }
-  std::optional<std::string> configured = node ? node->value<std::string>() : std::nullopt;
+  const std::optional<std::string> configured = node ? node->value<std::string>() : std::nullopt;
   if (node && !configured)
-    spdlog::error("Invalid shortcut value [shortcuts].{} must be a string; using default for [shortcuts].{}.", key,
-                  setting.key);
-  std::string label = !configured ? "default" : key == setting.key ? "config" : "alias:" + std::string(key);
+    spdlog::warn("invalid config value shortcuts.{}: not a string; using the default {}", key, setting.fallback);
+  std::string label = !configured ? "default" : key == setting.key ? "config" : std::format("alias:{}", key);
 
   const auto record = [&](std::string value, std::string source) {
-    spdlog::debug("shortcut value shortcuts.{} value: {}", setting.key, value);
-    out.insert_or_assign(setting.key, std::move(value));
-    out_source.insert_or_assign(setting.key, std::move(source));
+    spdlog::debug("config shortcuts.{} = {}", setting.key, value);
+    effective.insert_or_assign(setting.key, std::move(value));
+    sources.insert_or_assign(setting.key, std::move(source));
   };
 
   // An explicit empty string disables the binding, just like NONE.
@@ -268,10 +281,10 @@ void LoadSetting(const toml::table* shortcuts, toml::table& out, toml::table& ou
 
   if (!BindChords(chords, key, value)) {
     if (configured)
-      spdlog::error("No valid shortcut tokens for [shortcuts].{} value='{}'; using default for [shortcuts].{}.", key,
-                    *configured, setting.key);
+      spdlog::warn("invalid config value shortcuts.{}: '{}'; using the default {}", key, *configured, setting.fallback);
     if (!configured || !BindChords(chords, setting.key, setting.fallback)) {
-      spdlog::error("Default shortcut [shortcuts].{} value='{}' has no valid tokens; action disabled.", setting.key,
+      // A broken entry in shortcuts.def, not a user mistake.
+      spdlog::error("default shortcut shortcuts.{} = '{}' has no valid chord; the action is unbound", setting.key,
                     setting.fallback);
       return record("NONE", "invalid");
     }
@@ -285,7 +298,8 @@ KeyChord KeyChord::Parse(std::string_view text)
 {
   KeyChord chord;
   for (auto& token : StrSplit(AsciiStrToUpper(text), '-')) {
-    if (const auto* modifier = FindModifier(token)) {
+    if (const auto* modifier = std::ranges::find(kModifiers, token, &KeyChord::Modifier::name);
+        modifier != std::end(kModifiers)) {
       chord.modifiers.push_back(modifier);
     } else if (const auto key = FindKey(token)) {
       // A chord has one key; a later one replaces an earlier one, so the text shows what is bound.
@@ -325,14 +339,16 @@ Bindings Parse(const toml::table& config, toml::table& parsed, bool extended, bo
 {
   Bindings    result;
   const auto* shortcuts = config["shortcuts"].as_table();
-  auto&       out       = *parsed.emplace<toml::table>("shortcuts").first->second.as_table();
-  auto&       source    = *parsed.emplace<toml::table>("shortcuts_source").first->second.as_table();
+  auto&       effective = *parsed.emplace<toml::table>("shortcuts").first->second.as_table();
+  auto&       sources   = *parsed.emplace<toml::table>("shortcuts_source").first->second.as_table();
 
+  // A shortcut whose tier is off stays unbound and is left out of the vars file.
   for (const auto& setting : kSettings) {
-    if ((setting.tier == Tier::kExtended && !extended)
-        || (setting.tier == Tier::kExperimental && !(extended && experimental)))
+    if (setting.tier == Tier::kExtended && !extended)
       continue;
-    LoadSetting(shortcuts, out, source, setting, result[static_cast<size_t>(setting.action)]);
+    if (setting.tier == Tier::kExperimental && !(extended && experimental))
+      continue;
+    BindSetting(shortcuts, effective, sources, setting, result[std::to_underlying(setting.action)]);
   }
   return result;
 }
@@ -348,8 +364,7 @@ bool Owns(unity::KeyCode key)
 
 bool HasBinding(Action action)
 {
-  return std::ranges::any_of(bindings[static_cast<size_t>(action)],
-                             [](const auto& chord) { return chord.key != unity::KeyCode::None; });
+  return std::ranges::any_of(ChordsOf(action), [](const auto& chord) { return chord.key != unity::KeyCode::None; });
 }
 
 bool IsPressed(Action action)
@@ -359,12 +374,12 @@ bool IsDown(Action action)
 { return Matches<unity::Key::Down>(action); }
 
 std::string Describe(Action action)
-{ return DescribeChords(bindings[static_cast<size_t>(action)]); }
+{ return DescribeChords(ChordsOf(action)); }
 
 std::string Hint(Action action)
 {
   // The game's badges have room for one binding.
-  const auto& chords = bindings[static_cast<size_t>(action)];
+  const auto& chords = ChordsOf(action);
   return chords.empty() ? std::string{} : chords.front().Hint();
 }
 } // namespace Shortcut

@@ -3,7 +3,16 @@
 //! to compile against and link one library.
 const std = @import("std");
 const Build = std.Build;
+const compat = @import("compat.zig");
 const toolchains = @import("toolchains.zig");
+
+/// Name modes as `OptimizeMode.Debug`: Zig 0.17 lowercases the fields and keeps these names only as declarations, so
+/// a bare `.Debug` no longer compares.
+pub const OptimizeMode = std.builtin.OptimizeMode;
+
+/// The oldest macOS the mod, loader and launcher support. Scripts and CI pass `-Dtarget=<arch>-macos.14.6` and the
+/// launcher's Info.plist gets it from here; change them together.
+pub const macos_min = "14.6";
 
 /// Project options that apply to every target. Options that configure a single step stay with that step.
 pub const Options = struct {
@@ -11,26 +20,26 @@ pub const Options = struct {
     lto: ?bool,
     moddbg: bool,
     use_original_bg: bool,
+    /// A custom loading screen, relative to the working directory; empty for the built-in one.
     bg_image: []const u8,
     /// Fixture optimization; null follows -Doptimize.
-    test_optimize: ?std.builtin.OptimizeMode,
+    test_optimize: ?OptimizeMode,
     msvc_sysroot: ?[]const u8,
     macos_sdk: ?[]const u8,
 
     /// Declare the shared options. Call once from `build`.
     pub fn parse(b: *Build) Options {
-        const bg_image = b.option([]const u8, "bg_image", "Custom loading screen image") orelse "";
         return .{
-            .lto = b.option(bool, "lto", "Enable LTO (Windows release default; unsupported for macOS in Zig 0.16)"),
+            .lto = b.option(bool, "lto", "Enable LTO (Windows release default; unsupported for macOS)"),
             .moddbg = b.option(bool, "moddbg", "Enable diagnostic patch toggles (_MODDBG)") orelse false,
             .use_original_bg = b.option(
                 bool,
                 "use_original_bg",
                 "Use the original game loading background",
             ) orelse false,
-            .bg_image = if (bg_image.len == 0) "assets/loadingscreen.png" else bg_image,
+            .bg_image = b.option([]const u8, "bg_image", "Custom loading screen image") orelse "",
             .test_optimize = b.option(
-                std.builtin.OptimizeMode,
+                OptimizeMode,
                 "test-optimize",
                 "Optimization mode for test fixtures (dependencies use -Doptimize)",
             ),
@@ -44,7 +53,7 @@ pub const Options = struct {
 pub const Ctx = struct {
     b: *Build,
     target: Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
+    optimize: OptimizeMode,
     options: Options,
     lto: bool,
     sysroot: toolchains.Sysroot,
@@ -53,13 +62,13 @@ pub const Ctx = struct {
     pub fn init(
         b: *Build,
         target: Build.ResolvedTarget,
-        optimize: std.builtin.OptimizeMode,
+        optimize: OptimizeMode,
         options: Options,
     ) *const Ctx {
         const os = target.result.os.tag;
-        const lto = options.lto orelse (os == .windows and optimize != .Debug);
+        const lto = options.lto orelse (os == .windows and optimize != OptimizeMode.Debug);
         if (lto and os == .macos)
-            std.debug.panic("Zig 0.16 does not support Mach-O LTO; use -Dlto=false for macOS", .{});
+            std.debug.panic("Zig does not support Mach-O LTO; use -Dlto=false for macOS", .{});
         const ctx = b.allocator.create(Ctx) catch @panic("OOM");
         ctx.* = .{
             .b = b,
@@ -73,20 +82,29 @@ pub const Ctx = struct {
     }
 
     /// A copy of this context compiling at `optimize`. Debug fixtures never use LTO.
-    pub fn withOptimize(ctx: *const Ctx, optimize: std.builtin.OptimizeMode) *const Ctx {
+    pub fn withOptimize(ctx: *const Ctx, optimize: OptimizeMode) *const Ctx {
         const copy = ctx.b.allocator.create(Ctx) catch @panic("OOM");
         copy.* = ctx.*;
         copy.optimize = optimize;
-        if (optimize == .Debug) copy.lto = false;
+        if (optimize == OptimizeMode.Debug) copy.lto = false;
         return copy;
     }
 
+    pub fn isDebug(ctx: *const Ctx) bool {
+        return ctx.optimize == OptimizeMode.Debug;
+    }
+
+    // Target checks. The build host is `builtin.os.tag`; host-only steps such as swiftc and protoc check that.
     pub fn isWindows(ctx: *const Ctx) bool {
         return ctx.target.result.os.tag == .windows;
     }
 
     pub fn isMacos(ctx: *const Ctx) bool {
         return ctx.target.result.os.tag == .macos;
+    }
+
+    pub fn isLinux(ctx: *const Ctx) bool {
+        return ctx.target.result.os.tag == .linux;
     }
 
     pub fn isAarch64(ctx: *const Ctx) bool {
@@ -103,8 +121,7 @@ pub const Ctx = struct {
             .link_libc = true,
             .link_libcpp = if (cpp and !ctx.isWindows()) true else null,
             .pic = true,
-            // Zig turns UBSan on in Debug. The xmake build never had it, and a trap inside a game detour takes the
-            // client down.
+            // Zig turns UBSan on in Debug, but a trap inside a game detour takes the client down.
             .sanitize_c = .off,
         });
 
@@ -114,25 +131,26 @@ pub const Ctx = struct {
                     module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ root, "winsdk/include", dir }) });
                 inline for (.{ "winsdk/lib/um/x64", "winsdk/lib/ucrt/x64", "msvc/lib/x64" }) |dir|
                     module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ root, dir }) });
-            } else {
+            } else if (compat.getEnv(b, "INCLUDE")) |includes| {
                 // No cached SDK on a Windows host: a Visual Studio developer shell supplies the paths, including
-                // C++/WinRT, which Zig's own MSVC detection leaves out.
-                const env = &b.graph.environ_map;
-                if (env.get("INCLUDE")) |includes| {
-                    var it = std.mem.splitScalar(u8, includes, ';');
-                    while (it.next()) |dir| if (dir.len != 0) module.addSystemIncludePath(.{ .cwd_relative = dir });
-                    if (env.get("LIB")) |libs| {
-                        var lib_it = std.mem.splitScalar(u8, libs, ';');
-                        while (lib_it.next()) |dir| if (dir.len != 0) module.addLibraryPath(.{ .cwd_relative = dir });
-                    }
-                }
+                // C++/WinRT, which Zig's own MSVC detection leaves out. The shell sets both; LIB is read only with
+                // INCLUDE.
+                var include_dirs = std.mem.tokenizeScalar(u8, includes, ';');
+                while (include_dirs.next()) |dir| module.addSystemIncludePath(.{ .cwd_relative = dir });
+                var lib_dirs = std.mem.tokenizeScalar(u8, compat.getEnv(b, "LIB") orelse "", ';');
+                while (lib_dirs.next()) |dir| module.addLibraryPath(.{ .cwd_relative = dir });
             }
+            // The static release CRT and STL (/MT), so version.dll needs no Visual C++ redistributable.
             inline for (.{ "libcmt", "libcpmt", "libucrt", "libvcruntime" }) |lib|
                 module.linkSystemLibrary(lib, .{});
         } else if (ctx.sysroot.macos_sdk) |sdk| {
             module.addSystemIncludePath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/include" }) });
             module.addSystemFrameworkPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "System/Library/Frameworks" }) });
             module.addLibraryPath(.{ .cwd_relative = b.pathJoin(&.{ sdk, "usr/lib" }) });
+            // Zig 0.17's libc++ guards its float.h wrapper, so once <cfloat> is in (toml++ includes it before
+            // <cmath>), the SDK's math.h cannot include it again for INFINITY and <random> stops compiling. This is
+            // the definition clang's float.h gives.
+            module.addCMacro("INFINITY", "__builtin_inff()");
         }
         return module;
     }
@@ -146,21 +164,29 @@ pub const Ctx = struct {
         }
     }
 
+    /// A static library from `module`, through `applyCompile`.
     pub fn staticLib(ctx: *const Ctx, name: []const u8, module: *Build.Module) *Build.Step.Compile {
         const lib = ctx.b.addLibrary(.{ .name = name, .linkage = .static, .root_module = module });
         ctx.applyCompile(lib);
         return lib;
     }
 
+    /// An executable from `module`, through `applyCompile`.
     pub fn executable(ctx: *const Ctx, name: []const u8, module: *Build.Module) *Build.Step.Compile {
         const exe = ctx.b.addExecutable(.{ .name = name, .root_module = module });
         ctx.applyCompile(exe);
         return exe;
     }
 
-    /// An owned copy of `list`. `Lib` fields outlive the caller's stack, so literal slices must be copied.
+    /// An owned copy of `list`. `Lib` fields outlive the caller's stack, and `&.{...}` of runtime values points
+    /// into it, so those literals must be copied.
     pub fn dirs(ctx: *const Ctx, list: []const Build.LazyPath) []const Build.LazyPath {
         return ctx.b.allocator.dupe(Build.LazyPath, list) catch @panic("OOM");
+    }
+
+    /// An owned copy of `list`, for `Lib.dependencies`. See `dirs`.
+    pub fn libs(ctx: *const Ctx, list: []const Lib) []const Lib {
+        return ctx.b.allocator.dupe(Lib, list) catch @panic("OOM");
     }
 
     /// Compile `files` as one translation unit of `#include`s, so headers they share are parsed once. Only use it
@@ -174,12 +200,18 @@ pub const Ctx = struct {
         flags: []const []const u8,
     ) void {
         const b = ctx.b;
+        const root_path = compat.sourcePath(b, root);
         var contents: std.Io.Writer.Allocating = .init(b.allocator);
         const generated = b.addWriteFiles();
         for (files, 0..) |file, index| {
             // Changing an included source must also change the generated batch's cache key.
             _ = generated.addCopyFile(root.path(b, file), b.fmt("inputs/{d}.cc", .{index}));
-            const path = b.pathJoin(&.{ root.getPath(b), file });
+            // Absolute, so the source's own relative includes resolve from its real directory.
+            const path = root_path.root_dir.handle.realPathFileAlloc(
+                b.graph.io,
+                b.pathJoin(&.{ root_path.sub_path, file }),
+                b.allocator,
+            ) catch |err| std.debug.panic("unable to resolve {f}/{s}: {t}", .{ root_path, file, err });
             std.mem.replaceScalar(u8, path, '\\', '/');
             const quoted = std.json.Stringify.valueAlloc(b.allocator, path, .{}) catch @panic("OOM");
             contents.writer.print("#include {s}\n", .{quoted}) catch @panic("OOM");
@@ -188,33 +220,54 @@ pub const Ctx = struct {
         module.addCSourceFile(.{ .file = source, .flags = flags });
     }
 
-    /// C flags for this target, then `extra`.
+    /// `addCxxBatch` over groups of four files, named `<name>-0`, `<name>-1` and so on. Each group shares header
+    /// parsing without serializing the whole module into one unit.
+    pub fn addCxxBatches(
+        ctx: *const Ctx,
+        module: *Build.Module,
+        name: []const u8,
+        root: Build.LazyPath,
+        files: []const []const u8,
+        flags: []const []const u8,
+    ) void {
+        var start: usize = 0;
+        while (start < files.len) : (start += 4) {
+            const batch = files[start..@min(start + 4, files.len)];
+            ctx.addCxxBatch(module, ctx.b.fmt("{s}-{d}", .{ name, start / 4 }), root, batch, flags);
+        }
+    }
+
+    /// C flags for this target, then `extra`. On Windows, -fms-runtime-lib=static selects the static CRT that
+    /// `createModule` links, so objects and libraries agree on /MT.
     pub fn cFlags(ctx: *const Ctx, extra: []const []const u8) []const []const u8 {
+        const allocator = ctx.b.allocator;
         var list: std.ArrayList([]const u8) = .empty;
-        if (ctx.isWindows()) list.append(ctx.b.allocator, "-fms-runtime-lib=static") catch @panic("OOM");
-        list.appendSlice(ctx.b.allocator, extra) catch @panic("OOM");
+        if (ctx.isWindows()) list.append(allocator, "-fms-runtime-lib=static") catch @panic("OOM");
+        list.appendSlice(allocator, extra) catch @panic("OOM");
         return list.items;
     }
 
     /// C++ flags at `std_ver` with exceptions enabled, then `extra`.
     pub fn cxxFlags(ctx: *const Ctx, comptime std_ver: []const u8, extra: []const []const u8) []const []const u8 {
+        const allocator = ctx.b.allocator;
         var list: std.ArrayList([]const u8) = .empty;
-        const base: []const []const u8 = &.{ "-std=" ++ std_ver, "-fexceptions", "-fcxx-exceptions" };
-        list.appendSlice(ctx.b.allocator, base) catch @panic("OOM");
-        // Zig passes -nostdinc++ when it uses the MSVC STL. Clang's MSVC driver reports it unused, and Zig turns
-        // that warning into an error.
-        if (ctx.isWindows()) list.appendSlice(ctx.b.allocator, &.{
+        list.appendSlice(allocator, &.{ "-std=" ++ std_ver, "-fexceptions", "-fcxx-exceptions" }) catch @panic("OOM");
+        // NOMINMAX keeps windows.h from defining min and max macros over std::min and std::max. Zig passes
+        // -nostdinc++ when it uses the MSVC STL; Clang's MSVC driver reports it unused, and Zig turns that warning
+        // into an error.
+        if (ctx.isWindows()) list.appendSlice(allocator, &.{
             "-DNOMINMAX",
             "-fms-runtime-lib=static",
             "-Wno-unused-command-line-argument",
         }) catch @panic("OOM");
-        list.appendSlice(ctx.b.allocator, extra) catch @panic("OOM");
+        list.appendSlice(allocator, extra) catch @panic("OOM");
         return list.items;
     }
 };
 
 /// A compiled or header-only library, as its consumers see it.
 pub const Lib = struct {
+    /// null for header-only libraries and for system libraries named in `system_libs`.
     artifact: ?*Build.Step.Compile = null,
     /// Libraries this one links against. Consumers link them too, instead of this artifact linking them, so
     /// independent static libraries compile in parallel.
@@ -267,16 +320,19 @@ pub fn globFiles(
     exclude: []const []const u8,
 ) []const []const u8 {
     const io = b.graph.io;
-    const root_path = root.getPath3(b, null);
+    const root_path = compat.sourcePath(b, root);
     var dir = root_path.root_dir.handle.openDir(io, b.pathJoin(&.{ root_path.sub_path, sub_path }), .{
         .iterate = true,
-    }) catch |err| std.debug.panic("unable to open {s}/{s}: {t}", .{ root_path.sub_path, sub_path, err });
+    }) catch |err| std.debug.panic("unable to open {f}/{s}: {t}", .{ root_path, sub_path, err });
     defer dir.close(io);
     var walker = dir.walk(b.allocator) catch @panic("OOM");
     defer walker.deinit();
 
+    // A file added or removed anywhere in the tree changes the list, so every folder walked is a dependency.
+    compat.dependOnDirectory(b, root.path(b, sub_path));
     var out: std.ArrayList([]const u8) = .empty;
     next: while (walker.next(io) catch |err| std.debug.panic("walk failed: {t}", .{err})) |entry| {
+        if (entry.kind == .directory) compat.dependOnDirectory(b, root.path(b, b.pathJoin(&.{ sub_path, entry.path })));
         if (entry.kind != .file) continue;
         const ext = std.fs.path.extension(entry.basename);
         for (exts) |want| {
@@ -294,4 +350,29 @@ pub fn globFiles(
         }
     }.lessThan);
     return out.items;
+}
+
+/// A program the build runs on the host, from one Zig source file under zig/tools.
+pub fn hostTool(
+    b: *Build,
+    name: []const u8,
+    source: []const u8,
+    optimize: OptimizeMode,
+) *Build.Step.Compile {
+    return b.addExecutable(.{
+        .name = name,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(source),
+            .target = b.graph.host,
+            .optimize = optimize,
+        }),
+    });
+}
+
+/// The step that builds and runs the `test` blocks of a Zig source file on the host.
+pub fn hostTests(b: *Build, source: []const u8) *Build.Step {
+    const tests = b.addTest(.{
+        .root_module = b.createModule(.{ .root_source_file = b.path(source), .target = b.graph.host }),
+    });
+    return &b.addRunArtifact(tests).step;
 }

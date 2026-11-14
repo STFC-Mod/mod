@@ -38,9 +38,20 @@ struct ShipView : il2cpp::Object {
 };
 ```
 
-Accessor names follow managed members, without a leading `_` or `m_`. Setters use `SetX`.
+Accessor names follow managed members. Fields are lowerCamel without a leading `_` or `m_` (`_count` is `count()`).
+Properties and methods keep their PascalCase name. Setters use `SetX`.
+A helper that converts the managed value takes the PascalCase name: `Name()` returns `std::string`, `name()` the raw
+`Il2CppString*`.
 Nested types use `"Outer/Inner"` as the class name.
 Fixed-width numeric types keep the native ABI explicit.
+
+| Managed class | Binding |
+| --- | --- |
+| MonoBehaviour | Derives from `unity::Behaviour`, which supplies `isActiveAndEnabled()`, `transform()` and `gameObject()`. |
+| Other component | Derives from `unity::Component`. |
+| Static members only | `struct X { using Class = il2cpp::Class<...>; static ... };` |
+| Only ever hooked | `using X = il2cpp::Class<...>;` |
+| Mirrored enum | `enum class X : int32_t` with the managed member names. Mod-owned enums use `kCamelCase`. |
 
 ## Members and calls
 
@@ -90,6 +101,9 @@ This supports generic bases such as `Widget<T>`, `MonoSingleton<T>`, and `il2cpp
 Some game bindings use this form when their managed class has moved between client builds.
 They still belong in `src/mod/game/`.
 
+`Object::HasMethod<F>(name)` checks a method on such a runtime class without calling it.
+`CallOnField<"field", T, "Method", R>()` calls a parameterless method on a value-type field in place.
+
 `il2cpp::List<T>` supports indexed reads and `Set`, `Add`, `RemoveAt`, and `Clear`.
 Its iterator reads `Count` once. Do not mutate the list during iteration.
 `il2cpp::Array<T>` views a managed array; its `Set` applies reference write barriers.
@@ -103,8 +117,9 @@ Resolution happens on first use. Missing calls are reported once and return valu
 
 ## Hooks
 
-`IL2CPP_HOOK` looks up a managed method and detours its native entry point through SPUD.
-Hook names follow `Class_Method_Hook`. The first parameter is `auto original`.
+Every hook installs through an `il2cpp::HookSet`, one per installer. Stage each hook with `IL2CPP_STAGE(set, method,
+hook)`, or `IL2CPP_STAGE_AT(set, address, hook)` for a native function such as an IL2CPP export, then call `Commit()`.
+Hook names follow `Class_Method_Hook`. The first parameter is `auto original`; the receiver is `_this`.
 
 ```cpp
 #include <il2cpp/hook.h>
@@ -114,30 +129,46 @@ void ShipView_Select_Hook(auto original, ShipView* _this, int32_t index)
   original(_this, index);
 }
 
-void InstallShipView()
+bool InstallShipView()
 {
-  IL2CPP_HOOK(ShipView::Class::Method("Select", 1), ShipView_Select_Hook);
+  il2cpp::HookSet hooks("ShipView");
+  IL2CPP_STAGE(hooks, ShipView::Class::Method("Select", 1), ShipView_Select_Hook);
+  return hooks.Commit();
 }
 ```
 
-The macro returns the original-call trampoline, or null on failure.
-A missing method installs nothing. SPUD installation failures include the method name in the error.
-`IL2CPP_DETOUR(address, hook, name)` handles native functions, including IL2CPP exports.
+A set installs through one SPUD transaction: every hook goes in, or none does. A missing method or a null address
+makes `Commit()` install nothing, and a failing step undoes the steps before it, so a hook never runs without the rest
+of its set. `Commit()` returns whether the set went in; an installer returns it so the mod can report the feature.
+SPUD stages only removable hooks, which count calls in and out. Committed hooks are detached and stay for the process.
+
+Every failure is reported by the library as `[IL2CPP] <set> not installed: <why>`, after the lookup that found a method
+missing names it. Features do not log hook failures or success.
+A hook that several features share goes in its own set, committed once from a function-local static.
+
+SPUD chains detours on one function safely, so two hooks may target the same native code. Identical methods can share
+generated code, though, and a hook on one of them then also runs for the others, with their receiver. Where a feature
+knows its targets can share a body, it compares their `il2cpp::DetourTarget`, the address SPUD patches, and hooks
+the shared body once.
 
 | Lookup | Selects by |
 | --- | --- |
 | `Class::Method("Select")` | Name, any arity |
 | `Class::Method("Select", 1)` | Name and parameter count |
 | `Class::Method("Select", {"System.Int32"})` | Managed parameter type names |
-| `Class::Method<void(int32_t)>("Select")` | Complete instance signature |
+| `Class::Method<void(int32_t)>("Select")` | Complete instance signature, without `this` |
+| `Class::StaticMethod<void(int32_t)>("Select")` | Complete static signature, without running the class constructor |
 
-Each macro expansion owns one detour for the process. Use a separate expansion for each target.
+Name-based lookups fall back to a base class's method when the class itself does not declare one.
+Hooking that detours the base for every subclass; check `Method::Info()->klass` when that matters.
+`Class::HasField<"_name", T>()` and `Class::HasProperty<"Name", T>()` check a member without reading an object.
+Reserve them for a hook that would act on a value read as zero; a missing member is already reported.
+
 Prefer one detour per game method, then route feature work through it.
-SPUD can chain detours, but their order follows installation order.
 
-Before detouring a small wrapper or thunk, verify its native extent against SPUD's overwrite size.
-Check every supported architecture for the exact client build.
-A successful build does not prove the hook fits. Prefer a substantive downstream method when exact extents are unavailable.
+SPUD measures each target before it patches, from the image's unwind table on Windows or its function starts on macOS,
+and follows an entry that only jumps to its body. A target too small for the patch is refused, and the set reports it
+with SPUD's reason. Installers do not repeat a check that SPUD, the library or the dump checker already makes.
 During drift repair, match the game-visible signature in `dump.cs`.
 Change hidden `MethodInfo*` handling only when runtime evidence points to it.
 
@@ -148,7 +179,11 @@ Change hidden `MethodInfo*` handling only when runtime evidence points to it.
 | `il2cpp::New<T>(args...)` | Allocate and run the matching constructor |
 | `il2cpp::Allocate<T>()` | Allocate without a constructor, for classes whose parameterless constructor has no generated code |
 | `NewString`, `ToUtf8`, `Equals` | Create, convert, or compare managed strings |
-| `Box` | Box a primitive |
+| `ToString` | A managed string for any object |
+| `Box`, `Unbox` | Box a primitive, or read one of exactly that type |
+| `Nullable<T>` | `System.Nullable<T>` by value |
+| `Is<T>`, `As<T>` | Test or cast a receiver against a bound class |
+| `InvokeBound` | Run a single-cast delegate's method directly; managed exceptions propagate so the caller can fall back |
 | `NewDelegate` | Bind a delegate to a static method, with an optional native redirect |
 | `Guarded` | Contain Windows access violations when reading layouts that may have drifted |
 

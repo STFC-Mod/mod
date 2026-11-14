@@ -15,13 +15,20 @@ This is a static text match: it does not check C++ types the way the runtime doe
 a clean run is necessary but not sufficient. Members reached only through unbound wrappers
 (Widget<T>, List<T>, ...) are not checked.
 """
+# Postponed annotations keep the `X | None` hints working on the Python 3.9 that ships with Xcode.
+from __future__ import annotations
+
 import argparse
 import difflib
 import os
 import re
 from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
 
-SRC_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src')
+SRC_ROOT = Path(__file__).resolve().parent.parent / 'src'
+
+# --- dump.cs ---
 
 TYPE_HEAD = re.compile(
     r'^(?:\[.*\]\s*)?(?:(?:public|private|protected|internal|static|sealed|abstract|readonly|ref|unsafe|partial)\s+)*'
@@ -34,9 +41,11 @@ PROPERTY = re.compile(
 METHOD = re.compile(
     r'^((?:(?:public|private|protected|internal|static|virtual|override|abstract|sealed|extern|new|async|unsafe)\s+)*)'
     r'(.+?)\s+([\w.<>`$|]+?)(<[^(]*>)?\((.*)\)\s*[{;]')
+NAMESPACE_LINE = '// Namespace:'
 
 
-def split_params(params):
+def split_params(params: str) -> list[str]:
+    """Splits a parameter or argument list at its top-level commas."""
     depth, out, buf = 0, [], ''
     for ch in params:
         if ch in '<([':
@@ -52,51 +61,86 @@ def split_params(params):
     return out
 
 
+@dataclass
+class Member:
+    static: bool
+    decl: str
+    # Methods only.
+    generic: bool = False
+    arity: int = 0
+
+
+@dataclass
+class DumpClass:
+    ns: str | None
+    name: str
+    base: str | None
+    generic: bool
+    generic_base: bool
+    # 'field' and 'prop' map a name to one Member; 'method' maps a name to every overload.
+    members: dict = field(default_factory=lambda: {'field': {}, 'prop': {}, 'method': defaultdict(list)})
+
+
 class Dump:
     """Classes from dump.cs, keyed by (namespace, name). Nested types are named Outer.Inner."""
 
-    def __init__(self, path):
-        self.classes = {}
-        self.by_name = defaultdict(list)
+    def __init__(self, path: str):
+        self.classes: dict[tuple[str | None, str], DumpClass] = {}
+        self.by_name: dict[str, list[DumpClass]] = defaultdict(list)
         # dump.cs names bases without their namespace. il2cpp.h, written next to it, spells out
         # each concrete class's base with namespace (and generic arguments) mangled into one name.
-        self.bases = {}
-        header = os.path.join(os.path.dirname(path), 'il2cpp.h')
-        if os.path.exists(header):
-            for line in open(header, encoding='utf-8', errors='replace'):
-                if m := re.match(r'struct (\w+)_Fields : (\w+)_Fields \{', line):
-                    self.bases[m.group(1)] = m.group(2)
-        namespace, cur = None, None
-        for line in open(path, encoding='utf-8', errors='replace'):
-            if line.startswith('// Namespace:'):
-                namespace = line[len('// Namespace:'):].strip()
-                continue
-            m = TYPE_HEAD.match(line)
-            if m:
-                raw_base = m.group(3).split(',')[0].strip() if m.group(3) else None
-                cur = {'ns': namespace, 'name': m.group(2), 'base': raw_base and re.sub(r'<.*', '', raw_base),
-                       'generic': '<' in line.split('//')[0].split(':')[0], 'generic_base': bool(raw_base and '<' in raw_base),
-                       'fields': {}, 'props': {}, 'methods': defaultdict(list)}
-                self.classes.setdefault((namespace, cur['name']), cur)
-                self.by_name[cur['name']].append(cur)
-                continue
-            s = line.strip()
-            if cur is None or not s or s.startswith(('//', '[')):
-                continue
-            decl = s.split('//')[0].strip()
-            if (fm := FIELD.match(s)) and '(' not in decl:
-                head = decl[:decl.rfind(fm.group(2))]
-                cur['fields'][fm.group(2)] = {'static': bool(re.search(r'\b(static|const)\b', head)), 'decl': decl}
-            elif pm := PROPERTY.match(s):
-                cur['props'][pm.group(3).split('.')[-1]] = {'static': 'static' in pm.group(1), 'decl': s}
-            elif mm := METHOD.match(s):
-                name = mm.group(3) if mm.group(3) in ('.ctor', '.cctor') else mm.group(3).split('.')[-1]
-                params = mm.group(5).strip()
-                cur['methods'][name].append({'static': 'static' in mm.group(1), 'generic': bool(mm.group(4)),
-                                             'arity': len(split_params(params)) if params else 0,
-                                             'decl': s.rstrip(' {};')})
+        self.bases: dict[str, str] = {}
+        header = Path(path).parent / 'il2cpp.h'
+        if header.exists():
+            with header.open(encoding='utf-8', errors='replace') as lines:
+                for line in lines:
+                    if m := re.match(r'struct (\w+)_Fields : (\w+)_Fields \{', line):
+                        self.bases[m.group(1)] = m.group(2)
 
-    def find(self, namespace, name):
+        namespace, cur = None, None
+        with open(path, encoding='utf-8', errors='replace') as lines:
+            for line in lines:
+                if line.startswith(NAMESPACE_LINE):
+                    namespace = line[len(NAMESPACE_LINE):].strip()
+                    continue
+                if m := TYPE_HEAD.match(line):
+                    cur = self._add_class(namespace, line, m)
+                    continue
+                s = line.strip()
+                if cur is None or not s or s.startswith(('//', '[')):
+                    continue
+                self._add_member(cur, s)
+
+    def _add_class(self, namespace: str | None, line: str, m: re.Match) -> DumpClass:
+        raw_base = m.group(3).split(',')[0].strip() if m.group(3) else None
+        # The type's own name, before any base list, carries its generic parameters.
+        own_name = line.split('//')[0].split(':')[0]
+        cls = DumpClass(ns=namespace, name=m.group(2),
+                        base=re.sub(r'<.*', '', raw_base) if raw_base else raw_base,
+                        generic='<' in own_name,
+                        generic_base=bool(raw_base and '<' in raw_base))
+        self.classes.setdefault((namespace, cls.name), cls)
+        self.by_name[cls.name].append(cls)
+        return cls
+
+    @staticmethod
+    def _add_member(cls: DumpClass, s: str) -> None:
+        decl = s.split('//')[0].strip()
+        if (fm := FIELD.match(s)) and '(' not in decl:
+            head = decl[:decl.rfind(fm.group(2))]
+            cls.members['field'][fm.group(2)] = Member(static=bool(re.search(r'\b(static|const)\b', head)), decl=decl)
+        elif pm := PROPERTY.match(s):
+            cls.members['prop'][pm.group(3).split('.')[-1]] = Member(static='static' in pm.group(1), decl=s)
+        elif mm := METHOD.match(s):
+            name = mm.group(3)
+            if name not in ('.ctor', '.cctor'):
+                name = name.split('.')[-1]  # Explicit interface implementations: IFoo.Bar
+            params = mm.group(5).strip()
+            cls.members['method'][name].append(Member(static='static' in mm.group(1), decl=s.rstrip(' {};'),
+                                                      generic=bool(mm.group(4)),
+                                                      arity=len(split_params(params)) if params else 0))
+
+    def find(self, namespace: str, name: str) -> DumpClass | None:
         name = name.replace('/', '.')
         if (namespace, name) in self.classes:
             return self.classes[(namespace, name)]
@@ -106,61 +150,112 @@ class Dump:
         return None
 
     @staticmethod
-    def mangle(c):
-        return re.sub(r'\W', '_', f"{c['ns']}.{c['name']}" if c['ns'] else c['name'])
+    def mangle(c: DumpClass) -> str:
+        return re.sub(r'\W', '_', f"{c.ns}.{c.name}" if c.ns else c.name)
 
-    def base_of(self, c):
-        if not c['base']:
+    def base_of(self, c: DumpClass) -> DumpClass | None:
+        if not c.base:
             return None
-        candidates = self.by_name.get(c['base'].split('.')[-1], []) + self.by_name.get(c['base'], [])
+        candidates = self.by_name.get(c.base.split('.')[-1], []) + self.by_name.get(c.base, [])
         # ViewController and ViewController<T> share a name; the base's own generic-ness picks one.
-        candidates = [b for b in candidates if b['generic'] == c['generic_base']] or candidates
+        candidates = [b for b in candidates if b.generic == c.generic_base] or candidates
         if mangled := self.bases.get(self.mangle(c)):
             exact = [b for b in candidates
                      if mangled == self.mangle(b) or mangled.startswith(self.mangle(b) + '_')]
             if exact:
                 return max(exact, key=lambda b: len(self.mangle(b)))
         # Open generic classes have no il2cpp.h entry; fall back to the same namespace.
-        same = [b for b in candidates if b['ns'] == c['ns']]
-        return (same or candidates or [None])[0]
+        same = [b for b in candidates if b.ns == c.ns]
+        if same:
+            return same[0]
+        return candidates[0] if candidates else None
 
-    def lookup(self, cls, kind, member):
-        table = {'field': 'fields', 'prop': 'props', 'method': 'methods'}[kind]
+    def lookup(self, cls: DumpClass | None, kind: str, member: str):
+        """The member on cls or its nearest base: a Member, or a list of overloads for 'method'."""
+        # 64 levels bounds a base chain that loops back on itself.
         for _ in range(64):
             if cls is None:
                 return None
-            if member in cls[table]:
-                return cls[table][member]
+            if member in cls.members[kind]:
+                return cls.members[kind][member]
             cls = self.base_of(cls)
         return None
 
 
+def class_blocks(path: str) -> dict[tuple[str | None, str], list[str]]:
+    """Member lines per (namespace, class), without RVA/offset comments that change every build."""
+    out, namespace, cur, buf = {}, None, None, []
+    with open(path, encoding='utf-8', errors='replace') as lines:
+        for line in lines:
+            if line.startswith(NAMESPACE_LINE):
+                namespace = line[len(NAMESPACE_LINE):].strip()
+                continue
+            if m := TYPE_HEAD.match(line):
+                if cur:
+                    out.setdefault(cur, buf)
+                cur, buf = (namespace, m.group(2)), []
+                continue
+            s = line.strip()
+            if cur and s and not s.startswith(('//', '/*', '|', '*/', '[')):
+                buf.append(re.sub(r'\s*//.*', '', s))
+    if cur:
+        out.setdefault(cur, buf)
+    return out
+
+
+# --- the bindings in src/ ---
+
 CLASS = r'il2cpp::Class<\s*"([^"]*)"\s*,\s*"([^"]*)"\s*,\s*"([^"]*)"\s*>'
 USE = re.compile(r'(?<![\w:])(Class::)?(Get|Set|Field|SetField|Call)<\s*"([^"]+)"')
-# The owner may carry a namespace: unity::Cursor::Method("SetCursor_Injected").
-HOOK = re.compile(r'(?<![\w:])(?:\w+::)*?(\w+)::(?:Class::)?Method\(\s*"([^"]+)"\s*(?:,\s*(\d+|\{[^}]*\}))?\)')
+# The owner may carry a namespace: unity::Cursor::Method("SetCursor_Injected"). Signature-checked lookups name the
+# signature first, which may span lines: Manager::Method<bool(int64_t, ActionQueueInstance*)>("ShouldRetry...").
+TEMPLATE = r'<((?:[^<>]|<(?:[^<>]|<[^<>]*>)*>)*)>'
+HOOK = re.compile(r'(?<![\w:])(?:\w+::)*?(\w+)::(?:Class::)?(?:Static)?Method(?:' + TEMPLATE
+                  + r')?\(\s*"([^"]+)"\s*(?:,\s*(\d+|\{[^}]*\}))?\)')
+# Member checks before installing a hook: Deployed::HasProperty<"RemovalReason", FleetRemovalReason>().
+HAS = re.compile(r'(?<![\w:])(\w+)::(?:Class::)?Has(Field|Property)<\s*"([^"]+)"')
+# A local name for a binding's Class: using Manager = ActionQueueManager::Class;
+CLASS_ALIAS = re.compile(r'using\s+(\w+)\s*=\s*(\w+)::Class\s*;')
 # Static uses through a class alias outside any binding struct: ObjectClass::Call<"Destroy">(object).
 ALIAS_USE = re.compile(r'(?<![\w:])(\w+)::(Get|Set|Field|SetField|Call)<\s*"([^"]+)"')
 KIND = {'Get': 'prop', 'Set': 'prop', 'Field': 'field', 'SetField': 'field', 'Call': 'method'}
 
 
-def call_arity(text):
+def signature_arity(signature: str | None) -> str | None:
+    """The parameter count of a C++ signature R(P...), as hook arities are compared: a string of digits."""
+    if not signature or '(' not in signature:
+        return None
+    params = signature[signature.index('(') + 1:signature.rindex(')')]
+    return str(len(split_params(params)) if params.strip() else 0)
+
+
+def hook_use(path: str, owner: str, match: re.Match) -> tuple:
+    """A hook lookup's use entry. A signature gives the arity; otherwise the explicit count or parameter list."""
+    signature, member, arity = match.group(2, 3, 4)
+    return (path, owner, 'hook', member, None, signature_arity(signature) or arity)
+
+
+def call_arity(text: str) -> int | None:
     """Counts the arguments of the call that starts right after the template argument list."""
     close = text.find('>(')
     if close == -1:
         return None
     i, depth, args = close + 2, 1, ''
     while i < len(text) and depth:
-        depth += {'(': 1, ')': -1}.get(text[i], 0)
+        if text[i] == '(':
+            depth += 1
+        elif text[i] == ')':
+            depth -= 1
         if depth:
             args += text[i]
         i += 1
     return len(split_params(args)) if args.strip() else 0
 
 
-def scan_source(root):
+def scan_source(root: Path) -> tuple[dict[str, tuple[str, str, str]], list[tuple]]:
     """Returns ({binding name: (asm, ns, class)}, [(file, owner, kind, member, static, arity)])."""
     classes, uses = {}, []
+    # os.walk order decides which file wins when two bind the same name; keep it.
     for dirpath, _, files in os.walk(root):
         if os.sep + 'proto' in dirpath:
             continue
@@ -168,42 +263,66 @@ def scan_source(root):
             if not f.endswith(('.h', '.cc', '.mm')):
                 continue
             path = os.path.join(dirpath, f)
-            text = open(path, encoding='utf-8', errors='replace').read()
-            aliases = set()
-            for m in re.finditer(r'using\s+(\w+)\s*=\s*' + CLASS, text):
-                classes.setdefault(m.group(1), m.group(2, 3, 4))
-                if m.group(1) != 'Class':
-                    aliases.add(m.group(1))
-            for u in ALIAS_USE.finditer(text):
-                if u.group(1) in aliases:
-                    kind = KIND[u.group(2)]
-                    arity = call_arity(text[u.end():]) if kind == 'method' else None
-                    uses.append((path, u.group(1), kind, u.group(3), True, arity))
-            for m in re.finditer(r'^\s*struct\s+(\w+)[^;{]*\{', text, re.M):
-                i, depth = m.end(), 1
-                while i < len(text) and depth:
-                    depth += {'{': 1, '}': -1}.get(text[i], 0)
-                    i += 1
-                # Nested structs name their own Class; keep their members out of the outer binding.
-                body = re.sub(r'struct\s+\w+[^;{]*\{(?:[^{}]|\{[^{}]*\})*\};', '', text[m.end():i])
-                cm = re.search(r'using\s+Class\s*=\s*' + CLASS, body)
-                if not cm:
-                    continue
-                classes.setdefault(m.group(1), cm.group(1, 2, 3))
-                for u in USE.finditer(body):
-                    kind = KIND[u.group(2)]
-                    arity = call_arity(body[u.end():]) if kind == 'method' else None
-                    uses.append((path, m.group(1), kind, u.group(3), bool(u.group(1)), arity))
-                for h in HOOK.finditer(body):
-                    if h.group(1) == 'Class':
-                        uses.append((path, m.group(1), 'hook', h.group(2), None, h.group(3)))
-            for h in HOOK.finditer(text):
-                if h.group(1) != 'Class':
-                    uses.append((path, h.group(1), 'hook', h.group(2), None, h.group(3)))
+            with open(path, encoding='utf-8', errors='replace') as source:
+                text = source.read()
+            scan_file(path, text, classes, uses)
     return classes, uses
 
 
-def check(args):
+def scan_file(path: str, text: str, classes: dict, uses: list) -> None:
+    aliases = set()
+    # Lookups through a local alias of a binding's Class count as lookups on the binding. Aliases are
+    # usually function-local and may be reused, so each lookup takes the nearest definition above it.
+    alias_defs = [(m.start(), m.group(1), m.group(2)) for m in CLASS_ALIAS.finditer(text)]
+
+    def owner_at(name, pos):
+        found = name
+        for start, alias, owner in alias_defs:
+            if start < pos and alias == name:
+                found = owner
+        return found
+
+    for m in re.finditer(r'using\s+(\w+)\s*=\s*' + CLASS, text):
+        classes.setdefault(m.group(1), m.group(2, 3, 4))
+        if m.group(1) != 'Class':
+            aliases.add(m.group(1))
+    for u in ALIAS_USE.finditer(text):
+        if u.group(1) in aliases:
+            kind = KIND[u.group(2)]
+            arity = call_arity(text[u.end():]) if kind == 'method' else None
+            uses.append((path, u.group(1), kind, u.group(3), True, arity))
+    for m in re.finditer(r'^\s*struct\s+(\w+)[^;{]*\{', text, re.M):
+        i, depth = m.end(), 1
+        while i < len(text) and depth:
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                depth -= 1
+            i += 1
+        # Nested structs name their own Class; keep their members out of the outer binding.
+        body = re.sub(r'struct\s+\w+[^;{]*\{(?:[^{}]|\{[^{}]*\})*\};', '', text[m.end():i])
+        cm = re.search(r'using\s+Class\s*=\s*' + CLASS, body)
+        if not cm:
+            continue
+        classes.setdefault(m.group(1), cm.group(1, 2, 3))
+        for u in USE.finditer(body):
+            kind = KIND[u.group(2)]
+            arity = call_arity(body[u.end():]) if kind == 'method' else None
+            uses.append((path, m.group(1), kind, u.group(3), bool(u.group(1)), arity))
+        for h in HOOK.finditer(body):
+            if h.group(1) == 'Class':
+                uses.append(hook_use(path, m.group(1), h))
+    for h in HOOK.finditer(text):
+        if h.group(1) != 'Class':
+            uses.append(hook_use(path, owner_at(h.group(1), h.start()), h))
+    for h in HAS.finditer(text):
+        kind = 'field' if h.group(2) == 'Field' else 'prop'
+        uses.append((path, owner_at(h.group(1), h.start()), kind, h.group(3), False, None))
+
+
+# --- commands ---
+
+def check(args: argparse.Namespace) -> None:
     dump = Dump(args.dump)
     old = Dump(args.old) if args.old else None
     bound, uses = scan_source(SRC_ROOT)
@@ -222,32 +341,32 @@ def check(args):
             problems.add(f"{where}: {kind} {member} not found on {ns}.{name} or its bases")
             continue
         if kind == 'hook':
-            if arity and arity.isdigit() and not any(m['arity'] == int(arity) for m in info):
+            if arity and arity.isdigit() and not any(m.arity == int(arity) for m in info):
                 problems.add(f"{where}: hook {member} has no {arity}-argument overload: "
-                             + ' | '.join(m['decl'] for m in info))
+                             + ' | '.join(m.decl for m in info))
             continue
         if kind == 'method':
-            candidates = [m for m in info if not m['generic'] and (arity is None or m['arity'] == arity)]
+            candidates = [m for m in info if not m.generic and (arity is None or m.arity == arity)]
             if not candidates:
                 problems.add(f"{where}: Call<\"{member}\"> with {arity} arguments matches nothing: "
-                             + ' | '.join(m['decl'] for m in info))
+                             + ' | '.join(m.decl for m in info))
                 continue
-            if not any(m['static'] == static for m in candidates):
+            if not any(m.static == static for m in candidates):
                 problems.add(f"{where}: Call<\"{member}\"> static={static} does not match: "
-                             + ' | '.join(m['decl'] for m in candidates))
-            decls = sorted(m['decl'] for m in candidates)
+                             + ' | '.join(m.decl for m in candidates))
+            decls = sorted(m.decl for m in candidates)
         else:
-            if info['static'] != static:
-                problems.add(f"{where}: {kind} {member} static={static} does not match: {info['decl']}")
-            decls = [info['decl']]
+            if info.static != static:
+                problems.add(f"{where}: {kind} {member} static={static} does not match: {info.decl}")
+            decls = [info.decl]
         if old and (old_cls := old.find(ns, name)):
             old_info = old.lookup(old_cls, kind, member)
             if old_info is None:
                 continue
             if kind == 'method':
-                old_decls = sorted(m['decl'] for m in old_info if not m['generic'] and (arity is None or m['arity'] == arity))
+                old_decls = sorted(m.decl for m in old_info if not m.generic and (arity is None or m.arity == arity))
             else:
-                old_decls = [old_info['decl']]
+                old_decls = [old_info.decl]
             if old_decls != decls:
                 changes.add(f"{where}: {ns}.{name}.{member}: {' | '.join(old_decls)}  ->  {' | '.join(decls)}")
 
@@ -259,35 +378,18 @@ def check(args):
         print('\n'.join(sorted(changes)))
 
 
-def class_blocks(path):
-    """Member lines per (namespace, class), without RVA/offset comments that change every build."""
-    out, namespace, cur, buf = {}, None, None, []
-    for line in open(path, encoding='utf-8', errors='replace'):
-        if line.startswith('// Namespace:'):
-            namespace = line[len('// Namespace:'):].strip()
-            continue
-        m = TYPE_HEAD.match(line)
-        if m:
-            if cur:
-                out.setdefault(cur, buf)
-            cur, buf = (namespace, m.group(2)), []
-            continue
-        s = line.strip()
-        if cur and s and not s.startswith(('//', '/*', '|', '*/', '[')):
-            buf.append(re.sub(r'\s*//.*', '', s))
-    if cur:
-        out.setdefault(cur, buf)
-    return out
-
-
-def diff(args):
+def diff(args: argparse.Namespace) -> None:
     old, new = class_blocks(args.old), class_blocks(args.new)
     bound, _ = scan_source(SRC_ROOT)
     changed = 0
     for ns, name in sorted({(ns, name.replace('/', '.')) for _, ns, name in bound.values()}):
         key = (ns, name)
         if key not in old and key not in new:
-            key = next((k for k in {**old, **new} if k[1] == name), key)
+            # A nested type may sit under another namespace; take the first class of that name.
+            for candidate in [*old, *new]:
+                if candidate[1] == name:
+                    key = candidate
+                    break
         before, after = old.get(key), new.get(key)
         if before is None or after is None:
             print(f"!! {ns}.{name}: in old dump={before is not None}, in new dump={after is not None}")
@@ -301,7 +403,7 @@ def diff(args):
     print(f"{len(bound)} bindings, {changed} bound classes changed")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     sub = parser.add_subparsers(required=True)
     p = sub.add_parser('check', help='check bindings against a dump')

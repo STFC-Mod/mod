@@ -1,6 +1,9 @@
+// Extracts the 7z fixtures with the launcher's extractor, and checks that it rejects corrupt and missing archives.
+// Run with the fixtures folder as the only argument.
+
 import Foundation
 
-// Generated independently with 7zz a -t7z -m0=METHOD -ms=on. No archive encoder is needed to run these fixtures.
+// The fixtures were generated independently with 7zz a -t7z -m0=METHOD -ms=on, so no archive encoder is needed here.
 @main struct ArchiveTests {
   static func check(_ ok: Bool, _ message: String) throws {
     guard ok else { throw NSError(domain: "ArchiveTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }

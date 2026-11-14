@@ -63,7 +63,7 @@ trace_events = false
 #  <[=======================================]>
 
 [buffs]
-# This is the option to always show out of dock power for ships when they are docked. Defaults to false
+# This is the option to always show out of dock power for ships when they are docked. Defaults to true
 use_out_of_dock_power = true
 
 #  <[===============================================================================================]>
@@ -139,10 +139,10 @@ enable_experimental = false
 # Subgroup: Display
 # -----------------
 
-# Frame-rate scaling factor
+# Scale of the flat planet sprites in System View; 1.0 keeps the game's size
 fr_scale = 2.0
 
-# Amount of time to spend between transitions, increase to slow transitions down
+# Amount of time to spend between transitions. Currently read but not applied
 transition_time = 0.01
 
 # This specifies the amount to scale the UI by, 1.0 being default
@@ -186,7 +186,7 @@ zoom_label_player_threshold = 0.5
 # This controls the zoom speed when using Q/E in System View, defaults to 350
 keyboard_zoom_speed = 350.0
 
-# Controls the system pan momentum speed. Defaults to 0.4
+# Controls the system pan momentum speed. Defaults to 0.4. Read with enable_experimental, but not applied yet
 system_pan_momentum = 0.4
 
 # Controls how quickly the momentum falls off when letting go of the mouse. Lower = quicker stop. Defaults to 0.8
@@ -219,7 +219,7 @@ loader_transition_black = false
 # Allow the system cursor to be replaced? (On by default)
 allow_cursor = true
 
-# Allow borderless full screen mode, set to false to disable
+# Allow borderless full screen mode. Currently has no effect
 borderless_fullscreen = true
 
 # Keep the system camera free when selecting a target. Requires mod 1.1.10 or newer.
@@ -363,19 +363,19 @@ zoomhooks = true
 # Subgroup: Cargo & Locate
 # ------------------------
 
-# Whether to show armada cargo by default
+# Toggle show_armada_cargo
 toggle_cargo_armada = "ALT-5"
 
-# Whether to show cargo by default
+# Toggle show_cargo_default
 toggle_cargo_default = "ALT-1"
 
-# Whether to show Hostile cargo by default
+# Toggle show_hostile_cargo
 toggle_cargo_hostile = "ALT-4"
 
-# Whether to show Player cargo by default
+# Toggle show_player_cargo
 toggle_cargo_player = "ALT-2"
 
-# Whether to show Station cargo by default
+# Toggle show_station_cargo
 toggle_cargo_station = "ALT-3"
 
 # Cycle instant-warp auto-confirm between none, warp, and jump
@@ -800,7 +800,7 @@ show_player_title = true
 # Subgroup: Chest Purchases
 # -------------------------
 
-# Maximum for tagged chest-purchase sliders on Windows; 0 disables the feature and native limits above this value are preserved
+# Maximum for chest-purchase sliders, up to 160; 0 disables the feature and native limits above this value are preserved
 extend_chest_purchase_max = 160
 
 # Subgroup: Daily Goals
@@ -839,28 +839,28 @@ pinned_ships = ""
 # Subgroup: HUD
 # -------------
 
-# HUD visibility mode: auto, show, or hide
+# HUD visibility mode: auto, always, or never
 #   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
+#   "always" - Always show this HUD item
+#   "never" - Always hide this HUD item
 hud_field_training = "auto"
 
-# HUD visibility mode: auto, show, or hide
+# HUD visibility mode: auto, always, or never
 #   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
+#   "always" - Always show this HUD item
+#   "never" - Always hide this HUD item
 hud_missions = "auto"
 
-# HUD visibility mode: auto, show, or hide
+# HUD visibility mode: auto, always, or never
 #   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
+#   "always" - Always show this HUD item
+#   "never" - Always hide this HUD item
 hud_outposts = "auto"
 
-# HUD visibility mode: auto, show, or hide
+# HUD visibility mode: auto, always, or never
 #   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
+#   "always" - Always show this HUD item
+#   "never" - Always hide this HUD item
 hud_q_trials = "auto"
 
 # Subgroup: Options
@@ -1004,7 +1004,7 @@ proxy = ""
 # Subgroup: Network
 # -----------------
 
-# How long to keep cached items (ms)
+# How long to keep resolved player and alliance names, in seconds
 resolver_cache_ttl = 300
 
 # Should SSL Certificates be checked?

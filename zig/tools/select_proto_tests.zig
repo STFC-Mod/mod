@@ -6,7 +6,7 @@ const select = @import("select_proto.zig").select;
 // Leaf refers to itself; Root also references Holder.Kind, retaining its enclosing message.
 // Both files define unused messages; leaf.proto has an unreferenced enum catalog.
 // The input includes SourceCodeInfo. Both sets carry an unknown top-level varint field, which must survive.
-test "retain transitive, recursive, nested enum and package-less messages verbatim, including enums and unknown fields" {
+test "retain transitive, recursive, nested-enum and package-less messages verbatim, with enums and unknown fields" {
     const output = try select(std.testing.allocator, full, &.{"fixture.Root"});
     defer std.testing.allocator.free(output);
     try std.testing.expectEqualSlices(u8, selected, output);
@@ -18,11 +18,13 @@ test "unknown roots fail rather than silently producing an empty schema" {
 
 test "reject truncated descriptors and overflowing wire lengths" {
     try std.testing.expectError(error.TruncatedDescriptor, select(std.testing.allocator, "\x0a\x05x", &.{}));
-    try std.testing.expectError(error.InvalidVarint, select(std.testing.allocator, "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02", &.{}));
+    const overlong = "\x80\x80\x80\x80\x80\x80\x80\x80\x80\x02";
+    try std.testing.expectError(error.InvalidVarint, select(std.testing.allocator, overlong, &.{}));
 }
 
 test "reject services that would introduce untracked message roots" {
-    try std.testing.expectError(error.UnsupportedServiceOrExtension, select(std.testing.allocator, "\x0a\x02\x32\x00", &.{}));
+    const service = "\x0a\x02\x32\x00"; // FileDescriptorSet.file holding one empty FileDescriptorProto.service.
+    try std.testing.expectError(error.UnsupportedServiceOrExtension, select(std.testing.allocator, service, &.{}));
 }
 
 const full =

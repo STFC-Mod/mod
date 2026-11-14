@@ -5,40 +5,44 @@ const builtin = @import("builtin");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
 const globFiles = @import("ctx.zig").globFiles;
+const hostTool = @import("ctx.zig").hostTool;
+const hostTests = @import("ctx.zig").hostTests;
 
-const abseil_sources: [101][]const u8 = @import("deps/abseil_sources.zon");
-const protobuf_sources: [26][]const u8 = @import("deps/protobuf_sources.zon");
+const abseil_sources: []const []const u8 = @import("deps/abseil_sources.zon");
+const protobuf_sources: []const []const u8 = @import("deps/protobuf_sources.zon");
 
 /// The Abseil sources protobuf-lite reaches, not the whole library.
 pub fn abseil(ctx: *const Ctx) Lib {
     const b = ctx.b;
     const src = b.dependency("abseil", .{}).path("");
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{src}) };
     const module = ctx.createModule(true);
-    module.addIncludePath(src);
+    lib.includeInto(module);
     if (ctx.isMacos()) module.linkFramework("CoreFoundation", .{});
-    addRuntimeSources(ctx, module, "abseil", src, &abseil_sources);
-    return .{ .artifact = ctx.staticLib("abseil", module), .include_dirs = ctx.dirs(&.{src}) };
+    addRuntimeSources(ctx, module, "abseil", src, abseil_sources);
+    lib.artifact = ctx.staticLib("abseil", module);
+    return lib;
 }
 
 /// The protobuf-lite runtime and its UTF-8 validator.
 pub fn protobufLite(ctx: *const Ctx, absl: Lib) Lib {
     const b = ctx.b;
     const src = b.dependency("protobuf", .{}).path("");
+    // protobuf's public headers include Abseil's, so consumers get both include dirs.
+    var lib: Lib = .{
+        .dependencies = ctx.libs(&.{absl}),
+        .include_dirs = ctx.dirs(&.{ src.path(b, "src"), src.path(b, "third_party/utf8_range"), absl.include_dirs[0] }),
+    };
     const module = ctx.createModule(true);
-    module.addIncludePath(src.path(b, "src"));
-    module.addIncludePath(src.path(b, "third_party/utf8_range"));
-    absl.includeInto(module);
-    addRuntimeSources(ctx, module, "protobuf", src, &protobuf_sources);
+    lib.includeInto(module);
+    addRuntimeSources(ctx, module, "protobuf", src, protobuf_sources);
     module.addCSourceFiles(.{
         .root = src,
         .files = &.{"third_party/utf8_range/utf8_range.c"},
         .flags = ctx.cFlags(&.{"-std=c11"}),
     });
-    return .{
-        .artifact = ctx.staticLib("protobuf-lite", module),
-        .dependencies = b.allocator.dupe(Lib, &.{absl}) catch @panic("OOM"),
-        .include_dirs = ctx.dirs(&.{ src.path(b, "src"), src.path(b, "third_party/utf8_range"), absl.include_dirs[0] }),
-    };
+    lib.artifact = ctx.staticLib("protobuf-lite", module);
+    return lib;
 }
 
 /// Generate and compile C++ for the game messages. null until Zig has fetched the host's protoc.
@@ -63,6 +67,7 @@ pub fn generate(ctx: *const Ctx, runtime: Lib) ?Lib {
     const schema_dir = b.path("src/mod/game/proto");
     const well_known_dir = b.dependency("protobuf", .{}).path("src");
     const schemas = globFiles(b, schema_dir, "", &.{".proto"}, &.{});
+    const well_known = .{ "google/protobuf/timestamp", "google/protobuf/wrappers" };
     var compiled: std.ArrayList([]const u8) = .empty;
 
     // 1. Describe every schema.
@@ -82,33 +87,18 @@ pub fn generate(ctx: *const Ctx, runtime: Lib) ?Lib {
             compiled.append(b.allocator, b.fmt("{s}.pb.cc", .{stem})) catch @panic("OOM");
         }
     }
-    inline for (.{ "timestamp", "wrappers" }) |name| {
-        describe.addFileArg(well_known_dir.path(b, "google/protobuf/" ++ name ++ ".proto"));
-        compiled.append(b.allocator, "google/protobuf/" ++ name ++ ".pb.cc") catch @panic("OOM");
+    inline for (well_known) |name| {
+        describe.addFileArg(well_known_dir.path(b, name ++ ".proto"));
+        compiled.append(b.allocator, name ++ ".pb.cc") catch @panic("OOM");
     }
 
     // 2. Trim to the sync roots.
-    const selector = b.addExecutable(.{
-        .name = "select-proto",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("zig/tools/select_proto.zig"),
-            .target = b.graph.host,
-            .optimize = .Debug,
-        }),
-    });
-    const select = b.addRunArtifact(selector);
+    const select = b.addRunArtifact(hostTool(b, "select-proto", "zig/tools/select_proto.zig", .Debug));
     select.addFileArg(descriptors);
     select.addFileArg(b.path("zig/deps/protobuf_roots.txt"));
     const selected = select.addOutputFileArg("selected.pb");
-
-    const selector_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("zig/tools/select_proto_tests.zig"),
-            .target = b.graph.host,
-        }),
-    });
     b.step("test-codegen", "Check protobuf descriptor selection against independent protoc fixtures")
-        .dependOn(&b.addRunArtifact(selector_tests).step);
+        .dependOn(hostTests(b, "zig/tools/select_proto_tests.zig"));
 
     // 3. Emit lite C++ for every schema in the trimmed set.
     const emit = std.Build.Step.Run.create(b, "protoc-cpp");
@@ -116,22 +106,20 @@ pub fn generate(ctx: *const Ctx, runtime: Lib) ?Lib {
     emit.addPrefixedFileArg("--descriptor_set_in=", selected);
     const generated = emit.addPrefixedOutputDirectoryArg("--cpp_out=lite:", "proto");
     emit.addArgs(schemas);
-    emit.addArgs(&.{ "google/protobuf/timestamp.proto", "google/protobuf/wrappers.proto" });
+    inline for (well_known) |name| emit.addArg(name ++ ".proto");
 
+    var lib: Lib = .{ .include_dirs = ctx.dirs(&.{generated}) };
     const module = ctx.createModule(true);
-    module.addIncludePath(generated);
+    lib.includeInto(module);
     // Headers only: consumers link protobuf-lite next to these objects.
     runtime.includeInto(module);
     module.addCSourceFiles(.{ .root = generated, .files = compiled.items, .flags = ctx.cxxFlags("c++17", &.{}) });
-    return .{
-        .artifact = ctx.staticLib("stfc-proto", module),
-        .include_dirs = ctx.dirs(&.{generated}),
-    };
+    lib.artifact = ctx.staticLib("stfc-proto", module);
+    return lib;
 }
 
-/// On macOS, compile runtime sources in batches of four so they share header parsing without serializing the
-/// library into one unit. Other targets keep one unit per file: MSVC headers and source-local CRT defines depend
-/// on include order.
+/// On macOS, compile runtime sources in batches of four. Other targets keep one unit per file: MSVC headers and
+/// source-local CRT defines depend on include order.
 fn addRuntimeSources(
     ctx: *const Ctx,
     module: *std.Build.Module,
@@ -140,10 +128,9 @@ fn addRuntimeSources(
     sources: []const []const u8,
 ) void {
     const flags = ctx.cxxFlags("c++17", &.{});
-    if (!ctx.isMacos()) return module.addCSourceFiles(.{ .root = root, .files = sources, .flags = flags });
-    var offset: usize = 0;
-    while (offset < sources.len) : (offset += 4) {
-        const batch = sources[offset..@min(offset + 4, sources.len)];
-        ctx.addCxxBatch(module, ctx.b.fmt("{s}-{d}", .{ name, offset / 4 }), root, batch, flags);
+    if (ctx.isMacos()) {
+        ctx.addCxxBatches(module, name, root, sources, flags);
+    } else {
+        module.addCSourceFiles(.{ .root = root, .files = sources, .flags = flags });
     }
 }

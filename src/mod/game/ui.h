@@ -3,35 +3,27 @@
 // The game's UI framework (Digit.Client.UI): widgets, view controllers, canvases, buttons, lists, localization,
 // shortcuts, message boxes and toasts.
 
+#include "app.h"
+
 #include <il2cpp/il2cpp.h>
-#include <il2cpp/method_contract.h>
 #include <unity/input.h>
 #include <unity/ui.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <string_view>
 
-// Unity singletons expose a static Instance on their MonoSingleton`1<T> base.
-template <typename T> struct MonoSingleton : il2cpp::Object {
-  static T* Instance()
-  { return T::Class::template Get<"Instance", T*>(); }
-  // The singleton s_instance already holds, or null. Instance can search the scene or create a replacement.
-  static T* Existing()
-  { return T::Class::template Field<"s_instance", T*>(); }
-};
-
-// The non-generic MonoSingleton base; its static PrepareAllForReload runs before the game reloads.
-using MonoSingletonBase = il2cpp::Class<"Assembly-CSharp", "", "MonoSingleton">;
-
-// Digit.Client.UI.Widget`1. Members resolve on each widget's runtime class.
+// Digit.Client.UI.Widget`1. Members resolve on each widget's runtime class, so this cannot derive from
+// unity::Behaviour, which would bind them to Behaviour's class.
 template <typename T> struct Widget : il2cpp::Object {
   T* Context()
   { return Get<"Context", T*>(); }
   bool enabled()
   { return Get<"enabled", bool>(); }
   bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
+  { return unity::ActiveAndEnabled(this); }
   bool IsActive()
   { return Call<"IsActive", bool>(); }
 };
@@ -53,6 +45,8 @@ struct VisibilityController : il2cpp::Object {
   void Hide(bool instant = false)
   { Call<"Hide">(instant); }
 
+  // The field is the state as last applied; the property is what the controller reports, which can differ while a
+  // transition runs. The property is called VisibilityState, a name this header gives the enum.
   VisibilityState state()
   { return Field<"_state", VisibilityState>(); }
   VisibilityState State()
@@ -60,13 +54,10 @@ struct VisibilityController : il2cpp::Object {
 
   // Shown or on its way in.
   bool IsShown()
-  {
-    const auto current = state();
-    return current == VisibilityState::Visible || current == VisibilityState::Show;
-  }
+  { return std::ranges::contains(std::array{VisibilityState::Visible, VisibilityState::Show}, state()); }
 };
 
-struct CanvasController : il2cpp::Object {
+struct CanvasController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "CanvasController">;
 
   bool Visible()
@@ -76,20 +67,21 @@ struct CanvasController : il2cpp::Object {
   { return Get<"Context", il2cpp::Object*>(); }
   Il2CppString* name()
   { return Get<"name", Il2CppString*>(); }
-  unity::Transform* transform()
-  { return Get<"transform", unity::Transform*>(); }
 
   // The canvas a component is drawn on. Passing System.Type selects GetComponentInParent(Type) over the generic
   // overload.
   static CanvasController* Of(il2cpp::Object* component)
   { return component ? component->Call<"GetComponentInParent", CanvasController*>(Class::TypeObject()) : nullptr; }
 
-  // Whether `component` is on a canvas that is currently visible.
+  // `component` is on a canvas that is currently visible.
   static bool Shows(il2cpp::Object* component)
   {
     auto* canvas = Of(component);
     return canvas && canvas->Visible();
   }
+  // `view` is active and enabled, and its canvas is visible: a hidden screen can keep active views.
+  static bool OnScreen(unity::Behaviour* view)
+  { return unity::ActiveAndEnabled(view) && Shows(view); }
 };
 
 // Digit.Client.UI.TextLocalizer: the label component that renders localized, parameterized text.
@@ -99,9 +91,6 @@ struct TextLocalizer : il2cpp::Object {
   // Declared on GraphicLocalizer<,>.
   Il2CppString* identifier()
   { return Field<"m_identifier", Il2CppString*>(); }
-  // These localizers render on every UI update, so the identifier is compared without converting it.
-  bool IdentifierIs(std::string_view name)
-  { return il2cpp::Equals(identifier(), name); }
   // The backing field, not the SignificantDecimals property.
   void SetSignificantDecimals(int32_t value)
   { SetField<"m_significantDecimals">(value); }
@@ -117,6 +106,10 @@ struct TextLocalizer : il2cpp::Object {
   { Call<"ClearTextOverride">(); }
   void OverrideLocalizedText(Il2CppString* text)
   { Call<"OverrideLocalizedText">(text); }
+
+  // These localizers render on every UI update, so the identifier is compared without converting it.
+  bool IdentifierIs(std::string_view name)
+  { return il2cpp::Equals(identifier(), name); }
 };
 
 struct ColourTextLocalizer : TextLocalizer {
@@ -133,6 +126,8 @@ struct LocaleTextContext : il2cpp::Object {
   { Call<"ApplyIdentifierParameters">(parameters); }
 };
 
+// Two ways into the game's localization, each used where the game itself uses it: LocaleUtilities for texts with
+// parameters, such as toasts, and Localizer for plain identifiers, such as ship names.
 struct LocaleUtilities {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Localization", "LocaleUtilities">;
 
@@ -181,16 +176,16 @@ struct SemaphoreListenerBase : il2cpp::Object {
 struct SemaphoreButtonListener : SemaphoreListenerBase {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SemaphoreButtonListener">;
 
-  unity::Button* TheButton()
+  unity::Button* button()
   { return Field<"_button", unity::Button*>(); }
   bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
+  { return unity::ActiveAndEnabled(this); }
 
   // Presses the listener's button, if it has one.
   void Press()
   {
-    if (auto* button = TheButton())
-      button->Press();
+    if (auto* target = button())
+      target->Press();
   }
 };
 
@@ -206,7 +201,7 @@ struct GenericButtonContext : il2cpp::Object {
 struct GenericButtonWidget : Widget<GenericButtonContext> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "GenericButtonWidget">;
 
-  SemaphoreButtonListener* SemaphoreListener()
+  SemaphoreButtonListener* semaphoreButtonListener()
   { return Field<"_semaphoreButtonListener", SemaphoreButtonListener*>(); }
   TextLocalizer* mainText()
   { return Field<"_mainText", TextLocalizer*>(); }
@@ -214,10 +209,10 @@ struct GenericButtonWidget : Widget<GenericButtonContext> {
   { return Get<"Interactable", bool>(); }
 
   // The Unity button behind the widget, or null.
-  unity::Button* TheButton()
+  unity::Button* UnityButton()
   {
-    auto* listener = SemaphoreListener();
-    return listener ? listener->TheButton() : nullptr;
+    auto* listener = semaphoreButtonListener();
+    return listener ? listener->button() : nullptr;
   }
 };
 
@@ -228,13 +223,11 @@ struct ButtonAndContextWrapper : il2cpp::Object {
   { return Field<"Widget", GenericButtonWidget*>(); }
 };
 
-struct InputFieldWidget : il2cpp::Object {
+struct InputFieldWidget : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "InputFieldWidget">;
 
   void Focus()
   { Call<"Focus">(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
 };
 
 // Digit.Client.UI list hierarchy: BaseListContainer <- SelectableListBase <- SelectableList <- TabBar.
@@ -249,13 +242,6 @@ struct BaseListContainer : il2cpp::Object {
 };
 
 struct SelectableList : BaseListContainer {
-  void Rebuild(il2cpp::Object* provider)
-  {
-    auto* data = Get<"Data", il2cpp::Object*>();
-    if (data)
-      Call<"ClearAndGenerateContents">(provider, data);
-  }
-
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SelectableList">;
 
   int32_t SelectedIndex()
@@ -265,10 +251,16 @@ struct SelectableList : BaseListContainer {
   void RequestSelect(int32_t index, bool simulated = false)
   { Call<"RequestSelect">(index, simulated); }
 
+  // Null when `index` is outside Data.
   il2cpp::Object* DataItem(int32_t index)
+  { return il2cpp::At(Get<"Data", il2cpp::List<il2cpp::Object*>*>(), index); }
+
+  // Regenerates the list's tiles from its current Data, through the game's SelectableListBase
+  // .ClearAndGenerateContents; `provider` is the IDataContextProvider the tiles bind to.
+  void Rebuild(il2cpp::Object* provider)
   {
-    auto* list = Get<"Data", il2cpp::List<il2cpp::Object*>*>();
-    return list ? (*list)[index] : nullptr;
+    if (auto* data = Get<"Data", il2cpp::Object*>())
+      Call<"ClearAndGenerateContents">(provider, data);
   }
 };
 
@@ -286,42 +278,13 @@ struct TabBarViewController : il2cpp::Object {
 struct UIFrameManager : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "UIFrameManager">;
 
-  // The game clamps the width to the available space and the side frame's minimum. False when the call failed.
-  bool ResizeSideFrame(float width)
-  { return TryCall<"ResizeSideFrame", void(float)>(width); }
+  // The game clamps the width to the available space and the side frame's minimum.
+  void ResizeSideFrame(float width)
+  { Call<"ResizeSideFrame", void(float)>(width); }
 };
 
 struct ScreenManager : MonoSingleton<ScreenManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "ScreenManager">;
-
-  // The canvas drawn on top; with visible_only, the top one that is shown.
-  static CanvasController* GetTopCanvas(bool visible_only)
-  { return Class::Call<"GetTopCanvas", CanvasController*>(visible_only); }
-
-  // The first live T on a visible registered canvas whose data context is a T::Context. Only the canvas that owns
-  // that context is searched: the top canvas and the scene root can belong to unrelated overlays.
-  template <typename T> static T* View()
-  {
-    struct Context {
-      using Class = typename T::Context;
-    };
-    auto*         manager = Existing();
-    auto*         screens = unity::Alive(manager) ? manager->screens() : nullptr;
-    const int32_t count   = screens ? screens->Count() : 0;
-    if (count < 0 || count > 256)
-      return nullptr;
-    for (int32_t index = 0; index < count; ++index) {
-      auto* canvas  = (*screens)[index];
-      auto* context = unity::Alive(canvas) ? canvas->Context() : nullptr;
-      if (!context || !context->Is<Context>() || !canvas->Visible())
-        continue;
-      auto* transform = canvas->transform();
-      auto* object    = transform ? transform->gameObject() : nullptr;
-      if (auto* view = object ? object->template GetComponentInChildren<T>() : nullptr; unity::Alive(view))
-        return view;
-    }
-    return nullptr;
-  }
 
   // Every registered canvas, visible or not.
   il2cpp::List<CanvasController*>* screens()
@@ -330,6 +293,25 @@ struct ScreenManager : MonoSingleton<ScreenManager> {
   { return Field<"m_canvasRootScaler", unity::CanvasScaler*>(); }
   UIFrameManager* frameManager()
   { return Field<"_frameManager", UIFrameManager*>(); }
+
+  // The first live T on a visible registered canvas whose data context is a T::Context. Only the canvas that owns
+  // that context is searched: the top canvas and the scene root can belong to unrelated overlays.
+  template <typename T> static T* View()
+  {
+    struct Context {
+      using Class = typename T::Context;
+    };
+    auto* manager = Existing();
+    for (auto* canvas : il2cpp::Items(unity::Alive(manager) ? manager->screens() : nullptr)) {
+      auto* context = unity::Alive(canvas) ? canvas->Context() : nullptr;
+      if (!context || !context->Is<Context>() || !canvas->Visible())
+        continue;
+      auto* object = canvas->gameObject();
+      if (auto* view = object ? object->template GetComponentInChildren<T>() : nullptr; unity::Alive(view))
+        return view;
+    }
+    return nullptr;
+  }
 };
 
 struct ShortcutsManager : MonoSingleton<ShortcutsManager> {
@@ -339,13 +321,14 @@ struct ShortcutsManager : MonoSingleton<ShortcutsManager> {
   { return Get<"ShowKeybindings", bool>(); }
   void SetShowKeybindings(bool value)
   { Set<"ShowKeybindings">(value); }
-  // Private static gate the native shortcut actions check (tutorial, modals, text input).
-  static bool CanUseShortcuts()
-  { return Class::Get<"CanUseShortcuts", bool>(); }
 
   // Runs one of the On*Action(InputAction.CallbackContext) handlers, as the game's own shortcut for it would.
   template <il2cpp::Name Action> void Run()
   { Call<Action>(unity::InputActionCallbackContext{}); }
+
+  // The private static gate the game's own shortcut actions check (tutorial, modals, text input).
+  static bool CanUseShortcuts()
+  { return Class::Get<"CanUseShortcuts", bool>(); }
 };
 
 // The badge next to a button that shows the key of one of the game's input actions.
@@ -356,8 +339,11 @@ struct ShortcutKeybindHint : il2cpp::Object {
   { return Field<"_inputAction", unity::InputActionReference*>(); }
   TextLocalizer* keyTextLocalizer()
   { return Field<"_keyTextLocalizer", TextLocalizer*>(); }
+  void UpdateText()
+  { Call<"UpdateText">(); }
 };
 
+// Digit.Client.UI.MessageBox. Only hooked.
 using GameMessageBox = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageBox">;
 
 // MessageBox.ButtonResult
@@ -458,19 +444,15 @@ struct ToastObserver : il2cpp::Object {
 struct AnimatedRewardsScreenViewController : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Missions.UI", "AnimatedRewardsScreenViewController">;
 
-  void GoBackToLastSection()
-  { Call<"GoBackToLastSection">(); }
   bool IsActive()
   { return Call<"IsActive", bool>(); }
+  void GoBackToLastSection()
+  { Call<"GoBackToLastSection">(); }
 };
 
 // The -/+ stepper on upgrade and quantity screens.
-struct ElementSelectorViewController : il2cpp::Object {
+struct ElementSelectorViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.UI", "ElementSelectorViewController">;
-
-  // Through the internal call, so a drifted managed binding never hides the arrow-key shortcuts.
-  bool isActiveAndEnabled()
-  { return unity::ActiveAndEnabled(this); }
 
   void PressDecrement()
   {
@@ -484,12 +466,8 @@ struct ElementSelectorViewController : il2cpp::Object {
   }
 };
 
-struct ArtifactHallDetailsViewController : il2cpp::Object {
+struct ArtifactHallDetailsViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ArtifactHall", "ArtifactHallDetailsViewController">;
-
-  // Through the internal call, so a drifted managed binding never hides the arrow-key shortcuts.
-  bool isActiveAndEnabled()
-  { return unity::ActiveAndEnabled(this); }
 
   void PressLeftArrow()
   {
@@ -519,20 +497,5 @@ struct LegacyComparableProgressBar : il2cpp::Object {
   { SetField<"_snapToValue">(value); }
 };
 
-struct MessageUtility : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageUtility">;
-  static void* RevealConfirmationTarget()
-  {
-    const auto* method = il2cpp::contract::Resolve(Class::Raw(), "ShowFreeAbilityConfirmationPopup", true,
-                                                   "System.Void", {"System.Int64", "System.TimeSpan", "System.Action"});
-    return method && !method->has_full_generic_sharing_signature ? il2cpp::contract::Pointer(method) : nullptr;
-  }
-  static bool InvokeActivationAction(Il2CppDelegate* action)
-  {
-    if (!action || !action->method)
-      return false;
-    Il2CppException* exception = nullptr;
-    il2cpp_runtime_invoke(action->method, action->target, nullptr, &exception);
-    return !exception;
-  }
-};
+// Digit.Client.UI.MessageUtility: static helpers that open the game's message popups. Only hooked.
+using MessageUtility = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageUtility">;

@@ -2,9 +2,15 @@
 
 #include <Windows.h>
 
+#include <string>
 #include <string_view>
 
 #include "mod.h"
+
+// Before the mod's log exists, failures go to the debugger output (DebugView shows it without a debugger): the
+// game has no console, so its stderr goes nowhere.
+void ReportStartupFailure(const char* message)
+{ OutputDebugStringA((std::string("stfc-community-mod: ") + message + "\n").c_str()); }
 
 BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID)
 {

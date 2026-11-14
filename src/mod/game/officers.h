@@ -6,18 +6,16 @@
 
 #include <il2cpp/il2cpp.h>
 
-struct OfficerAssignmentViewController : il2cpp::Object {
+struct OfficerAssignmentViewController : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.OfficerAssignment", "OfficerAssignmentViewController">;
 
   InputFieldWidget* inputField()
   { return Field<"_inputField", InputFieldWidget*>(); }
   GenericButtonWidget* officerPresetsButton()
   { return Field<"_officerPresetsButton", GenericButtonWidget*>(); }
-  bool isActiveAndEnabled()
-  { return Get<"isActiveAndEnabled", bool>(); }
 };
 
-// The static comparers the officer lists sort with.
+// The static comparers the officer lists sort with. Only looked up, for their methods.
 using SortingPredicates = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "SortingPredicates">;
 
 struct SortFunction : il2cpp::Object {

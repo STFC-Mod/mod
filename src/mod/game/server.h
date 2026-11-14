@@ -3,17 +3,21 @@
 // The game server (Digit.PrimeServer): its sessions, the entity groups and realtime messages it sends, and the
 // server models and services the mod reads, such as battle results, hull specs, buffs and events.
 
+#include "app.h"
+
 #include <il2cpp/il2cpp.h>
 
 #include <cstdint>
+#include <span>
 
 struct ByteString : il2cpp::Object {
   using Class = il2cpp::Class<"Google.Protobuf", "Google.Protobuf", "ByteString">;
 
   il2cpp::Array<uint8_t>* bytes()
   { return Field<"bytes", il2cpp::Array<uint8_t>*>(); }
-  int32_t Length()
-  { return Get<"Length", int32_t>(); }
+  // The payload. This client's ByteString owns its whole array (Length is bytes.Length), so that is all of it.
+  std::span<const uint8_t> Span()
+  { return il2cpp::Items(bytes()); }
 };
 
 struct EntityGroup : il2cpp::Object {
@@ -350,8 +354,8 @@ using SlotClearRtcParser =
 // Digit.Networking.RTC.CentrifugoInfo, a value type passed by value: a hook must keep it by value so the arguments
 // after it keep their ABI positions.
 struct CentrifugoInfo {
-  Il2CppString* Channel;
-  int32_t       Offset;
+  Il2CppString* channel;
+  int32_t       offset;
 };
 static_assert(sizeof(CentrifugoInfo) == 16);
 
@@ -389,7 +393,7 @@ struct IdRefs : il2cpp::Object {
 struct HullSpec : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "HullSpec">;
 
-  int64_t Id()
+  int64_t id()
   { return Field<"id_", int64_t>(); }
   // The internal key, such as "Hull_L30_Destroyer_Klingon_LIVE".
   Il2CppString* name()
@@ -436,10 +440,9 @@ struct UserProfile : il2cpp::Object {
   { return Get<"Level", int32_t>(); }
 };
 
-struct UserProfileManager : il2cpp::Object {
+struct UserProfileManager : MonoSingleton<UserProfileManager> {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileManager">;
-  static UserProfileManager* Instance()
-  { return Class::Get<"Instance", UserProfileManager*>(); }
+
   UserProfile* GetLocalUserProfile()
   { return Call<"GetLocalUserProfile", UserProfile*>(); }
 };
@@ -475,7 +478,8 @@ struct BattleResultHeader : il2cpp::Object {
   { return static_cast<UserProfile*>(Get<"EnemyUserProfile", Il2CppObject*>()); }
   SpecService* specService()
   { return static_cast<SpecService*>(Field<"_specService", Il2CppObject*>()); }
-  BattleType BattleType()
+  // The BattleType property; named Type so it does not hide the enum.
+  ::BattleType Type()
   { return Get<"BattleType", ::BattleType>(); }
   int64_t PlayerShipHullId()
   { return Get<"PlayerShipHullId", int64_t>(); }
@@ -550,20 +554,14 @@ struct ForbiddenTechSlotParams : il2cpp::Object {
   { return Get<"OwnerId", int64_t>(); }
 };
 
-struct EntitySlot : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "EntitySlot">;
-
-  ForbiddenTechSlotParams* forbiddenTechSlotParams()
-  { return Get<"ForbiddenTechSlotParams", ForbiddenTechSlotParams*>(); }
-};
-
 struct InventoryItem : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem">;
 
   ResourceSpec* resourceSpec()
   { return Field<"_resourceSpec", ResourceSpec*>(); }
-  ForbiddenTech* forbiddenTech()
-  { return Get<"ForbiddenTech", ForbiddenTech*>(); }
+  // Named after the property, so the type needs `::` here.
+  ::ForbiddenTech* ForbiddenTech()
+  { return Get<"ForbiddenTech", ::ForbiddenTech*>(); }
 };
 
 // The context of a cargo bar.

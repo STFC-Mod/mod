@@ -5,22 +5,27 @@
 #include "config.h"
 #include "features/features.h"
 #include "features/ship_shortcut_hint.h"
-#include "game/fleet.h"
 #include "shortcuts.h"
-#include "text.h"
-#include <unity/tracker.h>
 
+#include "game/fleet.h"
 #include "game/ui.h"
 
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
+#include <unity/tracker.h>
 
+#include <algorithm>
 #include <array>
+#include <string>
 #include <string_view>
 
 namespace
 {
+bool badges_installed = false;
+
+// --- Badge text ---
+
 struct NativeAction {
   std::string_view name;
   Action           primary;
@@ -66,22 +71,13 @@ constexpr auto kNativeActions = std::to_array<NativeAction>({
 
 constexpr const NativeAction* FindNativeAction(std::string_view name)
 {
-  for (const auto& action : kNativeActions)
-    if (action.name == name)
-      return &action;
-  return nullptr;
+  const auto action = std::ranges::find(kNativeActions, name, &NativeAction::name);
+  return action == kNativeActions.end() ? nullptr : &*action;
 }
 
-consteval bool NativeActionsAreUnique()
-{
-  for (size_t i = 0; i < kNativeActions.size(); ++i)
-    for (size_t j = i + 1; j < kNativeActions.size(); ++j)
-      if (kNativeActions[i].name == kNativeActions[j].name)
-        return false;
-  return true;
-}
-
-static_assert(NativeActionsAreUnique());
+static_assert(std::ranges::all_of(kNativeActions, [](const NativeAction& action) {
+  return std::ranges::count(kNativeActions, action.name, &NativeAction::name) == 1;
+}));
 static_assert(FindNativeAction("side_chat")->fallback == Action::kShowChatSide2);
 static_assert(FindNativeAction("unknown") == nullptr);
 
@@ -93,31 +89,27 @@ std::string BadgeText(std::string_view action_name)
     return "-";
   auto hint_action = action->primary;
   if (hint_action >= Action::kSelectShip1 && hint_action <= Action::kSelectShip8) {
-    // Use the same context array as FleetBarViewController::RequestSelect(int, bool), not the native dock index.
-    auto* bar     = unity::Newest<FleetBarViewController>();
-    auto* context = bar ? bar->CanvasContext() : nullptr;
-    auto* fleets  = context ? context->FleetData() : nullptr;
-    hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->size() : 0, [fleets](std::size_t position) {
-      auto* fleet = (*fleets)[position];
+    // The mod's ship keys select by position in the bar's context array, as RequestSelect does, not by dock index.
+    auto*      bar     = unity::Newest<FleetBarViewController>();
+    auto*      context = bar ? bar->CanvasContext() : nullptr;
+    const auto fleets  = il2cpp::Items(context ? context->FleetData() : nullptr);
+    hint_action        = ShipShortcutHintAction(hint_action, fleets.size(), [fleets](std::size_t position) {
+      auto* fleet = fleets[position];
       return fleet ? fleet->Index() : -1;
     });
   }
   auto hint = hint_action == Action::kCount ? std::string{} : Shortcut::Hint(hint_action);
 
   if (hint.empty() && action->fallback != Action::kCount)
-
     hint = Shortcut::Hint(action->fallback);
   return hint.empty() ? "-" : hint;
 }
 
-using UpdateTextFn = void(ShortcutKeybindHint*);
-
-bool          installed            = false;
-UpdateTextFn* original_update_text = nullptr;
+// --- Hooks ---
 
 void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _this)
 {
-  auto* label = _this && installed ? _this->keyTextLocalizer() : nullptr;
+  auto* label = _this->keyTextLocalizer();
   if (!label)
     return original(_this);
 
@@ -132,35 +124,38 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, ShortcutKeybindHint* _th
 
   auto* reference = _this->inputAction();
   auto* action    = reference ? reference->action() : nullptr;
-  auto* name      = action ? action->name() : nullptr;
-  if (name)
+  if (auto* name = action ? action->name() : nullptr)
     label->OverrideLocalizedText(il2cpp::NewString(BadgeText(il2cpp::ToUtf8(name)).c_str()));
 }
 
 void ShortcutKeybindHint_UpdateVisibility_Hook(auto original, ShortcutKeybindHint* _this, bool visible)
 {
   original(_this, visible);
-  if (visible && installed && original_update_text)
-    ShortcutKeybindHint_UpdateText_Hook(original_update_text, _this);
+  // A badge that becomes visible keeps the text it had while hidden. Update its text again, which runs the text hook,
+  // so it shows the current binding.
+  if (visible)
+    _this->UpdateText();
 }
 } // namespace
 
 bool ToggleKeybindBadges()
 {
-  if (!installed)
+  if (!badges_installed)
     return false;
   auto* manager = ShortcutsManager::Instance();
-  if (!manager)
-    spdlog::warn("[Hotkeys] native shortcut hints are unavailable");
+  if (!manager) {
+    spdlog::warn("[Hotkeys] the game's shortcut manager is not up; no badges to toggle");
+    return true;
+  }
   // The same gate the game's own show_keybindings action checks.
-  else if (ShortcutsManager::CanUseShortcuts())
+  if (ShortcutsManager::CanUseShortcuts())
     manager->SetShowKeybindings(!manager->ShowKeybindings());
   return true;
 }
 
 void HideKeybindBadges()
 {
-  auto* manager = installed ? ShortcutsManager::Instance() : nullptr;
+  auto* manager = badges_installed ? ShortcutsManager::Instance() : nullptr;
   if (manager && manager->ShowKeybindings())
     manager->SetShowKeybindings(false);
 }
@@ -173,11 +168,9 @@ void InstallKeybindBadges()
 
   // Only the detour targets gate the feature. Members the badge path reads resolve on first use; a missing one is
   // reported once and reads as null, which leaves the game's own badge text.
-  auto update_text       = ShortcutKeybindHint::Class::Method("UpdateText", 0);
-  auto update_visibility = ShortcutKeybindHint::Class::Method("UpdateVisibility", 1);
-  if (!update_text || !update_visibility)
-    return;
-
-  original_update_text = IL2CPP_HOOK(update_text, ShortcutKeybindHint_UpdateText_Hook);
-  installed = original_update_text && IL2CPP_HOOK(update_visibility, ShortcutKeybindHint_UpdateVisibility_Hook);
+  il2cpp::HookSet hooks("KeybindBadges");
+  IL2CPP_STAGE(hooks, ShortcutKeybindHint::Class::Method("UpdateText", 0), ShortcutKeybindHint_UpdateText_Hook);
+  IL2CPP_STAGE(hooks, ShortcutKeybindHint::Class::Method("UpdateVisibility", 1),
+               ShortcutKeybindHint_UpdateVisibility_Hook);
+  badges_installed = hooks.Commit();
 }

@@ -19,13 +19,17 @@ void Model_LoadConfigs_Hook(auto original, Model* _this)
     return;
   const auto& game = Config::Get().game;
   if (!game.settings_url.empty())
-    config->SetPlatformSettingsUrl(il2cpp::NewString(game.settings_url.c_str()));
+    config->SetPlatformSettingsUrl(il2cpp::NewString(game.settings_url));
   if (!game.assets_url_override.empty())
-    config->SetAssetUrlOverride(il2cpp::NewString(game.assets_url_override.c_str()));
+    config->SetAssetUrlOverride(il2cpp::NewString(game.assets_url_override));
 }
 
-void InstallGameConfigOverrides()
-{ IL2CPP_HOOK(Model::Class::Method<void()>("LoadConfigs"), Model_LoadConfigs_Hook); }
+bool InstallGameConfigOverrides()
+{
+  il2cpp::HookSet hooks("GameConfigOverrides");
+  IL2CPP_STAGE(hooks, Model::Class::Method<void()>("LoadConfigs"), Model_LoadConfigs_Hook);
+  return hooks.Commit();
+}
 } // namespace
 
 const Feature kGameConfigOverrides{"GameConfigOverrides", &Config::Patches::testpatches, InstallGameConfigOverrides};

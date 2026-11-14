@@ -5,6 +5,8 @@
 
 #include <il2cpp/il2cpp.h>
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 
@@ -172,14 +174,22 @@ struct SectionManager : il2cpp::Object {
   }
 };
 
-// Digit.Client.Core.CustomReloadArgs and Nullable<CustomReloadArgs>, laid out as the runtime does.
-struct CustomReloadArgs {
-  Il2CppObject* SectionArgs;
-  bool          ForceFakeReload;
+// Unity singletons expose a static Instance on their MonoSingleton`1<T> base.
+template <typename T> struct MonoSingleton : il2cpp::Object {
+  static T* Instance()
+  { return T::Class::template Get<"Instance", T*>(); }
+  // The singleton s_instance already holds, or null. Instance can search the scene or create a replacement.
+  static T* Existing()
+  { return T::Class::template Field<"s_instance", T*>(); }
 };
-struct NullableCustomReloadArgs {
-  bool             hasValue;
-  CustomReloadArgs value;
+
+// The non-generic MonoSingleton base; its static PrepareAllForReload runs before the game reloads.
+using MonoSingletonBase = il2cpp::Class<"Assembly-CSharp", "", "MonoSingleton">;
+
+// Digit.Client.Core.CustomReloadArgs, passed by value inside a Nullable.
+struct CustomReloadArgs {
+  Il2CppObject* section_args;
+  bool          force_fake_reload;
 };
 
 struct PrimeApp : il2cpp::Object {
@@ -188,7 +198,7 @@ struct PrimeApp : il2cpp::Object {
   void Quit()
   { Call<"Quit">(); }
   void Reload()
-  { Call<"Reload">(false, NullableCustomReloadArgs{}, false); }
+  { Call<"Reload">(false, il2cpp::Nullable<CustomReloadArgs>{}, false); }
 };
 
 struct AppConfig : il2cpp::Object {
@@ -254,21 +264,21 @@ struct Hub {
 
   static bool IsInChat()
   {
-    const auto section = CurrentSection();
-    return section == SectionID::Chat_Private_Message || section == SectionID::Chat_Alliance
-           || section == SectionID::Chat_Main || section == SectionID::Chat_Private_List;
+    return std::ranges::contains(std::array{SectionID::Chat_Private_Message, SectionID::Chat_Alliance,
+                                            SectionID::Chat_Main, SectionID::Chat_Private_List},
+                                 CurrentSection());
   }
 
   static bool IsInSystemOrGalaxyOrStarbase()
   {
-    const auto section = CurrentSection();
-    return section == SectionID::Navigation_Galaxy || section == SectionID::Navigation_System
-           || section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
+    return std::ranges::contains(std::array{SectionID::Navigation_Galaxy, SectionID::Navigation_System,
+                                            SectionID::Starbase_Interior, SectionID::Starbase_Exterior},
+                                 CurrentSection());
   }
 };
 
-// Fabric.EventManager, the game's sound middleware. Its shorter PostEvent overloads funnel into the seven-argument
-// one.
+// Fabric.EventManager, the game's sound middleware. Its shorter PostEvent overloads funnel into the
+// seven-argument one.
 using AudioEventManager = il2cpp::Class<"Fabric.Core", "Fabric", "EventManager">;
 
 // Windows only: keeps the game window at its aspect ratio from Update and its own window procedure.

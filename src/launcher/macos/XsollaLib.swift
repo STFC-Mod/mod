@@ -1,94 +1,98 @@
+// Updates the game the way the Xsolla launcher does: reads its settings, fetches the update plan for the installed
+// version, then downloads, extracts and patches into a staging folder before copying over the install.
+
 import Foundation
 import os
 
-/// Logger for Xsolla operations
 private let logger = Logger(subsystem: "com.stfcmod.startrekpatch", category: "xsolla")
 
-struct DownloadAction {
-  var url: String
-  var size: Int
-  var to: String
-}
+// Xsolla's id for Star Trek Fleet Command, in its settings keys and update URLs.
+private let projectID = "152033"
 
-struct ExtractAction {
-  var file: String
-  var to: String
-}
+enum XsollaError: LocalizedError {
+  case missingLauncherSetting(String)
+  case invalidUpdateURL(String)
+  case invalidUpdatePlan(String)
+  case invalidPatchPath(String)
 
-struct PatchAction {
-  var binaries: String
-  var patch: String
-}
-
-struct VersionAction {
-  var version: Int
-}
-
-enum XsollaUpdateAction {
-  case Download(DownloadAction)
-  case Extract(ExtractAction)
-  case Patch(PatchAction)
-  case Version(VersionAction)
-  case WaitActions
-}
-
-private func updateActionLogName(_ action: XsollaUpdateAction) -> String {
-  switch action {
-  case .Download:
-    return "download"
-  case .Extract:
-    return "extract"
-  case .Patch:
-    return "patch"
-  case .Version:
-    return "version"
-  case .WaitActions:
-    return "wait"
-  }
-}
-
-struct PatchRule: Decodable {
-  var file_size: Optional<Int>
-  var relative_path: String
-  var rule: String
-  var sha512: Optional<String>
-}
-
-func normalizedRelativePatchPath(_ path: String) throws -> String {
-  var components: [String] = []
-
-  for component in path.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: { $0 == "/" || $0 == "\\" }) {
-    switch component {
-    case "", ".", "..":
-      throw NSError(domain: "XsollaUpdater", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid patch path: \(path)"])
-    default:
-      components.append(String(component))
+  var errorDescription: String? {
+    switch self {
+    case .missingLauncherSetting(let key):
+      return "The Xsolla launcher settings have no \(key). Install the game with the Xsolla launcher first."
+    case .invalidUpdateURL(let url):
+      return "The update service returned an invalid URL: \(url)"
+    case .invalidUpdatePlan(let reason):
+      return "The update plan could not be read: \(reason)"
+    case .invalidPatchPath(let path):
+      return "The update contains an unsafe file path: \(path)"
     }
   }
-
-  if components.isEmpty {
-    throw NSError(domain: "XsollaUpdater", code: 4, userInfo: [NSLocalizedDescriptionKey: "Invalid patch path: \(path)"])
-  }
-
-  return components.joined(separator: "/")
 }
 
-func stagedPatchURL(root: URL, relativePath: String) throws -> URL {
-  let rootURL = root.standardizedFileURL
-  let targetURL = rootURL.appendingPathComponent(relativePath).standardizedFileURL
-  let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
-
-  if targetURL.path != rootURL.path && targetURL.path.hasPrefix(rootPath) {
-    return targetURL
-  }
-
-  throw NSError(domain: "XsollaUpdater", code: 4, userInfo: [NSLocalizedDescriptionKey: "Patch path escapes staging directory: \(relativePath)"])
+// What an update is doing, for the launcher's status line.
+enum XsollaUpdateProgress {
+  case start
+  case progress(currentAction: Int, totalActions: Int)
+  case downloading
+  case extracting
+  case patching
+  case waiting
+  case applyVersion
+  case versionApplied
+  case finalizing
+  case cleaningUp
+  case complete
 }
 
-class XsollaUpdateParser: NSObject, XMLParserDelegate {
+// --- Update plan ---
+
+// One step of an update plan. Paths may hold $temp_path (the Xsolla temp folder) and $game_path.
+private enum UpdateAction {
+  case download(url: String, size: Int, to: String)
+  case extract(file: String, to: String)
+  case patch(binaries: String, patch: String)
+  case version(Int)
+  case waitActions
+
+  var logName: String {
+    switch self {
+    case .download: return "download"
+    case .extract: return "extract"
+    case .patch: return "patch"
+    case .version: return "version"
+    case .waitActions: return "wait"
+    }
+  }
+}
+
+private struct UpdatePlan {
+  // The version the plan ends at; 0 when it has no version action.
   var gameVersion = 0
+  var actions: [UpdateAction] = []
+}
 
-  var actions: [XsollaUpdateAction] = []
+// Reads the update plan. An action missing an attribute it needs fails the whole plan: applying part of a plan
+// could leave the install between versions.
+private final class UpdatePlanReader: NSObject, XMLParserDelegate {
+  private var plan = UpdatePlan()
+  private var error: XsollaError?
+
+  static func read(_ data: Data) throws -> UpdatePlan {
+    let xml = XMLParser(data: data)
+    let reader = UpdatePlanReader()
+    xml.delegate = reader
+    let parsed = xml.parse()
+    if let error = reader.error {
+      logger.error("Rejected the Xsolla update plan: \(error.localizedDescription, privacy: .public)")
+      throw error
+    }
+    guard parsed else {
+      let message = xml.parserError?.localizedDescription ?? "unknown XML parser error"
+      logger.error("Failed to parse the Xsolla update plan: \(message, privacy: .public)")
+      throw XsollaError.invalidUpdatePlan(message)
+    }
+    return reader.plan
+  }
 
   func parser(
     _ parser: XMLParser,
@@ -97,70 +101,95 @@ class XsollaUpdateParser: NSObject, XMLParserDelegate {
     qualifiedName qName: String?,
     attributes attributeDict: [String: String] = [:]
   ) {
-    if elementName == "action" {
-      switch attributeDict["type"] {
-      case "torrent_download":
-        actions.append(
-          XsollaUpdateAction.Download(
-            DownloadAction(
-              url: attributeDict["alt_data_link"]!,
-              size: Int(attributeDict["data_size"]!)!,
-              to: attributeDict["alt_to"]!)))
-        break
-      case "extract":
-        actions.append(
-          XsollaUpdateAction.Extract(
-            ExtractAction(
-              file: attributeDict["file"]!,
-              to: attributeDict["to"]!)))
-        break
-      case "patch":
-        actions.append(
-          XsollaUpdateAction.Patch(
-            PatchAction(binaries: attributeDict["binaries"]!, patch: attributeDict["patch"]!)))
-        break
-      case "wait_actions":
-        actions.append(XsollaUpdateAction.WaitActions)
-        break
-      case "extracted_size":
-        break
-      case "version":
-        gameVersion = Int(attributeDict["version"]!)!
-        actions.append(XsollaUpdateAction.Version(VersionAction(version: gameVersion)))
-        break
-      default:
-        logger.warning("Unknown action type: \(attributeDict["type"]!)")
-        break
+    guard elementName == "action", error == nil else { return }
+    let type = attributeDict["type"] ?? ""
+
+    func fail(_ reason: String) {
+      error = .invalidUpdatePlan(reason)
+      parser.abortParsing()
+    }
+    func text(_ key: String) -> String? {
+      guard let value = attributeDict[key] else {
+        fail("\(type) action has no \(key)")
+        return nil
       }
+      return value
+    }
+    func number(_ key: String) -> Int? {
+      guard let value = text(key) else { return nil }
+      guard let number = Int(value) else {
+        fail("\(type) action has a non-numeric \(key): \(value)")
+        return nil
+      }
+      return number
+    }
+
+    switch type {
+    case "torrent_download":
+      if let url = text("alt_data_link"), let size = number("data_size"), let to = text("alt_to") {
+        plan.actions.append(.download(url: url, size: size, to: to))
+      }
+    case "extract":
+      if let file = text("file"), let to = text("to") {
+        plan.actions.append(.extract(file: file, to: to))
+      }
+    case "patch":
+      if let binaries = text("binaries"), let patch = text("patch") {
+        plan.actions.append(.patch(binaries: binaries, patch: patch))
+      }
+    case "wait_actions":
+      plan.actions.append(.waitActions)
+    case "extracted_size":
+      break
+    case "version":
+      if let version = number("version") {
+        plan.gameVersion = version
+        plan.actions.append(.version(version))
+      }
+    default:
+      logger.warning("Unknown action type: \(type, privacy: .public)")
     }
   }
 }
 
-enum XsollaUpdateProgress {
-  case Start(totalActions: Int)
-  case Progress(currentAction: Int, totalActions: Int)
-  case Extracting(currentFile: String)
-  case ExtractComplete(currentFile: String)
-  case Downloading(url: String)
-  case DownloadComplete(url: String)
-  case Patching(totalFiles: Int)
-  case PatchingProgress(currentBytes: Int, totalBytes: Int)
-  case PatchStepComplete
-  case PatchComplete
-  case Waiting
-  case ApplyVersion
-  case VersionApplied
-  case Finalizing
-  case CleaningUp
-  case Complete
+// --- Patch rules ---
+
+// One entry of a patch folder's patchRules.json.
+private struct PatchRule: Decodable {
+  var relativePath: String
+  var rule: String
+
+  enum CodingKeys: String, CodingKey {
+    case relativePath = "relative_path"
+    case rule
+  }
 }
 
-protocol XSollaUpdaterDelegate {
-  func updateProgress(progress: XsollaUpdateProgress)
+// A patch rule's path, normalized to forward slashes. Rejects anything that could climb out of the staging folder.
+// Empty components are dropped, so "a//b" is "a/b".
+private func normalizedRelativePatchPath(_ path: String) throws -> String {
+  let components = path.trimmingCharacters(in: .whitespacesAndNewlines).split { $0 == "/" || $0 == "\\" }
+  guard !components.isEmpty, !components.contains(where: { $0 == "." || $0 == ".." }) else {
+    throw XsollaError.invalidPatchPath(path)
+  }
+  return components.joined(separator: "/")
 }
+
+// The rule's file in the staging folder. A second guard after normalization: the result must lie strictly inside root.
+private func stagedPatchURL(root: URL, relativePath: String) throws -> URL {
+  let rootURL = root.standardizedFileURL
+  let targetURL = rootURL.appendingPathComponent(relativePath).standardizedFileURL
+  let rootPath = rootURL.path.hasSuffix("/") ? rootURL.path : rootURL.path + "/"
+  guard targetURL.path != rootURL.path, targetURL.path.hasPrefix(rootPath) else {
+    throw XsollaError.invalidPatchPath(relativePath)
+  }
+  return targetURL
+}
+
+// --- Updater ---
 
 private func httpStatus(_ response: URLResponse) -> Int {
-  return (response as? HTTPURLResponse)?.statusCode ?? -1
+  (response as? HTTPURLResponse)?.statusCode ?? -1
 }
 
 private func fileSize(at url: URL) -> Int {
@@ -173,96 +202,78 @@ private func fileSize(at url: URL) -> Int {
   return size.intValue
 }
 
-struct XsollaUpdater {
-  var gameName: String
+private func withoutTrailingSeparator(_ path: String) -> String {
+  path.hasSuffix("/") || path.hasSuffix("\\") ? String(path.dropLast()) : path
+}
 
-  public init(_ gameName: String) {
-    self.gameName = gameName
+struct XsollaUpdater {
+  // The game's folder under ~/Library/Preferences, where the Xsolla launcher keeps launcher_settings.ini.
+  let gameName: String
+
+  // A path from the Xsolla launcher's settings. The launcher sometimes writes them with a doubled leading slash;
+  // the mod's loader strips it the same way.
+  private func launcherSetting(_ name: String) throws -> String {
+    let key = "\(projectID)..\(name)"
+    guard let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first else {
+      throw XsollaError.missingLauncherSetting(key)
+    }
+    let settings = library.appendingPathComponent("Preferences").appendingPathComponent(gameName)
+      .appendingPathComponent("launcher_settings.ini")
+    guard let value = try readIni(atPath: settings.path)["General"]?[key] else {
+      throw XsollaError.missingLauncherSetting(key)
+    }
+    return value.hasPrefix("//") ? String(value.dropFirst()) : value
   }
 
   func gamePath() throws -> String {
-    let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-    if let library {
-      let preferences = library.appendingPathComponent("Preferences").appendingPathComponent(
-        self.gameName)
-      let settingsIniPath = preferences.appendingPathComponent("launcher_settings.ini")
-      let settingsIni = try parseConfig(settingsIniPath.path)
-      let gamePath = settingsIni["General"]?["152033..GAME_PATH"]
-      if let gamePath {
-        if gamePath.starts(with: "//") {
-          return String(gamePath.dropFirst())
-        }
-        return gamePath
-      }
-    }
-    throw NSError(domain: "XsollaUpdater", code: 1, userInfo: nil)
+    try launcherSetting("GAME_PATH")
   }
 
   func gameTempPath() throws -> String {
-    let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-    if let library {
-      let preferences = library.appendingPathComponent("Preferences").appendingPathComponent(
-        self.gameName)
-      let settingsIniPath = preferences.appendingPathComponent("launcher_settings.ini")
-      let settingsIni = try parseConfig(settingsIniPath.path)
-      let gameTempPath = settingsIni["General"]?["152033..GAME_TEMP_PATH"]
-      if let gameTempPath {
-        if gameTempPath.starts(with: "//") {
-          return String(gameTempPath.dropFirst())
-        }
-        return gameTempPath
-      }
-    }
-    throw NSError(domain: "XsollaUpdater", code: 1, userInfo: nil)
+    try launcherSetting("GAME_TEMP_PATH")
   }
 
-  @MainActor
+  // The installed version from the game's .version file ("&game=<n>"); 0 when it cannot be read.
   func installedVersion() -> Int {
-    do {
-      var gamePath = URL(fileURLWithPath: try self.gamePath())
-      gamePath.appendPathComponent(".version")
-      let versionFile = try String(contentsOf: gamePath, encoding: String.Encoding.utf8)
-      let versionSegments = versionFile.split(separator: "=")
-      return Int(versionSegments[1]) ?? 0
-    } catch {
+    guard
+      let gamePath = try? self.gamePath(),
+      let versionFile = try? String(
+        contentsOf: URL(fileURLWithPath: gamePath).appendingPathComponent(".version"), encoding: .utf8)
+    else {
       return 0
     }
+    let segments = versionFile.split(separator: "=")
+    guard segments.count == 2 else { return 0 }
+    return Int(segments[1].trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
   }
 
-  private func latestGameVersion(installedVersion: Int) async throws -> Int {
-    let url = URL(
-      string: String(
-        format:
-          "https://gus.xsolla.com/updates?version=%d&project_id=152033&region=&platform=mac_os",
-        installedVersion))
-    if let url {
-      logger.info("Checking latest game version from installed version \(installedVersion, privacy: .public)")
-      let (data, response) = try await URLSession.shared.data(from: url)
-      logger.debug(
-        "Xsolla latest-version response status=\(httpStatus(response), privacy: .public) bytes=\(data.count, privacy: .public)")
-
-      let xml = XMLParser(data: data)
-      let parser = XsollaUpdateParser()
-      xml.delegate = parser
-      guard xml.parse() else {
-        let message = xml.parserError?.localizedDescription ?? "unknown XML parser error"
-        logger.error("Failed to parse Xsolla latest-version XML: \(message, privacy: .public)")
-        throw NSError(domain: "XsollaUpdater", code: 5, userInfo: [NSLocalizedDescriptionKey: message])
-      }
-      logger.info("Latest game version parsed as \(parser.gameVersion, privacy: .public)")
-      return parser.gameVersion
+  // The plan that takes `installedVersion` to the latest version.
+  private func fetchUpdatePlan(from installedVersion: Int) async throws -> UpdatePlan {
+    let address =
+      "https://gus.xsolla.com/updates?version=\(installedVersion)&project_id=\(projectID)&region=&platform=mac_os"
+    guard let url = URL(string: address) else {
+      throw XsollaError.invalidUpdateURL(address)
     }
-    throw NSError(domain: "XsollaUpdater", code: 2, userInfo: nil)
+    let (data, response) = try await URLSession.shared.data(from: url)
+    logger.info(
+      "Fetched Xsolla update plan status=\(httpStatus(response), privacy: .public) bytes=\(data.count, privacy: .public)"
+    )
+    let plan = try UpdatePlanReader.read(data)
+    logger.info(
+      "Parsed Xsolla update plan targetVersion=\(plan.gameVersion, privacy: .public) actions=\(plan.actions.count, privacy: .public)"
+    )
+    return plan
   }
 
   @MainActor
   func checkForUpdateAvailable() async -> Bool {
     do {
       let installedVersion = self.installedVersion()
-      let latestGameVersion = try await self.latestGameVersion(installedVersion: installedVersion)
+      let latestGameVersion = try await fetchUpdatePlan(from: installedVersion).gameVersion
       let available = installedVersion < latestGameVersion
       logger.info(
-        "Game update availability installed=\(installedVersion, privacy: .public) latest=\(latestGameVersion, privacy: .public) available=\(available, privacy: .public)")
+        "Game update availability installed=\(installedVersion, privacy: .public) latest=\(latestGameVersion, privacy: .public) available=\(available, privacy: .public)"
+      )
       return available
     } catch {
       logger.error("Game update availability check failed: \(error.localizedDescription, privacy: .public)")
@@ -270,253 +281,218 @@ struct XsollaUpdater {
     }
   }
 
+  // The update runs on the main actor, so `progress` can update the UI directly. Its file work blocks the UI while
+  // it runs; only the network waits suspend.
   @MainActor
-  func updateGame(delegate: XSollaUpdaterDelegate? = nil) async throws {
+  func updateGame(onProgress progress: @MainActor (XsollaUpdateProgress) -> Void) async throws {
     let installedVersion = self.installedVersion()
     logger.info("Starting game update from installed version \(installedVersion, privacy: .public)")
-
     do {
-      guard
-        let url = URL(
-          string: String(
-            format:
-              "https://gus.xsolla.com/updates?version=%d&project_id=152033&region=&platform=mac_os",
-            installedVersion))
-      else {
-        throw NSError(domain: "XsollaUpdater", code: 3, userInfo: nil)
-      }
-
-      let (data, response) = try await URLSession.shared.data(from: url)
-      logger.info(
-        "Fetched Xsolla update plan status=\(httpStatus(response), privacy: .public) bytes=\(data.count, privacy: .public)")
-
-      let xml = XMLParser(data: data)
-      let parser = XsollaUpdateParser()
-      xml.delegate = parser
-      guard xml.parse() else {
-        let message = xml.parserError?.localizedDescription ?? "unknown XML parser error"
-        logger.error("Failed to parse Xsolla update XML: \(message, privacy: .public)")
-        throw NSError(domain: "XsollaUpdater", code: 5, userInfo: [NSLocalizedDescriptionKey: message])
-      }
-      logger.info(
-        "Parsed Xsolla update plan targetVersion=\(parser.gameVersion, privacy: .public) actions=\(parser.actions.count, privacy: .public)")
-
-      var tempGamePath = try self.gameTempPath()
-      if tempGamePath.hasSuffix("/") || tempGamePath.hasSuffix("\\") {
-        tempGamePath = String(tempGamePath.dropLast())
-      }
-      var gamePath = try self.gamePath()
-      if gamePath.hasSuffix("/") || gamePath.hasSuffix("\\") {
-        gamePath = String(gamePath.dropLast())
-      }
-      let tempPath = TemporaryFolderURL()
-
-      if FileManager.default.fileExists(atPath: tempGamePath) {
-        logger.info("Removing previous Xsolla temp path \(tempGamePath, privacy: .private)")
-        try FileManager.default.removeItem(atPath: tempGamePath)
-      }
-      try FileManager.default.createDirectory(
-        atPath: tempGamePath, withIntermediateDirectories: true, attributes: nil)
-      try FileManager.default.createDirectory(
-        at: tempPath.contentURL, withIntermediateDirectories: true, attributes: nil)
-      logger.info(
-        "Prepared updater directories gamePath=\(gamePath, privacy: .private) xsollaTemp=\(tempGamePath, privacy: .private) staging=\(tempPath.contentURL.path, privacy: .private)")
-
-      delegate?.updateProgress(
-        progress: XsollaUpdateProgress.Start(totalActions: parser.actions.count))
-
-      var currentAction = 0
-      var pendingGameVersion: Int?
-      var pendingDeletes: [String] = []
-
-      for action in parser.actions {
-        currentAction += 1
-        let actionName = updateActionLogName(action)
-        logger.info(
-          "Starting Xsolla action \(currentAction, privacy: .public)/\(parser.actions.count, privacy: .public): \(actionName, privacy: .public)")
-        delegate?.updateProgress(
-          progress: XsollaUpdateProgress.Progress(
-            currentAction: currentAction, totalActions: parser.actions.count))
-
-        switch action {
-        case .Download(let downloadAction):
-          delegate?.updateProgress(
-            progress: XsollaUpdateProgress.Downloading(url: downloadAction.url))
-          guard let downloadURL = URL(string: downloadAction.url) else {
-            throw NSError(domain: "XsollaUpdater", code: 3, userInfo: nil)
-          }
-          logger.info(
-            "Downloading update payload expectedBytes=\(downloadAction.size, privacy: .public) url=\(downloadAction.url, privacy: .private)")
-          let (localURL, response) = try await URLSession.shared.download(from: downloadURL)
-          let toPath = downloadAction.to.replacingOccurrences(of: "$temp_path", with: tempGamePath)
-          let downloadedBytes = fileSize(at: localURL)
-          logger.info(
-            "Downloaded update payload status=\(httpStatus(response), privacy: .public) bytes=\(downloadedBytes, privacy: .public) target=\(toPath, privacy: .private)")
-          delegate?.updateProgress(
-            progress: XsollaUpdateProgress.DownloadComplete(url: downloadAction.url))
-          try FileManager.default.moveItem(at: localURL, to: URL(fileURLWithPath: toPath))
-
-        case .Extract(let extractAction):
-          let fromPath = extractAction.file.replacingOccurrences(of: "$temp_path", with: tempGamePath)
-          let toPath = extractAction.to.replacingOccurrences(of: "$temp_path", with: tempGamePath)
-          logger.info(
-            "Extracting update archive from=\(fromPath, privacy: .private) to=\(toPath, privacy: .private)")
-          delegate?.updateProgress(progress: XsollaUpdateProgress.Extracting(currentFile: fromPath))
-          try extractUpdateArchive(from: fromPath, to: toPath)
-          delegate?.updateProgress(
-            progress: XsollaUpdateProgress.ExtractComplete(currentFile: fromPath))
-          logger.info("Extracted update archive to=\(toPath, privacy: .private)")
-
-        case .Patch(let patchAction):
-          var binaries = patchAction.binaries
-          binaries = binaries.replacingOccurrences(of: "$temp_path", with: tempGamePath)
-          binaries = binaries.replacingOccurrences(of: "$game_path", with: gamePath)
-          let patch = patchAction.patch.replacingOccurrences(of: "$temp_path", with: tempGamePath)
-          let patchRulesJSON = URL(fileURLWithPath: patch).appendingPathComponent("patchRules.json")
-          let patchRules = try JSONDecoder().decode(
-            [PatchRule].self, from: Data(contentsOf: patchRulesJSON))
-          logger.info(
-            "Applying Xsolla patch rules count=\(patchRules.count, privacy: .public) binaries=\(binaries, privacy: .private) patch=\(patch, privacy: .private)")
-          delegate?.updateProgress(
-            progress: XsollaUpdateProgress.Patching(totalFiles: patchRules.count))
-
-          for rule in patchRules {
-            let relativePath = try normalizedRelativePatchPath(rule.relative_path)
-
-            // Skip files in _CodeSignature directory as they will be regenerated when we re-sign.
-            if relativePath.contains("_CodeSignature") {
-              logger.info("Skipping _CodeSignature patch rule for \(relativePath, privacy: .public)")
-              delegate?.updateProgress(progress: XsollaUpdateProgress.PatchStepComplete)
-              continue
-            }
-
-            let targetPath = try stagedPatchURL(root: tempPath.contentURL, relativePath: relativePath)
-            let sourcePath = URL(fileURLWithPath: gamePath).appendingPathComponent(relativePath)
-            let patchPath = URL(fileURLWithPath: patch).appendingPathComponent(relativePath)
-
-            logger.debug(
-              "Patch rule type=\(rule.rule, privacy: .public) relativePath=\(relativePath, privacy: .public) sourceExists=\(FileManager.default.fileExists(atPath: sourcePath.path), privacy: .public) stagedExists=\(FileManager.default.fileExists(atPath: targetPath.path), privacy: .public) patchExists=\(FileManager.default.fileExists(atPath: patchPath.path), privacy: .public)")
-
-            switch rule.rule {
-            case "patch":
-              let basisPath =
-                FileManager.default.fileExists(atPath: targetPath.path) ? targetPath : sourcePath
-              let patchedPath = targetPath.appendingPathExtension("patching")
-              do {
-                try FileManager.default.createDirectory(
-                  at: targetPath.deletingLastPathComponent(), withIntermediateDirectories: true,
-                  attributes: nil)
-                if FileManager.default.fileExists(atPath: patchedPath.path) {
-                  try FileManager.default.removeItem(at: patchedPath)
-                }
-                logger.debug(
-                  "Applying rsync patch relativePath=\(relativePath, privacy: .public) basis=\(basisPath.path, privacy: .private) output=\(patchedPath.path, privacy: .private)")
-                try rsyncApply(source: basisPath, patch: patchPath, output: patchedPath)
-                let basisAttributes = try FileManager.default.attributesOfItem(atPath: basisPath.path)
-                if let permissions = basisAttributes[.posixPermissions] {
-                  try FileManager.default.setAttributes(
-                    [.posixPermissions: permissions], ofItemAtPath: patchedPath.path)
-                }
-                if FileManager.default.fileExists(atPath: targetPath.path) {
-                  try FileManager.default.removeItem(at: targetPath)
-                }
-                try FileManager.default.moveItem(at: patchedPath, to: targetPath)
-              } catch {
-                try? FileManager.default.removeItem(at: patchedPath)
-                logger.error(
-                  "Error patching \(relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                throw error
-              }
-
-            case "create":
-              if !FileManager.default.fileExists(atPath: targetPath.path) {
-                try FileManager.default.createDirectory(
-                  at: targetPath.deletingLastPathComponent(), withIntermediateDirectories: true,
-                  attributes: nil)
-                try Data().write(to: targetPath)
-              }
-
-            case "delete":
-              pendingDeletes.append(relativePath)
-              logger.debug("Queued deferred delete for \(relativePath, privacy: .public)")
-
-            case "copy":
-              try FileManager.default.createDirectory(
-                at: targetPath.deletingLastPathComponent(), withIntermediateDirectories: true,
-                attributes: nil)
-              if FileManager.default.fileExists(atPath: targetPath.path) {
-                try FileManager.default.removeItem(at: targetPath)
-              }
-              try FileManager.default.copyItem(at: patchPath, to: targetPath)
-
-            default:
-              logger.warning("Unknown patch rule \(rule.rule, privacy: .public)")
-            }
-            delegate?.updateProgress(progress: XsollaUpdateProgress.PatchStepComplete)
-          }
-          delegate?.updateProgress(progress: XsollaUpdateProgress.PatchComplete)
-
-        case .WaitActions:
-          delegate?.updateProgress(progress: XsollaUpdateProgress.Waiting)
-          logger.debug("Observed Xsolla wait action")
-
-        case .Version(let versionAction):
-          pendingGameVersion = versionAction.version
-          logger.info("Deferred installed version write until finalization: \(versionAction.version, privacy: .public)")
-        }
-
-        logger.info(
-          "Finished Xsolla action \(currentAction, privacy: .public)/\(parser.actions.count, privacy: .public): \(actionName, privacy: .public)")
-      }
-
-      delegate?.updateProgress(progress: XsollaUpdateProgress.Finalizing)
-      // `tempPath` deletes its backing staging folder in TemporaryFolderURL.deinit. Both the
-      // finalize copy and the deferred deletes read from that folder, so keep `tempPath`
-      // explicitly alive across them with withExtendedLifetime rather than relying on ARC's
-      // last-use lifetime, which could otherwise release (and asynchronously delete) the
-      // staging folder out from under these operations.
-      try withExtendedLifetime(tempPath) {
-        // NOTE: copying into the live game directory is not atomic — staged files replace the
-        // installed ones one at a time, so a failure partway through leaves the install in a
-        // mixed old/new state. Staging keeps all download/extract/patch work out of the live
-        // directory until this point, and the version file is only written after this copy
-        // succeeds, but recovering from a mid-copy failure still requires re-running the update.
-        logger.info("Copying staged update files into the game directory")
-        try copyContentsOfDirectory(from: tempPath.contentURL, to: URL(fileURLWithPath: gamePath))
-        logger.info("Copied staged update files into the game directory")
-
-        if !pendingDeletes.isEmpty {
-          logger.info("Applying deferred delete rules count=\(pendingDeletes.count, privacy: .public)")
-          try deleteGamePaths(
-            pendingDeletes, gamePath: gamePath, preservingStagedRoot: tempPath.contentURL)
-        }
-      }
-
-      if let pendingGameVersion {
-        delegate?.updateProgress(progress: XsollaUpdateProgress.ApplyVersion)
-        logger.info(
-          "Writing installed game version \(pendingGameVersion, privacy: .public) after final file operations")
-        try writeInstalledGameVersion(pendingGameVersion, gamePath: gamePath)
-        delegate?.updateProgress(progress: XsollaUpdateProgress.VersionApplied)
-      } else {
-        logger.warning("Update plan did not include a version action; leaving installed version unchanged")
-      }
-
-      delegate?.updateProgress(progress: XsollaUpdateProgress.CleaningUp)
-      do {
-        logger.info("Removing Xsolla temp path \(tempGamePath, privacy: .private)")
-        try FileManager.default.removeItem(atPath: tempGamePath)
-      } catch {
-        logger.warning("Failed to remove Xsolla temp path: \(error.localizedDescription, privacy: .public)")
-      }
-
-      delegate?.updateProgress(progress: XsollaUpdateProgress.Complete)
-      logger.info(
-        "Game update completed from \(installedVersion, privacy: .public) to \(pendingGameVersion ?? parser.gameVersion, privacy: .public)")
+      try await runUpdate(from: installedVersion, onProgress: progress)
     } catch {
       logger.error(
-        "Game update failed from installed version \(installedVersion, privacy: .public): \(error.localizedDescription, privacy: .public)")
+        "Game update failed from installed version \(installedVersion, privacy: .public): \(error.localizedDescription, privacy: .public)"
+      )
       throw error
     }
+  }
+
+  @MainActor
+  private func runUpdate(from installedVersion: Int, onProgress progress: @MainActor (XsollaUpdateProgress) -> Void)
+    async throws
+  {
+    let files = FileManager.default
+    let plan = try await fetchUpdatePlan(from: installedVersion)
+    let tempGamePath = withoutTrailingSeparator(try gameTempPath())
+    let gamePath = withoutTrailingSeparator(try self.gamePath())
+    // Patched and copied files wait here until every action has succeeded. It can hold much of the game, so it is
+    // removed in the background once the update ends, whether or not it succeeded.
+    let staging = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+    defer {
+      DispatchQueue.global(qos: .utility).async {
+        try? FileManager.default.removeItem(at: staging)
+      }
+    }
+
+    if files.fileExists(atPath: tempGamePath) {
+      logger.info("Removing previous Xsolla temp path \(tempGamePath, privacy: .private)")
+      try files.removeItem(atPath: tempGamePath)
+    }
+    try files.createDirectory(atPath: tempGamePath, withIntermediateDirectories: true)
+    try files.createDirectory(at: staging, withIntermediateDirectories: true)
+    logger.info(
+      "Prepared updater directories gamePath=\(gamePath, privacy: .private) xsollaTemp=\(tempGamePath, privacy: .private) staging=\(staging.path, privacy: .private)"
+    )
+
+    progress(.start)
+
+    func inTemp(_ path: String) -> String {
+      path.replacingOccurrences(of: "$temp_path", with: tempGamePath)
+    }
+
+    var pendingGameVersion: Int?
+    var pendingDeletes: [String] = []
+    for (index, action) in plan.actions.enumerated() {
+      let currentAction = index + 1
+      logger.info(
+        "Starting Xsolla action \(currentAction, privacy: .public)/\(plan.actions.count, privacy: .public): \(action.logName, privacy: .public)"
+      )
+      progress(.progress(currentAction: currentAction, totalActions: plan.actions.count))
+
+      switch action {
+      case .download(let url, let size, let to):
+        progress(.downloading)
+        guard let downloadURL = URL(string: url) else {
+          throw XsollaError.invalidUpdateURL(url)
+        }
+        logger.info(
+          "Downloading update payload expectedBytes=\(size, privacy: .public) url=\(url, privacy: .private)")
+        let (localURL, response) = try await URLSession.shared.download(from: downloadURL)
+        let toPath = inTemp(to)
+        logger.info(
+          "Downloaded update payload status=\(httpStatus(response), privacy: .public) bytes=\(fileSize(at: localURL), privacy: .public) target=\(toPath, privacy: .private)"
+        )
+        try files.moveItem(at: localURL, to: URL(fileURLWithPath: toPath))
+
+      case .extract(let file, let to):
+        let fromPath = inTemp(file)
+        let toPath = inTemp(to)
+        logger.info("Extracting update archive from=\(fromPath, privacy: .private) to=\(toPath, privacy: .private)")
+        progress(.extracting)
+        try extractUpdateArchive(from: fromPath, to: toPath)
+        logger.info("Extracted update archive to=\(toPath, privacy: .private)")
+
+      case .patch(let binaries, let patch):
+        // binaries only shows up in the log: rules patch from the installed game, or from an earlier staged copy.
+        let binariesPath = inTemp(binaries).replacingOccurrences(of: "$game_path", with: gamePath)
+        pendingDeletes += try applyPatch(
+          folder: inTemp(patch), binaries: binariesPath, gamePath: gamePath, staging: staging, onProgress: progress)
+
+      case .waitActions:
+        progress(.waiting)
+        logger.debug("Observed Xsolla wait action")
+
+      case .version(let version):
+        pendingGameVersion = version
+        logger.info("Deferred installed version write until finalization: \(version, privacy: .public)")
+      }
+
+      logger.info(
+        "Finished Xsolla action \(currentAction, privacy: .public)/\(plan.actions.count, privacy: .public): \(action.logName, privacy: .public)"
+      )
+    }
+
+    progress(.finalizing)
+    // Not atomic: staged files replace installed ones one at a time, so a failure partway leaves the install mixed.
+    // The version file is written only after the copy, so the next run repeats the update.
+    logger.info("Copying staged update files into the game directory")
+    try copyContentsOfDirectory(from: staging, to: URL(fileURLWithPath: gamePath))
+    logger.info("Copied staged update files into the game directory")
+
+    if !pendingDeletes.isEmpty {
+      logger.info("Applying deferred delete rules count=\(pendingDeletes.count, privacy: .public)")
+      try deleteGamePaths(pendingDeletes, gamePath: gamePath, preservingStagedRoot: staging)
+    }
+
+    if let pendingGameVersion {
+      progress(.applyVersion)
+      logger.info("Writing installed game version \(pendingGameVersion, privacy: .public) after final file operations")
+      try writeInstalledGameVersion(pendingGameVersion, gamePath: gamePath)
+      progress(.versionApplied)
+    } else {
+      logger.warning("Update plan did not include a version action; leaving installed version unchanged")
+    }
+
+    progress(.cleaningUp)
+    do {
+      logger.info("Removing Xsolla temp path \(tempGamePath, privacy: .private)")
+      try files.removeItem(atPath: tempGamePath)
+    } catch {
+      logger.warning("Failed to remove Xsolla temp path: \(error.localizedDescription, privacy: .public)")
+    }
+
+    progress(.complete)
+    logger.info(
+      "Game update completed from \(installedVersion, privacy: .public) to \(pendingGameVersion ?? plan.gameVersion, privacy: .public)"
+    )
+  }
+
+  // Stages the results of one patch folder's rules and returns the paths its delete rules name. Those are deleted
+  // only after the staged copy, so a failed update never loses files it did not replace.
+  @MainActor
+  private func applyPatch(
+    folder patch: String, binaries: String, gamePath: String, staging: URL,
+    onProgress progress: @MainActor (XsollaUpdateProgress) -> Void
+  ) throws -> [String] {
+    let files = FileManager.default
+    let patchRulesJSON = URL(fileURLWithPath: patch).appendingPathComponent("patchRules.json")
+    let patchRules = try JSONDecoder().decode([PatchRule].self, from: Data(contentsOf: patchRulesJSON))
+    logger.info(
+      "Applying Xsolla patch rules count=\(patchRules.count, privacy: .public) binaries=\(binaries, privacy: .private) patch=\(patch, privacy: .private)"
+    )
+    progress(.patching)
+
+    var deletes: [String] = []
+    for rule in patchRules {
+      let relativePath = try normalizedRelativePatchPath(rule.relativePath)
+
+      // Signatures are regenerated when the launcher re-signs the game.
+      if relativePath.contains("_CodeSignature") {
+        logger.info("Skipping _CodeSignature patch rule for \(relativePath, privacy: .public)")
+        continue
+      }
+
+      let targetPath = try stagedPatchURL(root: staging, relativePath: relativePath)
+      let sourcePath = URL(fileURLWithPath: gamePath).appendingPathComponent(relativePath)
+      let patchPath = URL(fileURLWithPath: patch).appendingPathComponent(relativePath)
+
+      logger.debug(
+        "Patch rule type=\(rule.rule, privacy: .public) relativePath=\(relativePath, privacy: .public) sourceExists=\(files.fileExists(atPath: sourcePath.path), privacy: .public) stagedExists=\(files.fileExists(atPath: targetPath.path), privacy: .public) patchExists=\(files.fileExists(atPath: patchPath.path), privacy: .public)"
+      )
+
+      switch rule.rule {
+      case "patch":
+        // A file patched earlier in this update is patched again from its staged copy.
+        let basisPath = files.fileExists(atPath: targetPath.path) ? targetPath : sourcePath
+        let patchedPath = targetPath.appendingPathExtension("patching")
+        do {
+          try files.createParentDirectory(of: targetPath)
+          try files.removeItemIfPresent(at: patchedPath)
+          logger.debug(
+            "Applying rsync patch relativePath=\(relativePath, privacy: .public) basis=\(basisPath.path, privacy: .private) output=\(patchedPath.path, privacy: .private)"
+          )
+          try rsyncApply(source: basisPath, patch: patchPath, output: patchedPath)
+          // librsync writes a fresh file; give it the basis's mode so executables stay executable.
+          if let permissions = try files.attributesOfItem(atPath: basisPath.path)[.posixPermissions] {
+            try files.setAttributes([.posixPermissions: permissions], ofItemAtPath: patchedPath.path)
+          }
+          try files.removeItemIfPresent(at: targetPath)
+          try files.moveItem(at: patchedPath, to: targetPath)
+        } catch {
+          try? files.removeItem(at: patchedPath)
+          logger.error("Error patching \(relativePath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+          throw error
+        }
+
+      case "create":
+        if !files.fileExists(atPath: targetPath.path) {
+          try files.createParentDirectory(of: targetPath)
+          try Data().write(to: targetPath)
+        }
+
+      case "delete":
+        deletes.append(relativePath)
+        logger.debug("Queued deferred delete for \(relativePath, privacy: .public)")
+
+      case "copy":
+        try files.createParentDirectory(of: targetPath)
+        try files.removeItemIfPresent(at: targetPath)
+        try files.copyItem(at: patchPath, to: targetPath)
+
+      default:
+        logger.warning("Unknown patch rule \(rule.rule, privacy: .public)")
+      }
+    }
+    return deletes
   }
 }
