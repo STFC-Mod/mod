@@ -3,7 +3,7 @@ name: Create Release
 on:
   push:
     tags:
-      - "v*" # v0.6.1 or v0.6.1.alpha.9
+      - "v*" # v1.1.10.0 or v1.1.11.beta.1
 
 permissions:
   contents: write
@@ -15,6 +15,28 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require version on its release branch
+        id: release_branch
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          branch=$(bash scripts/release-tag-hook.sh --branch-for-tag "$RELEASE_TAG")
+          git fetch --no-tags origin \
+            '+refs/heads/main:refs/remotes/origin/main' \
+            '+refs/heads/dev:refs/remotes/origin/dev'
+          commit=$(git rev-parse 'HEAD^{commit}')
+          if ! git merge-base --is-ancestor "$commit" "refs/remotes/origin/$branch"; then
+            echo "::error::$RELEASE_TAG must point to a commit on $branch. Merge the PR before tagging."
+            exit 1
+          fi
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
       # Find a successful Build workflow for this exact commit.
       #
       # Release intentionally reuses the artifacts from CI rather than
@@ -24,6 +46,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_BRANCH: ${{ steps.release_branch.outputs.branch }}
         run: |
           set -euo pipefail
 
@@ -33,12 +56,12 @@ jobs:
             gh api \
               -H "Accept: application/vnd.github+json" \
               "/repos/${{ github.repository }}/actions/runs?head_sha=${{ github.sha }}&status=success&per_page=100" \
-              --jq '.workflow_runs[] | select(.name == "Build") | .id' \
+              --jq ".workflow_runs[] | select(.name == \"Build\" and .event == \"push\" and .head_branch == \"$RELEASE_BRANCH\") | .id" \
               | head -n 1
           )"
 
           if [[ -z "$build_run_id" ]]; then
-            echo "::error::No successful Build workflow found for commit ${{ github.sha }}."
+            echo "::error::No successful $RELEASE_BRANCH push Build found for commit ${{ github.sha }}."
             exit 1
           fi
 
