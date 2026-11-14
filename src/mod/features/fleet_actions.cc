@@ -462,7 +462,7 @@ bool SelectShipShortcuts()
   const auto index = static_cast<int32_t>(ship - kShips.begin());
 
   if (SelectManagedDock(index)) {
-    last_index = -1;
+    fleet_last_index = -1;
     return true;
   }
 

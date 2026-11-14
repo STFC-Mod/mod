@@ -17,8 +17,10 @@
 #include <spdlog/spdlog.h>
 #include <unity/core.h>
 #include <unity/tracker.h>
+#include <unity/ui.h>
 
 #include <chrono>
+#include <unordered_map>
 #include <utility>
 
 namespace
@@ -191,19 +193,61 @@ void ChatPreviewController_OnRegionalMessageReceived_Hook(auto original, ChatPre
 //
 // Only chat rows lose their title: the same profile widget appears on other screens.
 
+struct ChatTitleLayout {
+  il2cpp::GcHandle element;
+  bool            original_ignore = false;
+};
+std::unordered_map<unity::LayoutElement*, ChatTitleLayout> chat_title_layouts;
+
+void RestoreChatTitleLayout(UserProfileWidget* profile)
+{
+  auto* title = profile ? profile->playerTitleWidget() : nullptr;
+  auto* container = title ? title->container() : nullptr;
+  auto* element = container ? container->GetComponent<unity::LayoutElement>() : nullptr;
+  const auto saved = chat_title_layouts.find(element);
+  if (saved == chat_title_layouts.end())
+    return;
+  if (saved->second.element.Get() == element)
+    element->SetIgnoreLayout(saved->second.original_ignore);
+  chat_title_layouts.erase(saved);
+}
+
 void HideChatTitle(UserProfileWidget* profile)
 {
   auto* title     = profile ? profile->playerTitleWidget() : nullptr;
   auto* transform = title ? profile->transform() : nullptr;
-  if (!transform || !transform->FindInParents<ChatMessageWidget>())
+  auto* row = transform ? transform->FindInParents<ChatMessageWidget>() : nullptr;
+  if (!row) {
+    RestoreChatTitleLayout(profile);
     return;
+  }
   if (auto* object = title->gameObject())
     object->SetActive(false);
+  // The serialized container reserves height even when its title child is hidden. A nested native bind may
+  // reactivate it, so also exclude its LayoutElement until titles are enabled again.
+  if (auto* container = title->container()) {
+    if (auto* element = container->GetComponent<unity::LayoutElement>()) {
+      std::erase_if(chat_title_layouts, [](const auto& item) { return !item.second.element.Get(); });
+      if (!chat_title_layouts.contains(element))
+        chat_title_layouts.emplace(element, ChatTitleLayout{il2cpp::GcHandle::Weak(element), element->ignoreLayout()});
+      element->SetIgnoreLayout(true);
+    }
+    container->SetActive(false);
+  }
+  // The virtualized list measures the complete message row, not just the inner profile. Update its cached size
+  // immediately and schedule the normal layout pass as well.
+  auto* object = row->gameObject();
+  if (auto* rect = object ? object->GetComponent<unity::RectTransform>() : nullptr) {
+    unity::LayoutRebuilder::ForceRebuildLayoutImmediate(rect);
+    unity::LayoutRebuilder::MarkLayoutForRebuild(rect);
+  }
 }
 
 // The game shows the title again on every update, so it is hidden after each one.
 void UserProfileWidget_UpdatePlayerTitle_Hook(auto original, UserProfileWidget* _this)
 {
+  if (Config::Get().ui.show_player_title)
+    RestoreChatTitleLayout(_this);
   original(_this);
   if (!Config::Get().ui.show_player_title)
     HideChatTitle(_this);
@@ -212,6 +256,9 @@ void UserProfileWidget_UpdatePlayerTitle_Hook(auto original, UserProfileWidget* 
 // SetWidgetData and OnDidBindContext both bind a title from the title widget's side; one hook serves both.
 void PlayerTitleWidget_Bind_Hook(auto original, PlayerTitleWidget* _this)
 {
+  if (Config::Get().ui.show_player_title)
+    if (auto* transform = _this->transform())
+      RestoreChatTitleLayout(transform->FindInParents<UserProfileWidget>());
   original(_this);
   if (Config::Get().ui.show_player_title)
     return;

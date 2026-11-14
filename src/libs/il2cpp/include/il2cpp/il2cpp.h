@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <concepts>
 #include <cstddef>
 #include <cstring>
@@ -681,9 +682,13 @@ class GcHandle
 public:
   GcHandle() = default;
   static GcHandle Strong(Il2CppObject* object)
-  { return GcHandle(object ? il2cpp_gchandle_new(object, false) : nullptr); }
+  { return GcHandle(object && !shutdown_.load() ? il2cpp_gchandle_new(object, false) : nullptr); }
   static GcHandle Weak(Il2CppObject* object)
-  { return GcHandle(object ? il2cpp_gchandle_new_weakref(object, false) : nullptr); }
+  { return GcHandle(object && !shutdown_.load() ? il2cpp_gchandle_new_weakref(object, false) : nullptr); }
+  // Terminal runtime teardown, not an in-process game reload. IL2CPP reclaims its handle table itself; native
+  // statics may be destroyed later, when calling any handle API would access the destroyed runtime.
+  static void StopRuntime()
+  { shutdown_.store(true); }
   ~GcHandle()
   { Reset(); }
   GcHandle(const GcHandle&)            = delete;
@@ -701,15 +706,15 @@ public:
     return *this;
   }
   explicit operator bool() const
-  { return handle_ != nullptr; }
+  { return handle_ != nullptr && !shutdown_.load(); }
   Il2CppObject* Get() const
-  { return handle_ ? il2cpp_gchandle_get_target(handle_) : nullptr; }
+  { return handle_ && !shutdown_.load() ? il2cpp_gchandle_get_target(handle_) : nullptr; }
   template <typename T> T* Get() const
   { return static_cast<T*>(Get()); }
   void Reset()
   {
-    if (handle_)
-      il2cpp_gchandle_free(std::exchange(handle_, nullptr));
+    if (auto handle = std::exchange(handle_, nullptr); handle && !shutdown_.load())
+      il2cpp_gchandle_free(handle);
   }
 
 private:
@@ -718,6 +723,7 @@ private:
   {
   }
   Il2CppGCHandle handle_ = nullptr;
+  inline static std::atomic_bool shutdown_{false};
 };
 
 // --- Internal calls ---

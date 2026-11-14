@@ -38,6 +38,13 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
         addFixture(ctx, build_tests, test_mod, "action-queue-tests", module);
     }
 
+    {
+        const module = ctx.createModule(true);
+        module.addIncludePath(b.path("src/mod"));
+        module.addCSourceFile(.{ .file = b.path("tests/zoom_entry.cc"), .flags = flags });
+        addFixture(ctx, build_tests, test_mod, "zoom-entry-tests", module);
+    }
+
     // IL2CPP bindings and GC handles against a fake runtime API defined in each test file.
     {
         const module = ctx.createModule(true);

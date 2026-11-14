@@ -89,6 +89,9 @@ struct FullScreenChatViewController : il2cpp::Object {
 
 struct PlayerTitleWidget : unity::Component {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget">;
+
+  unity::GameObject* container()
+  { return Field<"_container", unity::GameObject*>(); }
 };
 
 // A player's name, avatar and title, on chat rows and other screens.

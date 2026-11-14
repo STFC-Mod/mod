@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "features/features.h"
+#include "features/zoom_entry.h"
 #include "shortcuts.h"
 
 #include "game/app.h"
@@ -21,14 +22,42 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
-#include <utility>
 
 namespace
 {
 // --- Zoom ---
 
-// Entering a system jumps to default_system_zoom on the next camera update.
-bool zoom_to_default = false;
+struct ZoomEntryState {
+  il2cpp::GcHandle controller;
+  ZoomEntry::Gate gate;
+};
+std::unordered_map<NavigationZoom*, ZoomEntryState> zoom_entries;
+
+bool SystemZoomViewReady()
+{
+  auto* sections = Hub::Sections();
+  return sections && sections->CurrentSection() == SectionID::Navigation_System
+         && !sections->IsSectionChangeInProgress();
+}
+
+void ZoomFrame()
+{
+  // Hidden controllers need not receive Update or change depth. Remember leaving from the shared frame tick,
+  // so returning to their cached system view schedules the default even when their depth stays SolarSystem.
+  if (!SystemZoomViewReady())
+    for (auto& [controller, entry] : zoom_entries)
+      entry.gate.Observe(false);
+}
+
+ZoomEntryState& ObserveZoomDepth(NavigationZoom* zoom)
+{
+  std::erase_if(zoom_entries, [](const auto& item) { return !item.second.controller.Get(); });
+  auto [entry, inserted] = zoom_entries.try_emplace(zoom);
+  if (inserted)
+    entry->second.controller = il2cpp::GcHandle::Weak(zoom);
+  entry->second.gate.Observe(zoom->depth() == NodeDepth::SolarSystem, SystemZoomViewReady());
+  return entry->second;
+}
 
 // Presets and default_system_zoom are in zoom units: the camera distance's place in [minimum, maximum] mapped onto
 // [0, graphics.zoom], so they keep their meaning when the game moves the range. ZoomAtMouse(absolute) is the inverse.
@@ -159,17 +188,23 @@ void NavigationZoom_Update_Hook(auto original, NavigationZoom* _this)
   FleetLabelsFollowDepth(_this, _this->depth());
   KeepZoomRange(_this);
 
-  // The jump on entering a system is not keyboard input, so it happens even while a text field has focus.
-  bool run_game_update = true;
-  if (std::exchange(zoom_to_default, false))
-    ZoomAtMouse(_this, Config::Get().graphics.default_system_zoom, true);
-  else if (!unity::Key::IsInputFocused())
-    run_game_update = KeyboardZoom(_this);
-  if (!run_game_update)
+  // Initial and cached views can enter through SetDepth without SetViewParameters on macOS. Observe the actual
+  // depth in the existing update hook, including the first update of a controller already in a system.
+  const bool pending_default = ObserveZoomDepth(_this).gate.pending;
+  if (!pending_default && !unity::Key::IsInputFocused() && !KeyboardZoom(_this))
     return;
 
   original(_this);
   KeepZoomRange(_this);
+  // Native entry work can reset the distance and range in Update. Apply after it, using the same range that
+  // presets and the reset shortcut see once the system is ready. Keep the request while its camera is not ready.
+  auto& entry = ObserveZoomDepth(_this);
+  if (entry.gate.Consume(_this->sceneCamera() && _this->maximum() > _this->minimum())) {
+    const auto target = Config::Get().graphics.default_system_zoom;
+    ZoomAtMouse(_this, target, true);
+    spdlog::info("[Zoom] system entry default applied: requested={} actual={} distance={} range=[{}, {}]", target,
+                 CurrentZoom(_this), _this->Distance(), _this->minimum(), _this->maximum());
+  }
   FleetLabelsAfterZoom(_this);
 }
 
@@ -178,12 +213,14 @@ template <typename Original, typename... Args>
 void EnterDepth(Original original, NavigationZoom* zoom, NodeDepth depth, float radius, Args... args)
 {
   FleetLabelsFollowDepth(zoom, depth);
-  if (depth != NodeDepth::SolarSystem)
+  if (depth != NodeDepth::SolarSystem) {
+    ObserveZoomDepth(zoom).gate.pending = false;
     return original(zoom, args...);
+  }
   ApplyZoomRange(zoom, radius);
   original(zoom, args...);
   ApplyZoomRange(zoom, 0.0f);
-  zoom_to_default = true;
+  ObserveZoomDepth(zoom).gate.pending = true;
 }
 
 void NavigationZoom_SetViewParameters_Hook(auto original, NavigationZoom* _this, float radius, NodeDepth depth)
@@ -418,6 +455,6 @@ bool InstallInteriorZoom()
 }
 } // namespace
 
-const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom};
+const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom, ZoomFrame};
 const Feature kPan{"Pan", &Config::Patches::panhooks, InstallPan};
 const Feature kInteriorZoom{"InteriorZoom", &Config::Patches::interiorzoomhooks, InstallInteriorZoom};
