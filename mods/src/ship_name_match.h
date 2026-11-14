@@ -2,10 +2,11 @@
 
 #include "str_utils.h"
 
-#include <il2cpp/il2cpp-functions.h>
+#include <il2cpp/il2cpp.h>
 
 #include <prime/FleetPlayerData.h>
 #include <prime/HullSpec.h>
+#include <prime/LocaleTextContext.h>
 
 #include <string>
 #include <string_view>
@@ -77,47 +78,12 @@ inline std::string LocalizedShipName(int64_t loca_id)
 {
   if (loca_id <= 0) return {};
 
-  struct Resolved {
-    Il2CppClass*  ctx_cls  = nullptr;
-    const MethodInfo* ctor = nullptr;
-    Il2CppString* (*localise)(void*, bool, int32_t) = nullptr;
-  };
-
-  static const Resolved resolved = [] {
-    Resolved r{};
-
-    auto ctx_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "LocaleTextContext");
-    if (!ctx_helper.get_cls()) return r;
-
-    auto* ctor = ctx_helper.GetMethodInfo(".ctor", 2);
-    if (!ctor) return r;
-
-    auto localizer_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Localization", "Localizer");
-    auto* localise = localizer_helper.get_cls()
-                         ? localizer_helper.GetMethod<Il2CppString* (void*, bool, int32_t)>("Localise", 3)
-                         : static_cast<Il2CppString* (*)(void*, bool, int32_t)>(nullptr);
-    if (!localise) return r;
-
-    r.ctx_cls  = ctx_helper.get_cls();
-    r.ctor     = ctor;
-    r.localise = localise;
-    return r;
-  }();
-
-  if (!resolved.localise) return {};
-
   auto* id_str  = il2cpp_string_new(("ship_name_" + std::to_string(loca_id)).c_str());
   auto* cat_str = il2cpp_string_new("ships");
-  if (!id_str || !cat_str) return {};
-
-  void*            ctor_args[2] = {id_str, cat_str};
-  Il2CppException* exc          = nullptr;
-  auto*            ctx          = il2cpp_object_new(resolved.ctx_cls);
+  auto* ctx     = il2cpp::New<LocaleTextContext>(id_str, cat_str);
   if (!ctx) return {};
-  il2cpp_runtime_invoke(resolved.ctor, ctx, ctor_args, &exc);
-  if (exc) return {};
 
-  if (const auto* str = resolved.localise(ctx, false, 0); str != nullptr) {
+  if (const auto* str = Localizer::Localise(ctx); str != nullptr) {
     return to_string(str);
   }
   return {};
@@ -125,7 +91,7 @@ inline std::string LocalizedShipName(int64_t loca_id)
 
 inline std::string GameDisplayName(FleetPlayerData* ship)
 {
-  return ship && ship->Hull ? LocalizedShipName(ship->GetLocaId()) : std::string{};
+  return ship && ship->Hull() ? LocalizedShipName(ship->GetLocaId()) : std::string{};
 }
 
 inline std::vector<std::string> DisplayWords(FleetPlayerData* ship)

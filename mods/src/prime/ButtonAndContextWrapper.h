@@ -1,23 +1,12 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
 #include "GenericButtonWidget.h"
 
-struct ButtonAndContextWrapper {
-public:
-  __declspec(property(get = __get_Widget)) GenericButtonWidget* Widget;
+#include <il2cpp/il2cpp.h>
 
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ButtonAndContextWrapper");
-    return class_helper;
-  }
+struct ButtonAndContextWrapper : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "ButtonAndContextWrapper">;
 
-  GenericButtonWidget* __get_Widget()
-  {
-    static auto field = get_class_helper().GetField("Widget").offset();
-    return *(GenericButtonWidget**)((char*)this + field);
-  }
+  GenericButtonWidget* Widget()
+  { return Field<"Widget", GenericButtonWidget*>(); }
 };

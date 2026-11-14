@@ -3,39 +3,33 @@
 #include "GenericButtonWidget.h"
 #include "ObjectViewerBaseWidget.h"
 
-struct WaveDefenseObjectViewerWidget : public ObjectViewerBaseWidget<WaveDefenseObjectViewerWidget> {
-public:
-  static Il2CppArraySize* FindActiveViewers()
+struct WaveDefenseObjectViewerWidget : ObjectViewerBaseWidget {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ObjectViewer", "WaveDefenseObjectViewerWidget">;
+
+  // Every active viewer of this class in the loaded scenes.
+  static il2cpp::Array<WaveDefenseObjectViewerWidget*>* FindActiveViewers()
   {
-    static auto object_class = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Object");
-    static auto find = object_class.GetMethod<Il2CppArraySize*(void*)>("FindObjectsOfType", 1);
-    auto& viewer_class = get_class_helper();
-    return find && viewer_class.get_cls() ? find(viewer_class.GetType()) : nullptr;
+    using UnityObject = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
+    auto* type        = Class::TypeObject();
+    return type ? UnityObject::Call<"FindObjectsOfType", il2cpp::Array<WaveDefenseObjectViewerWidget*>*>(type)
+                : nullptr;
   }
+
+  GenericButtonWidget* primaryButton()
+  { return Field<"_primaryButton", GenericButtonWidget*>(); }
 
   void PressPrimaryButton()
   {
-    static auto field = get_class_helper().GetField("_primaryButton");
-    if (!field.get_info()) {
+    auto* widget = primaryButton();
+    if (!widget || !widget->isActiveAndEnabled()) {
       return;
     }
-    auto widget = *(GenericButtonWidget**)((char*)this + field.offset());
-    if (!widget || !widget->isActiveAndEnabled) {
-      return;
-    }
-    auto context = widget->Context;
-    auto listener = widget->SemaphoreListener;
-    if (context && context->Interactable && listener) {
-      if (auto button = listener->TheButton) {
+    auto* context  = widget->Context();
+    auto* listener = widget->SemaphoreListener();
+    if (context && context->Interactable() && listener) {
+      if (auto* button = listener->TheButton()) {
         button->Press();
       }
     }
-  }
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ObjectViewer", "WaveDefenseObjectViewerWidget");
-    return class_helper;
   }
 };

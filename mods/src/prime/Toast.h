@@ -1,6 +1,6 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
 enum ToastState {
   All                       = -1,
@@ -64,35 +64,16 @@ enum ToastState {
   GalacticAnomalySystemEntered  = 58,
 };
 
-struct Toast {
-public:
-  Il2CppArray* get_TextParameters()
-  {
-    static auto prop = get_class_helper().GetProperty("TextParameters");
-    return prop.GetRaw<Il2CppArray>(this);
-  }
+struct Toast : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.HUD", "Toast">;
 
+  il2cpp::Array<Il2CppObject*>* get_TextParameters()
+  { return Get<"TextParameters", il2cpp::Array<Il2CppObject*>*>(); }
+  // LocaleTextContext
   void* get_TextLocaleTextContext()
-  {
-    static auto prop = get_class_helper().GetProperty("TextLocaleTextContext");
-    return prop.GetRaw(this);
-  }
-
+  { return Get<"TextLocaleTextContext", void*>(); }
   Il2CppObject* get_Data()
-  {
-    return *reinterpret_cast<Il2CppObject**>(reinterpret_cast<char*>(this) + 0x38);
-  }
-
+  { return Get<"Data", Il2CppObject*>(); }
   int get_State()
-  {
-    static auto prop = get_class_helper().GetProperty("State");
-    return *prop.Get<ToastState>((void *)this);
-  }
-
-private:
-  static IL2CppClassHelper &get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.HUD", "Toast");
-    return class_helper;
-  }
+  { return Get<"State", ToastState>(); }
 };

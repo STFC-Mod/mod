@@ -1,3 +1,4 @@
+#include "patches/object_tracker.h"
 #include "config.h"
 #include "file.h"
 #include "patches/key.h"
@@ -11,7 +12,7 @@
 #include "ship_tile_click.h"
 
 #include <il2cpp/il2cpp-functions.h>
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
 #include <spdlog/spdlog.h>
 #include <toml++/toml.h>
@@ -34,7 +35,7 @@ bool IsShiftHeld()
 bool IsShipManagementScreenVisible()
 {
   for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
-    if (!controller || !controller->isActiveAndEnabled) continue;
+    if (!controller || !controller->isActiveAndEnabled()) continue;
 
     auto canvas = GetCanvasControllerFromComponent(controller);
     if (canvas && canvas->Visible()) return true;
@@ -94,7 +95,7 @@ const MethodInfo* FindMethodInHierarchy(Il2CppClass* cls, const char* name, int 
 void RefreshPinnedShipSortNow()
 {
   for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
-    if (!controller || !controller->isActiveAndEnabled) continue;
+    if (!controller || !controller->isActiveAndEnabled()) continue;
 
     auto canvas = GetCanvasControllerFromComponent(controller);
     if (!canvas || !canvas->Visible()) continue;
@@ -104,9 +105,9 @@ void RefreshPinnedShipSortNow()
     context->Sort();
 
     for (auto* widget : ObjectFinder<AssignShipsWidget>::GetAll()) {
-      if (!widget || !widget->isActiveAndEnabled) continue;
+      if (!widget || !widget->isActiveAndEnabled()) continue;
 
-      auto* list = widget->_selectableList;
+      auto* list = widget->selectableList();
       if (!list) continue;
 
       auto* list_cls = il2cpp_object_get_class(reinterpret_cast<Il2CppObject*>(list));

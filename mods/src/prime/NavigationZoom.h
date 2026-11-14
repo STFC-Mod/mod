@@ -1,265 +1,95 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
-#include "Vector2.h"
-#include "Vector3.h"
-
 #include "Camera.h"
 #include "NavigationPan.h"
+#include "Vector2.h"
 #include "ZoomLevels.h"
 
-enum class NodeDepth {
+#include <il2cpp/il2cpp.h>
+
+#include <cstdint>
+
+enum class NodeDepth : int32_t {
   Galaxy       = 1,
   SolarSystem  = 2,
   PlanetSystem = 4,
   Starbase     = 8,
 };
 
-struct NavigationZoom {
-public:
+struct NavigationZoom : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom">;
+
   void SetViewParameters(float radius, NodeDepth depth)
-  {
-    static auto SetViewParameters =
-        get_class_helper().GetMethod<void(NavigationZoom*, float, NodeDepth)>("SetViewParameters");
-    SetViewParameters(this, radius, depth);
-  }
-
+  { Call<"SetViewParameters">(radius, depth); }
   void ZoomCameraAtWorldPoint()
-  {
-    static auto ZoomCameraAtWorldPoint = get_class_helper().GetMethod<void(NavigationZoom*)>("ZoomCameraAtWorldPoint");
-    ZoomCameraAtWorldPoint(this);
-  }
+  { Call<"ZoomCameraAtWorldPoint">(); }
 
-  __declspec(property(get = __get_Distance, put = __set_Distance)) float Distance;
+  float Distance()
+  { return Get<"Distance", float>(); }
+  void SetDistance(float value)
+  { Set<"Distance">(value); }
+  float NormalizedZoom()
+  { return Get<"NormalizedZoom", float>(); }
 
-  __declspec(property(get = __get__depth, put = __set_depth)) NodeDepth _depth;
-  //
-  __declspec(property(get = __get__storedZoomDistanceSystem,
-                      put = __set__storedZoomDistanceSystem)) float _storedZoomDistanceSystem;
-  __declspec(property(get = __get__systemDefaultZoomRatio,
-                      put = __set__systemDefaultZoomRatio)) float _systemDefaultZoomRatio;
-  __declspec(property(get = __get__actualDistance, put = __set__actualDistance)) float _actualDistance;
-  __declspec(property(get = __get__zoomtotal, put = __set__zoomtotal)) float _zoomtotal;
-  __declspec(property(get = __get__minimum, put = __set__minimum)) float _minimum;
-  __declspec(property(get = __get__maximum, put = __set__maximum)) float _maximum;
-  __declspec(property(get = __get__zoomLevel)) ZoomLevels _zoomLevel;
-  __declspec(property(get = __get_NormalizedZoom)) float NormalizedZoom;
-  __declspec(property(get = __get__zoomDelta, put = __set__zoomDelta)) float _zoomDelta;
-  __declspec(property(get = __get__viewRadius, put = __set__viewRadius)) float _viewRadius;
-  __declspec(property(get = __get__lastZoomDelta, put = __set__lastZoomDelta)) float _lastZoomDelta;
-  __declspec(property(get = __get__zoomLocation, put = __set__zoomLocation)) vec2 _zoomLocation;
-  __declspec(property(get = __get__worldPoint, put = __set__worldPoint)) vec3 _worldPoint;
-  __declspec(property(get = __get__farRatioSystemNormal,
-                      put = __set__farRatioSystemNormal)) float _farRatioSystemNormal;
-  __declspec(property(get = __get__farRatioSystemExtended,
-                      put = __set__farRatioSystemExtended)) float _farRatioSystemExtended;
+  NodeDepth depth()
+  { return Field<"_depth", NodeDepth>(); }
+  void SetDepth(NodeDepth value)
+  { SetField<"_depth">(value); }
+  ZoomLevels zoomLevel()
+  { return Field<"_zoomLevel", ZoomLevels>(); }
+  Camera* sceneCamera()
+  { return Field<"_sceneCamera", Camera*>(); }
 
-  __declspec(property(get = __get__sceneCamera)) Camera* _sceneCamera;
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "NavigationZoom");
-    return class_helper;
-  }
-
-public:
-  float __get_Distance()
-  {
-    static auto field = get_class_helper().GetProperty("Distance");
-    return *field.Get<float>(this);
-  }
-
-  void __set_Distance(float depth)
-  {
-    static auto field = get_class_helper().GetProperty("Distance");
-    field.SetRaw(this, depth);
-  }
-
-  NodeDepth __get__depth()
-  {
-    static auto field = get_class_helper().GetField("_depth");
-    return *(NodeDepth*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set_depth(NodeDepth depth)
-  {
-    static auto field                               = get_class_helper().GetField("_depth");
-    *(NodeDepth*)((ptrdiff_t)this + field.offset()) = depth;
-  }
-
-  float __get__viewRadius()
-  {
-    static auto field = get_class_helper().GetField("_viewRadius");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__viewRadius(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_viewRadius");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__zoomDelta()
-  {
-    static auto field = get_class_helper().GetField("_zoomDelta");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__zoomDelta(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_zoomDelta");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__minimum()
-  {
-    static auto field = get_class_helper().GetField("_minimum");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__minimum(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_minimum");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__maximum()
-  {
-    static auto field = get_class_helper().GetField("_maximum");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__maximum(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_maximum");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  ZoomLevels __get__zoomLevel()
-  {
-    static auto field = get_class_helper().GetField("_zoomLevel");
-    return *(ZoomLevels*)((ptrdiff_t)this + field.offset());
-  }
-
-  float __get_NormalizedZoom()
-  {
-    static auto field = get_class_helper().GetProperty("NormalizedZoom");
-    return *field.Get<float>(this);
-  }
-
-  float __get__actualDistance()
-  {
-    static auto field = get_class_helper().GetField("_actualDistance");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__actualDistance(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_actualDistance");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__storedZoomDistanceSystem()
-  {
-    static auto field = get_class_helper().GetField("_storedZoomDistanceSystem");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__storedZoomDistanceSystem(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_storedZoomDistanceSystem");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__systemDefaultZoomRatio()
-  {
-    static auto field = get_class_helper().GetField("_systemDefaultZoomRatio");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__systemDefaultZoomRatio(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_systemDefaultZoomRatio");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__zoomtotal()
-  {
-    static auto field = get_class_helper().GetField("_zoomtotal");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__zoomtotal(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_zoomtotal");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  float __get__lastZoomDelta()
-  {
-    static auto field = get_class_helper().GetField("_lastZoomDelta");
-    return *(float*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__lastZoomDelta(float delta)
-  {
-    static auto field                           = get_class_helper().GetField("_lastZoomDelta");
-    *(float*)((ptrdiff_t)this + field.offset()) = delta;
-  }
-
-  vec2 __get__zoomLocation()
-  {
-    static auto field = get_class_helper().GetField("_zoomLocation");
-    return *(vec2*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__zoomLocation(vec2 v)
-  {
-    static auto field                          = get_class_helper().GetField("_zoomLocation");
-    *(vec2*)((ptrdiff_t)this + field.offset()) = v;
-  }
-
-  vec3 __get__worldPoint()
-  {
-    static auto field = get_class_helper().GetField("_worldPoint");
-    return *(vec3*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__worldPoint(vec3 v)
-  {
-    static auto field                          = get_class_helper().GetField("_worldPoint");
-    *(vec3*)((ptrdiff_t)this + field.offset()) = v;
-  }
-
-  Camera* __get__sceneCamera()
-  {
-    static auto field = get_class_helper().GetField("_sceneCamera");
-    return *(Camera**)((ptrdiff_t)this + field.offset());
-  }
-
-  float __get__farRatioSystemNormal()
-  {
-    static auto field = get_class_helper().GetField("_farRatioSystemNormal").offset();
-    return *(float*)((ptrdiff_t)this + field);
-  }
-
-  void __set__farRatioSystemNormal(float v)
-  {
-    static auto field                  = get_class_helper().GetField("_farRatioSystemNormal").offset();
-    *(float*)((ptrdiff_t)this + field) = v;
-  }
-
-  float __get__farRatioSystemExtended()
-  {
-    static auto field = get_class_helper().GetField("_farRatioSystemExtended").offset();
-    return *(float*)((ptrdiff_t)this + field);
-  }
-
-  void __set__farRatioSystemExtended(float v)
-  {
-    static auto field                  = get_class_helper().GetField("_farRatioSystemExtended").offset();
-    *(float*)((ptrdiff_t)this + field) = v;
-  }
+  float storedZoomDistanceSystem()
+  { return Field<"_storedZoomDistanceSystem", float>(); }
+  void SetStoredZoomDistanceSystem(float value)
+  { SetField<"_storedZoomDistanceSystem">(value); }
+  float systemDefaultZoomRatio()
+  { return Field<"_systemDefaultZoomRatio", float>(); }
+  void SetSystemDefaultZoomRatio(float value)
+  { SetField<"_systemDefaultZoomRatio">(value); }
+  float actualDistance()
+  { return Field<"_actualDistance", float>(); }
+  void SetActualDistance(float value)
+  { SetField<"_actualDistance">(value); }
+  float zoomtotal()
+  { return Field<"_zoomtotal", float>(); }
+  void SetZoomtotal(float value)
+  { SetField<"_zoomtotal">(value); }
+  float minimum()
+  { return Field<"_minimum", float>(); }
+  void SetMinimum(float value)
+  { SetField<"_minimum">(value); }
+  float maximum()
+  { return Field<"_maximum", float>(); }
+  void SetMaximum(float value)
+  { SetField<"_maximum">(value); }
+  float zoomDelta()
+  { return Field<"_zoomDelta", float>(); }
+  void SetZoomDelta(float value)
+  { SetField<"_zoomDelta">(value); }
+  float viewRadius()
+  { return Field<"_viewRadius", float>(); }
+  void SetViewRadius(float value)
+  { SetField<"_viewRadius">(value); }
+  float lastZoomDelta()
+  { return Field<"_lastZoomDelta", float>(); }
+  void SetLastZoomDelta(float value)
+  { SetField<"_lastZoomDelta">(value); }
+  vec2 zoomLocation()
+  { return Field<"_zoomLocation", vec2>(); }
+  void SetZoomLocation(vec2 value)
+  { SetField<"_zoomLocation">(value); }
+  vec3 worldPoint()
+  { return Field<"_worldPoint", vec3>(); }
+  void SetWorldPoint(vec3 value)
+  { SetField<"_worldPoint">(value); }
+  float farRatioSystemNormal()
+  { return Field<"_farRatioSystemNormal", float>(); }
+  void SetFarRatioSystemNormal(float value)
+  { SetField<"_farRatioSystemNormal">(value); }
+  float farRatioSystemExtended()
+  { return Field<"_farRatioSystemExtended", float>(); }
+  void SetFarRatioSystemExtended(float value)
+  { SetField<"_farRatioSystemExtended">(value); }
 };

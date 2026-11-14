@@ -2,9 +2,10 @@
 
 #include "str_utils.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <prime/BattleResultHeader.h>
 #include <prime/HullSpec.h>
+#include <prime/LocaleTextContext.h>
 #include <prime/SpecService.h>
 #include <prime/Toast.h>
 #include <prime/UserProfile.h>
@@ -42,94 +43,31 @@ static bool seh_call(Fn fn)
 // ---------------------------------------------------------------------------
 namespace {
 
-struct LocaleCache {
-  Il2CppClass*        ltc_class           = nullptr; // LocaleTextContext
-  const MethodInfo*   ltc_ctor            = nullptr; // .ctor(string, string)
-  const MethodInfo*   ltc_apply_id_params = nullptr; // ApplyIdentifierParameters(object[])
-  const MethodInfo*   locale_localize     = nullptr; // LocaleUtilities.Localize(LTC, bool, bool)
-  Il2CppClass*        object_array_class  = nullptr; // System.Object[]
-  Il2CppClass*        int64_class         = nullptr; // System.Int64
-
-  bool ready() const { return ltc_class && ltc_ctor && ltc_apply_id_params && locale_localize && object_array_class; }
-};
-
-LocaleCache s_locale;
-
-void ensure_locale_cache()
-{
-  if (s_locale.ltc_class) return;
-
-  auto ltc = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "LocaleTextContext");
-  if (ltc.isValidHelper()) {
-    s_locale.ltc_class           = ltc.get_cls();
-    s_locale.ltc_ctor            = ltc.GetMethodInfo(".ctor", 2);
-    s_locale.ltc_apply_id_params = ltc.GetMethodInfo("ApplyIdentifierParameters", 1);
-  }
-  if (!s_locale.ltc_class || !s_locale.ltc_ctor || !s_locale.ltc_apply_id_params)
-    spdlog::warn("[Notify] Could not resolve LocaleTextContext methods");
-
-  auto lu = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Localization", "LocaleUtilities");
-  if (lu.isValidHelper()) {
-    auto* cls = lu.get_cls();
-    if (cls) {
-      void* iter = nullptr;
-      while (auto* m = il2cpp_class_get_methods(cls, &iter)) {
-        if (std::string_view(il2cpp_method_get_name(m)) == "Localize" &&
-            il2cpp_method_get_param_count(m) == 3) {
-          s_locale.locale_localize = m;
-          break;
-        }
-      }
-    }
-  }
-  if (!s_locale.locale_localize)
-    spdlog::warn("[Notify] Could not resolve LocaleUtilities.Localize — falling back to parse_hull_key");
-
-  auto obj = il2cpp_get_class_helper("mscorlib", "System", "Object");
-  if (obj.isValidHelper())
-    s_locale.object_array_class = il2cpp_array_class_get(obj.get_cls(), 1);
-
-  auto i64 = il2cpp_get_class_helper("mscorlib", "System", "Int64");
-  if (i64.isValidHelper())
-    s_locale.int64_class = i64.get_cls();
-}
+using SystemObject = il2cpp::Class<"mscorlib", "System", "Object">;
+using SystemInt64  = il2cpp::Class<"mscorlib", "System", "Int64">;
 
 // Create a LocaleTextContext(identifier, category), apply the given parameter,
 // and call LocaleUtilities.Localize. Returns empty string on failure.
 std::string localize(const char* identifier, const char* category, Il2CppObject* param)
 {
-  ensure_locale_cache();
-  if (!s_locale.ready() || !param) return {};
+  auto* object_class = SystemObject::Raw();
+  if (!object_class || !param) return {};
 
   std::string result;
   if (!seh_call([&] {
         auto* idStr  = il2cpp_string_new(identifier);
         auto* catStr = il2cpp_string_new(category);
-        if (!idStr || !catStr) return;
 
-        auto* arr = il2cpp_array_new_specific(s_locale.object_array_class, 1);
+        auto* arr = il2cpp::Array<Il2CppObject*>::New(object_class, 1);
         if (!arr) return;
-        reinterpret_cast<Il2CppObject**>(reinterpret_cast<Il2CppArraySize*>(arr)->vector)[0] = param;
+        arr->Set(0, param);
 
-        auto* ltc = il2cpp_object_new(s_locale.ltc_class);
+        auto* ltc = il2cpp::New<LocaleTextContext>(idStr, catStr);
         if (!ltc) return;
 
-        void* ctorParams[2] = {idStr, catStr};
-        Il2CppException* exc = nullptr;
-        il2cpp_runtime_invoke(s_locale.ltc_ctor, ltc, ctorParams, &exc);
-        if (exc) return;
-
-        void* applyParams[1] = {arr};
-        exc = nullptr;
-        il2cpp_runtime_invoke(s_locale.ltc_apply_id_params, ltc, applyParams, &exc);
-        if (exc) return;
-
-        bool localText = false, invariant = false;
-        void* locParams[3] = {ltc, &localText, &invariant};
-        exc = nullptr;
-        auto* ret = il2cpp_runtime_invoke(s_locale.locale_localize, nullptr, locParams, &exc);
-        if (exc || !ret) return;
-        result = to_string(reinterpret_cast<Il2CppString*>(ret));
+        ltc->ApplyIdentifierParameters(arr);
+        if (auto* ret = LocaleUtilities::Localize(ltc, false, false))
+          result = to_string(ret);
       }))
     spdlog::warn("[Notify] SEH: localize crashed for \"{}/{}\"", identifier, category);
   return result;
@@ -138,9 +76,8 @@ std::string localize(const char* identifier, const char* category, Il2CppObject*
 // Box an int64 as Il2CppObject for use as a localization parameter.
 Il2CppObject* box_int64(int64_t value)
 {
-  ensure_locale_cache();
-  if (!s_locale.int64_class) return nullptr;
-  return il2cpp_value_box(s_locale.int64_class, &value);
+  auto* int64_class = SystemInt64::Raw();
+  return int64_class ? il2cpp_value_box(int64_class, &value) : nullptr;
 }
 
 } // namespace
@@ -197,7 +134,7 @@ static std::string localize_hull_name(int64_t locaId)
 static std::string localize_hull_name(const std::string& locaStringId)
 {
   auto* strObj = il2cpp_string_new(locaStringId.c_str());
-  return strObj ? localize("ship_name_{0}", "ships", reinterpret_cast<Il2CppObject*>(strObj)) : std::string{};
+  return localize("ship_name_{0}", "ships", reinterpret_cast<Il2CppObject*>(strObj));
 }
 
 // Enemy commander name via locaId: "marauder_name_only_{0}" / "navigation"
@@ -210,24 +147,21 @@ static std::string localize_enemy_name(int64_t locaId)
 // ---------------------------------------------------------------------------
 // Resolve hull ID → display name via SpecService + game localization
 // ---------------------------------------------------------------------------
-static std::string resolve_hull_name(BattleResultHeader* brh, long hullId)
+static std::string resolve_hull_name(BattleResultHeader* brh, int64_t hullId)
 {
   if (hullId == 0) return "";
 
-  auto* specSvc = reinterpret_cast<SpecService*>(brh->get_SpecService());
+  auto* specSvc = static_cast<SpecService*>(brh->get_SpecService());
   if (!specSvc) return fmt::format("Hull#{}", hullId);
 
   auto* hull = specSvc->GetHull(hullId);
   if (!hull) return fmt::format("Hull#{}", hullId);
 
-  // Extract IdRefs from HullSpec (offset 0x90)
-  auto* idRefs = *reinterpret_cast<void**>(reinterpret_cast<char*>(hull) + 0x90);
   std::string locaStringId;
   int64_t locaId = 0;
-  if (idRefs) {
-    auto* locaStrPtr = *reinterpret_cast<Il2CppString**>(reinterpret_cast<char*>(idRefs) + 0x10);
-    if (locaStrPtr) locaStringId = to_string(locaStrPtr);
-    locaId = *reinterpret_cast<int64_t*>(reinterpret_cast<char*>(idRefs) + 0x40);
+  if (auto* idRefs = hull->idRefs()) {
+    if (auto* locaStrPtr = idRefs->locaStringId()) locaStringId = to_string(locaStrPtr);
+    locaId = idRefs->locaId();
   }
 
   // Try numeric locaId first, then string locaStringId, then manual parse
@@ -242,7 +176,7 @@ static std::string resolve_hull_name(BattleResultHeader* brh, long hullId)
       return localized;
   }
 
-  auto* nameStr = hull->Name;
+  auto* nameStr = hull->Name();
   if (!nameStr) return fmt::format("Hull#{}", hullId);
   return parse_hull_key(to_string(nameStr));
 }
@@ -302,23 +236,24 @@ static BattleSummaryData build_battle_data(Il2CppObject* data)
   BattleSummaryData result;
   if (!data) return result;
 
-  auto* brh = reinterpret_cast<BattleResultHeader*>(data);
+  auto* brh = static_cast<il2cpp::Object*>(data)->As<BattleResultHeader>();
+  if (!brh) return result;
 
   if (!seh_call([&] {
-        auto* profile = reinterpret_cast<UserProfile*>(brh->get_PlayerUserProfile());
-        if (profile && profile->Name)
-          result.playerName = to_string(profile->Name);
+        auto* profile = static_cast<UserProfile*>(brh->get_PlayerUserProfile());
+        if (profile && profile->Name())
+          result.playerName = to_string(profile->Name());
       }))
     spdlog::warn("[Notify] SEH: get_PlayerUserProfile crashed");
 
   if (!seh_call([&] {
-        auto* profile = reinterpret_cast<UserProfile*>(brh->get_EnemyUserProfile());
+        auto* profile = static_cast<UserProfile*>(brh->get_EnemyUserProfile());
         if (profile) {
-          if (profile->Name)
-            result.enemyName = to_string(profile->Name);
+          if (profile->Name())
+            result.enemyName = to_string(profile->Name());
           // NPC/marauder profiles have empty names — localize via LocaId
           if (result.enemyName.empty()) {
-            auto locaId = profile->LocaId;
+            auto locaId = profile->LocaId();
             if (locaId != 0) {
               auto localized = localize_enemy_name(locaId);
               if (!localized.empty() && localized != "Unknown")
@@ -343,50 +278,45 @@ static BattleSummaryData build_battle_data(Il2CppObject* data)
     spdlog::warn("[Notify] SEH: get_BattleType crashed");
 
   if (!seh_call([&] {
-        result.playerShip = normalize_ship_name(resolve_hull_name(brh, brh->PlayerShipHullId));
+        result.playerShip = normalize_ship_name(resolve_hull_name(brh, brh->PlayerShipHullId()));
       }))
     spdlog::warn("[Notify] SEH: PlayerShipHullId crashed");
 
   if (!seh_call([&] {
-        result.enemyShip = normalize_ship_name(resolve_hull_name(brh, brh->EnemyShipHullId));
+        result.enemyShip = normalize_ship_name(resolve_hull_name(brh, brh->EnemyShipHullId()));
       }))
     spdlog::warn("[Notify] SEH: EnemyShipHullId crashed");
 
   return result;
 }
 
-template <typename T>
-static T read_instance_field(Il2CppObject* obj, const char* name, T fallback = {})
+// Toast data types vary by state, so fields resolve on the receiver's runtime class.
+template <il2cpp::Name N, typename T>
+static T read_instance_field(Il2CppObject* obj)
 {
-  if (!obj) return fallback;
-  auto* field = il2cpp_class_get_field_from_name(il2cpp_object_get_class(obj), name);
-  if (!field) return fallback;
-
-  T value = fallback;
-  il2cpp_field_get_value(obj, field, &value);
-  return value;
+  return obj ? static_cast<il2cpp::Object*>(obj)->Field<N, T>() : T{};
 }
 
 static std::string build_armada_created_body(Il2CppObject* data)
 {
   std::string result;
   if (!seh_call([&] {
-        auto* attack   = read_instance_field<Il2CppObject*>(data, "ArmadaAttack");
-        auto* alliance = read_instance_field<Il2CppObject*>(data, "Alliance");
-        auto* owner    = read_instance_field<Il2CppObject*>(attack, "<Owner>k__BackingField");
-        auto* target   = read_instance_field<Il2CppObject*>(attack, "<TargetUserProfile>k__BackingField");
+        auto* attack   = read_instance_field<"ArmadaAttack", Il2CppObject*>(data);
+        auto* alliance = read_instance_field<"Alliance", Il2CppObject*>(data);
+        auto* owner    = read_instance_field<"<Owner>k__BackingField", Il2CppObject*>(attack);
+        auto* target   = read_instance_field<"<TargetUserProfile>k__BackingField", Il2CppObject*>(attack);
 
-        auto* tag_value   = read_instance_field<Il2CppString*>(alliance, "tag_");
-        auto* owner_value = read_instance_field<Il2CppString*>(owner, "name_");
-        auto* target_value = read_instance_field<Il2CppString*>(target, "name_");
+        auto* tag_value   = read_instance_field<"tag_", Il2CppString*>(alliance);
+        auto* owner_value = read_instance_field<"name_", Il2CppString*>(owner);
+        auto* target_value = read_instance_field<"name_", Il2CppString*>(target);
 
         auto tag         = tag_value ? to_string(tag_value) : std::string{};
         auto owner_name  = owner_value ? to_string(owner_value) : std::string{};
         auto target_name = target_value ? to_string(target_value) : std::string{};
-        auto target_level = read_instance_field<int32_t>(attack, "<TargetLevel>k__BackingField");
+        auto target_level = read_instance_field<"<TargetLevel>k__BackingField", int32_t>(attack);
 
         if (target_name.empty()) {
-          auto loca_id = read_instance_field<int64_t>(target, "_locaId");
+          auto loca_id = read_instance_field<"_locaId", int64_t>(target);
           if (loca_id != 0) target_name = localize_enemy_name(loca_id);
         }
 

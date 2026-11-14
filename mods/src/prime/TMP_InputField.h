@@ -1,50 +1,19 @@
 #pragma once
 
-#include "GameObject.h"
+#include <il2cpp/il2cpp.h>
 
-class TMP_InputField
-{
-public:
-  __declspec(property(get = __get_isFocused)) bool isFocused;
+struct TMP_InputField : il2cpp::Object {
+  using Class = il2cpp::Class<"Unity.TextMeshPro", "TMPro", "TMP_InputField">;
+
+  bool isFocused()
+  { return Get<"isFocused", bool>(); }
 
   void ActivateInputField()
-  {
-    static auto ActivateInputField = get_class_helper().GetMethod<void(TMP_InputField*)>("ActivateInputField");
-    ActivateInputField(this);
-  }
-
-  void DeactivateInputField()
-  {
-    static auto DeactivateInputField = get_class_helper().GetMethod<void(TMP_InputField*)>("DeactivateInputField");
-    DeactivateInputField(this);
-  }
-
+  { Call<"ActivateInputField">(); }
+  void DeactivateInputField(bool clearSelection = false)
+  { Call<"DeactivateInputField">(clearSelection); }
   void SendOnFocusLost()
-  {
-    static auto SendOnFocusLost = get_class_helper().GetMethod<void(TMP_InputField*)>("SendOnFocusLost");
-    SendOnFocusLost(this);
-  }
-
+  { Call<"SendOnFocusLost">(); }
   void SendOnFocus()
-  {
-    static auto SendOnFocus = get_class_helper().GetMethod<void(TMP_InputField*)>("SendOnFocus");
-    SendOnFocus(this);
-  }
-
-private:
-  friend class ObjectFinder<TMP_InputField>;
-  friend struct GameObject;
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Unity.TextMeshPro", "TMPro", "TMP_InputField");
-    return class_helper;
-  }
-
-public:
-  bool __get_isFocused()
-  {
-    static auto field = get_class_helper().GetProperty("isFocused");
-    const auto* focused = field.Get<bool>(this);
-    return focused && *focused;
-  }
+  { Call<"SendOnFocus">(); }
 };

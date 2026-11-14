@@ -3,21 +3,21 @@
 #include "prime/GenericButtonContext.h"
 
 #include "config.h"
-#include "errormsg.h"
 
 #include <spud/detour.h>
 #include <tuple>
 #include <chrono>
 #include <cmath>
 #include <spdlog/spdlog.h>
-#include "il2cpp/il2cpp_checked.h"
+#include <stdexcept>
 #include "patches/chat_startup.h"
 #include "patches/screen_update_hook.h"
 #include "prime/Hub.h"
+#include "prime/ScreenManager.h"
 
 namespace
 {
-Il2CppGCHandle preview_handle = {};
+il2cpp::GcHandle preview_handle;
 ChatStartup::Gate startup;
 bool width_applied = false;
 bool startup_failed = false;
@@ -26,11 +26,9 @@ void ObserveChatPreview(ChatPreviewController* preview)
 {
   if (!Config::Get().auto_open_chat)
     return;
-  if (preview_handle && il2cpp_gchandle_get_target(preview_handle) == reinterpret_cast<Il2CppObject*>(preview))
+  if (preview_handle && preview_handle.Get() == preview)
     return;
-  if (preview_handle)
-    il2cpp_gchandle_free(preview_handle);
-  preview_handle = il2cpp_gchandle_new_weakref(reinterpret_cast<Il2CppObject*>(preview), false);
+  preview_handle = il2cpp::GcHandle::Weak(preview);
   startup.ready_since = -1;
   spdlog::info("[ChatOptions] observed chat preview");
 }
@@ -45,7 +43,7 @@ void UpdateChatOptions()
     auto* sections = Hub::get_SectionManager();
     if (!sections)
       return;
-    const auto section = sections->CurrentSection;
+    const auto section = sections->CurrentSection();
     if (section == SectionID::Login || section == SectionID::AppInit) {
       startup = {};
       width_applied = false;
@@ -56,35 +54,28 @@ void UpdateChatOptions()
     }
     if ((!Config::Get().auto_open_chat || startup.completed) && (!custom_width || width_applied))
       return;
-    auto* manager = reinterpret_cast<Il2CppObject*>(ChatManager::Instance());
+    auto* manager = ChatManager::Instance();
     if (!manager)
       return;
-    const bool side_open = Il2CppChecked::Boolean(Il2CppChecked::Invoke(manager, "get_IsSideChatOpen"));
+    const bool side_open = manager->IsSideChatOpen();
     float width = configured_width;
     // Apply once per login, then leave manual resizing to the game.
     if (side_open && !width_applied && std::isfinite(width) && width > 0) {
-      static auto screen_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ScreenManager");
-      static auto singleton = screen_helper.GetParent("MonoSingleton`1");
-      auto* screen = singleton.GetProperty("Instance").GetRaw<Il2CppObject>(nullptr);
-      auto* frame = Il2CppChecked::ReferenceField(screen, "_frameManager", "UIFrameManager");
-      if (frame) {
-        auto* method = IL2CppClassHelper(frame->klass).GetMethodInfo("ResizeSideFrame", 1);
-        if (!method || !method->parameters || method->parameters[0]->type != IL2CPP_TYPE_R4)
-          throw std::runtime_error("side frame resize signature changed");
-        void* args[] = {&width};
-        if (!Il2CppRuntime::TryInvoke(method, frame, args))
+      auto* screen = ScreenManager::Instance();
+      if (auto* frame = screen ? screen->frameManager() : nullptr) {
+        if (!frame->ResizeSideFrame(width))
           throw std::runtime_error("side frame resize failed");
         width_applied = true;
       }
     }
     if (!Config::Get().auto_open_chat || startup.completed)
       return;
-    auto* preview = preview_handle ? il2cpp_gchandle_get_target(preview_handle) : nullptr;
+    auto* preview = preview_handle.Get<ChatPreviewController>();
     const bool station = section == SectionID::Starbase_Interior || section == SectionID::Starbase_Exterior;
     // Section completion is set by the game after its visibility refresh.
-    const bool section_ready = preview && Il2CppChecked::BooleanField(preview, "_isSectionChangedCompleted");
-    const bool context_ready = Il2CppChecked::BooleanField(manager, "_isContextInitialised");
-    const bool side_allowed = Il2CppChecked::Boolean(Il2CppChecked::Invoke(manager, "get_IsSideChatAllowed"));
+    const bool section_ready = preview && preview->isSectionChangedCompleted();
+    const bool context_ready = manager->isContextInitialised();
+    const bool side_allowed = manager->IsSideChatAllowed();
     const bool ready = station && section_ready && context_ready && side_allowed;
     // Log changes only, so a pending startup identifies its exact blocking gate.
     const int status = (station ? 1 : 0) | (preview ? 2 : 0) | (section_ready ? 4 : 0)
@@ -101,7 +92,7 @@ void UpdateChatOptions()
     const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (startup.Tick(ready, side_open || Hub::IsInChat(), now)) {
       spdlog::info("[ChatOptions] readiness settled; opening alliance side chat");
-      reinterpret_cast<ChatManager*>(manager)->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
+      manager->OpenChannel(ChatChannelCategory::Alliance, ChatViewMode::Side);
     } else if (startup.completed) {
       spdlog::info("[ChatOptions] startup consumed by existing/manual chat");
     }
@@ -138,36 +129,30 @@ void DisableButtons(FullScreenChatViewController* _this)
 
   const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
 
-  const auto viewController = _this->_categoriesTabBarViewController;
+  const auto viewController = _this->categoriesTabBarViewController();
   if (!viewController) {
     return;
   }
 
-  const auto tabBar = viewController->_tabBar;
+  const auto tabBar = viewController->tabBar();
   if (!tabBar) {
     return;
   }
 
-  if (const auto list = tabBar->_listContainer; !list) {
-    return;
-  }
-
-  const auto listData = tabBar->_data;
+  const auto listData = tabBar->data();
   if (!listData) {
     return;
   }
 
   if (disableGalaxyChat) {
-    if (const auto elm = listData->Get(galaxyChatIdx)) {
-      const auto button = reinterpret_cast<GenericButtonContext*>(elm);
-      button->Interactable = false;
+    if (const auto elm = (*listData)[galaxyChatIdx]) {
+      static_cast<GenericButtonContext*>(elm)->SetInteractable(false);
     }
   }
 
   if (disableVeilChat && veilChatIdx != -1) {
-    if (const auto elm = listData->Get(veilChatIdx)) {
-      const auto button = reinterpret_cast<GenericButtonContext*>(elm);
-      button->Interactable = false;
+    if (const auto elm = (*listData)[veilChatIdx]) {
+      static_cast<GenericButtonContext*>(elm)->SetInteractable(false);
     }
   }
 }
@@ -197,10 +182,10 @@ void ChatPreviewController_AboutToShow(auto original, ChatPreviewController* _th
 
   if (Config::Get().disable_galaxy_chat || Config::Get().disable_veil_chat) {
     const auto allianceChatIdx = std::get<3>(GetChatTabIndices());
-    _this->_focusedPanel       = ChatChannelCategory::Alliance;
+    _this->SetFocusedPanel(ChatChannelCategory::Alliance);
 
-    if (_this->_swipeScroller->_currentContentIndex != allianceChatIdx) {
-      _this->_swipeScroller->FocusOnInstantly(allianceChatIdx);
+    if (_this->swipeScroller()->currentContentIndex() != allianceChatIdx) {
+      _this->swipeScroller()->FocusOnInstantly(allianceChatIdx);
     }
   }
 }
@@ -218,11 +203,11 @@ void ChatPreviewController_OnPanelFocused(auto original, ChatPreviewController* 
 
   const auto [cadetChatIdx, galaxyChatIdx, veilChatIdx, allianceChatIdx] = GetChatTabIndices();
   if (disableGalaxyChat || (veilChatIdx != -1 && disableVeilChat)) {
-    _this->_focusedPanel = ChatChannelCategory::Alliance;
+    _this->SetFocusedPanel(ChatChannelCategory::Alliance);
     original(_this, allianceChatIdx);
 
-    if (_this->_swipeScroller->_currentContentIndex != allianceChatIdx) {
-      _this->_swipeScroller->FocusOnInstantly(allianceChatIdx);
+    if (_this->swipeScroller()->currentContentIndex() != allianceChatIdx) {
+      _this->swipeScroller()->FocusOnInstantly(allianceChatIdx);
     }
 
     return;
@@ -252,50 +237,17 @@ void InstallChatPatches()
   if (install_screen_manager_update_hook() && register_screen_manager_update_callback(UpdateChatOptions))
     spdlog::info("[ChatOptions] lifecycle v2 registered: auto_open={} width={}",
                  Config::Get().auto_open_chat, Config::Get().default_chat_width);
-  if (auto fullscreen_controller =
-          il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Chat", "FullScreenChatViewController");
-      !fullscreen_controller.isValidHelper()) {
-    ErrorMsg::MissingHelper("Chat", "FullScreenChatViewController");
-  } else {
-    if (const auto ptr = fullscreen_controller.GetMethod("AboutToShow"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("FullScreenChatViewController", "AboutToShow");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, FullScreenChatViewController_AboutToShow);
-    }
+  if (auto m = FullScreenChatViewController::Class::Method("AboutToShow"))
+    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_AboutToShow);
+  if (auto m = FullScreenChatViewController::Class::Method("OnDidChangeSelectedTab"))
+    SPUD_STATIC_DETOUR(m.Pointer(), FullScreenChatViewController_OnDidChangeSelectedTab);
 
-    if (const auto ptr = fullscreen_controller.GetMethod("OnDidChangeSelectedTab"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("FullScreenChatViewController", "OnDidChangeSelectedTab");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, FullScreenChatViewController_OnDidChangeSelectedTab);
-    }
-  }
-
-  if (auto preview_controller = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController");
-      !preview_controller.isValidHelper()) {
-    ErrorMsg::MissingHelper("Chat", "ChatPreviewController");
-  } else {
-    if (const auto ptr = preview_controller.GetMethod("AboutToShow"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("ChatPreviewController", "AboutToShow");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, ChatPreviewController_AboutToShow);
-    }
-
-    if (const auto ptr = preview_controller.GetMethod("OnPanelFocused"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("ChatPreviewController", "OnPanelFocused");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, ChatPreviewController_OnPanelFocused);
-    }
-
-    if (const auto ptr = preview_controller.GetMethod("OnGlobalMessageReceived"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("ChatPreviewController", "OnGlobalMessageReceived");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, ChatPreviewController_OnGlobalMessageReceived);
-    }
-
-    if (const auto ptr = preview_controller.GetMethod("OnRegionalMessageReceived"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("ChatPreviewController", "OnRegionalMessageReceived");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, ChatPreviewController_OnRegionalMessageReceived);
-    }
-  }
+  if (auto m = ChatPreviewController::Class::Method("AboutToShow"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_AboutToShow);
+  if (auto m = ChatPreviewController::Class::Method("OnPanelFocused"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnPanelFocused);
+  if (auto m = ChatPreviewController::Class::Method("OnGlobalMessageReceived"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnGlobalMessageReceived);
+  if (auto m = ChatPreviewController::Class::Method("OnRegionalMessageReceived"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ChatPreviewController_OnRegionalMessageReceived);
 }

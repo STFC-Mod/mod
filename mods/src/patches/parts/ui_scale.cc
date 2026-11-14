@@ -1,7 +1,7 @@
-#include "errormsg.h"
+#include "patches/object_tracker.h"
 #include <config.h>
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
 #include <prime/CanvasScaler.h>
 #include <prime/FleetMeshSelector.h>
@@ -22,23 +22,9 @@ float ShipScaleMultiplier()
   return multiplier > 0.0f ? multiplier : 1.0f;
 }
 
-Transform* GetGameObjectTransform(void* game_object)
+Transform* GetGameObjectTransform(GameObject* game_object)
 {
-  if (game_object == nullptr) {
-    return nullptr;
-  }
-
-  static auto game_object_helper = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "GameObject");
-  if (!game_object_helper.isValidHelper()) {
-    return nullptr;
-  }
-
-  static auto transform_property = game_object_helper.GetProperty("transform");
-  if (!transform_property.isValidHelper()) {
-    return nullptr;
-  }
-
-  return reinterpret_cast<Transform*>(transform_property.GetRaw<Il2CppObject>(game_object));
+  return game_object ? game_object->Get<"transform", Transform*>() : nullptr;
 }
 } // namespace
 
@@ -60,13 +46,9 @@ void ApplyUiShipScaleToLoadedShips(float old_multiplier, float new_multiplier)
       continue;
     }
 
-    auto* local_scale = transform->localScale;
-    if (local_scale == nullptr) {
-      continue;
-    }
-
-    Vector3 adjusted_scale{local_scale->x * ratio, local_scale->y * ratio, local_scale->z * ratio};
-    transform->localScale = &adjusted_scale;
+    auto    local_scale = transform->localScale();
+    Vector3 adjusted_scale{local_scale.x * ratio, local_scale.y * ratio, local_scale.z * ratio};
+    transform->SetLocalScale(adjusted_scale);
   }
 }
 
@@ -92,8 +74,8 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
   #endif
 
   if (Config::Get().ui_scale != 0.0f) {
-    static auto get_height_method = il2cpp_resolve_icall_typed<int()>("UnityEngine.Screen::get_height()");
-    static auto get_width_method  = il2cpp_resolve_icall_typed<int()>("UnityEngine.Screen::get_width()");
+    static auto get_height_method = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_height()");
+    static auto get_width_method  = il2cpp::ResolveICall<int()>("UnityEngine.Screen::get_width()");
 
     static auto ref_height = 1080;
     static auto ref_width  = 1920;
@@ -114,79 +96,34 @@ void ScreenManager_UpdateCanvasRootScaleFactor_Hook(auto original, ScreenManager
     }
     n = std::clamp(n, 0.1f, 5.0f);
 
-    _this->m_canvasRootScaler->scaleFactor = n;
+    // Property setter, not the managed SetScaleFactor method; the scaler applies it on its next Update.
+    if (auto* scaler = _this->canvasRootScaler())
+      scaler->set_scaleFactor(n);
   }
 }
 
 void CanvasController_Show(auto original, CanvasController* _this, int desiredEntryPoint, bool instant)
 {
   const auto ui_scale_viewer = Config::Get().ui_scale_viewer;
-  if (_this && ui_scale_viewer != 0.0f && to_wstring(_this->name) == L"ObjectViewerTemplate_Canvas") {
-    auto transform = _this->transform;
-    if (transform == nullptr) {
-      return original(_this, desiredEntryPoint, instant);
-    }
-    auto localScale = transform->localScale;
-    if (localScale == nullptr) {
-      return original(_this, desiredEntryPoint, instant);
-    }
-    localScale->x         = ui_scale_viewer;
-    localScale->y         = ui_scale_viewer;
-    localScale->z         = ui_scale_viewer;
-    transform->localScale = localScale;
+  if (_this && ui_scale_viewer != 0.0f && to_wstring(_this->name()) == L"ObjectViewerTemplate_Canvas") {
+    if (auto* transform = _this->transform())
+      transform->SetLocalScale(Vector3{ui_scale_viewer, ui_scale_viewer, ui_scale_viewer});
   }
   return original(_this, desiredEntryPoint, instant);
 }
 
 void InstallUiScaleHooks()
 {
-  auto system_view_ship =
-      il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "SystemViewShip");
-  if (!system_view_ship.isValidHelper()) {
-    ErrorMsg::MissingHelper("Navigation", "SystemViewShip");
-  } else if (auto try_get_ship_asset = system_view_ship.GetMethod("TryGetShipAssetBundleResource", 2);
-             try_get_ship_asset == nullptr) {
-    ErrorMsg::MissingMethod("SystemViewShip", "TryGetShipAssetBundleResource");
-  } else {
-    SPUD_STATIC_DETOUR(try_get_ship_asset, SystemViewShip_TryGetShipAssetBundleResource_Hook);
-  }
+  using SystemViewShip = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "SystemViewShip">;
 
-  auto screen_manager_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ScreenManager");
-  if (!screen_manager_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("UI", "ScreenManager");
-  } else {
-    auto ptr_update_scale = screen_manager_helper.GetMethod("UpdateCanvasRootScaleFactor");
-    if (ptr_update_scale == nullptr) {
-      ErrorMsg::MissingMethod("ScreenManager", "UpdateCanvasRootScaleFactor");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_update_scale, ScreenManager_UpdateCanvasRootScaleFactor_Hook);
-    }
-  }
+  if (auto method = SystemViewShip::Method("TryGetShipAssetBundleResource", 2))
+    SPUD_STATIC_DETOUR(method.Pointer(), SystemViewShip_TryGetShipAssetBundleResource_Hook);
 
-  auto canvas_controller_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "CanvasController");
-  if (!canvas_controller_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("UI", "CanvasController");
-  } else {
-    auto ptr_canvas_show = canvas_controller_helper.GetMethodSpecial("Show", [](auto count, const Il2CppType** params) {
-      if (count != 2) {
-        return false;
-      }
+  if (auto method = ScreenManager::Class::Method("UpdateCanvasRootScaleFactor"))
+    SPUD_STATIC_DETOUR(method.Pointer(), ScreenManager_UpdateCanvasRootScaleFactor_Hook);
 
-      auto p1 = params[0]->type;
-      auto p2 = params[1]->type;
-
-      if (p1 == IL2CPP_TYPE_I4 && p2 == IL2CPP_TYPE_BOOLEAN) {
-        return true;
-      }
-      return false;
-    });
-
-    if (ptr_canvas_show == nullptr) {
-      ErrorMsg::MissingMethod("CanvasController", "Show");
-    } else {
-      SPUD_STATIC_DETOUR(ptr_canvas_show, CanvasController_Show);
-    }
-  }
+  if (auto method = CanvasController::Class::Method("Show", {"System.Int32", "System.Boolean"}))
+    SPUD_STATIC_DETOUR(method.Pointer(), CanvasController_Show);
 
   Config::RefreshDPI();
 }

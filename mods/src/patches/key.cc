@@ -26,7 +26,7 @@ constexpr std::array directionalKeys = {
 
 int CurrentInputFrame()
 {
-  static auto GetFrameCount = il2cpp_resolve_icall_typed<int()>("UnityEngine.Time::get_frameCount()");
+  static auto GetFrameCount = il2cpp::ResolveICall<int()>("UnityEngine.Time::get_frameCount()");
   return GetFrameCount();
 }
 }
@@ -295,7 +295,7 @@ bool Key::Down(KeyCode key)
   EnsureCurrentFrame();
 
   static auto GetKeyDownInt =
-      il2cpp_resolve_icall_typed<bool(KeyCode)>("UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)");
+      il2cpp::ResolveICall<bool(KeyCode)>("UnityEngine.Input::GetKeyDownInt(UnityEngine.KeyCode)");
 
   if (cacheKeyDown[(int)key] == 0) {
     cacheKeyDown[(int)key] = GetKeyDownInt(key) ? 1 : -1;
@@ -308,8 +308,7 @@ bool Key::Pressed(KeyCode key)
 {
   EnsureCurrentFrame();
 
-  static auto GetKeyInt =
-      il2cpp_resolve_icall_typed<bool(KeyCode)>("UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)");
+  static auto GetKeyInt = il2cpp::ResolveICall<bool(KeyCode)>("UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)");
 
   if (cacheKeyPressed[(int)key] == 0) {
     cacheKeyPressed[(int)key] = GetKeyInt(key) ? 1 : -1;
@@ -327,15 +326,12 @@ bool Key::IsInputFocused()
 
     auto eventSystem = EventSystem::current();
     if (eventSystem) {
-      auto n = eventSystem->currentSelectedGameObject;
-      try {
-        if (n) {
-          auto n2 = n->GetComponentFastPath2<TMP_InputField>();
-          if (n2 && n2->isFocused) {
-            cacheInputFocused = 1;
-          }
+      auto n = eventSystem->currentSelectedGameObject();
+      if (n) {
+        auto n2 = n->GetComponent<TMP_InputField>();
+        if (n2 && n2->isFocused()) {
+          cacheInputFocused = 1;
         }
-      } catch (...) {
       }
     }
   }
@@ -360,17 +356,12 @@ bool Key::HasCtrl()
 
 void Key::ClearInputFocus()
 {
-  try {
-    if (auto eventSystem = EventSystem::current(); eventSystem) {
-      if (auto n = eventSystem->currentSelectedGameObject; n) {
-        auto n2 = n->GetComponentFastPath2<TMP_InputField>();
-        if (n2 && n2->isFocused) {
-          eventSystem->SetSelectedGameObject(nullptr);
-          return;
-        }
+  if (auto eventSystem = EventSystem::current(); eventSystem) {
+    if (auto n = eventSystem->currentSelectedGameObject(); n) {
+      auto n2 = n->GetComponent<TMP_InputField>();
+      if (n2 && n2->isFocused()) {
+        eventSystem->SetSelectedGameObject(nullptr);
       }
     }
-  } catch (...) {
-    //
   }
 }

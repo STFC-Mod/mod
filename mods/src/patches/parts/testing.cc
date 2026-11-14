@@ -1,10 +1,9 @@
 #include "config.h"
-#include "errormsg.h"
 
+#include "prime/ActionQueueManager.h"
 #include "prime/ActionRequirement.h"
 #include "prime/BlurController.h"
 #include "prime/BookmarksManager.h"
-#include "prime/CallbackContainer.h"
 #include "prime/ChatManager.h"
 #include "prime/ChatMessageListLocalViewController.h"
 #include "prime/ClientModifierType.h"
@@ -21,81 +20,32 @@
 #include "prime/ScreenManager.h"
 #include <prime/UIBehaviour.h>
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <spud/detour.h>
 #include <spud/signature.h>
 
-class AppConfig
-{
-public:
-  __declspec(property(get = __get_PlatformSettingsUrl, put = __set_PlatformSettingsUrl))
-  Il2CppString*                                                                                  PlatformSettingsUrl;
-  __declspec(property(get = __get_PlatformApiKey, put = __set_PlatformApiKey)) Il2CppString*     PlatformApiKey;
-  __declspec(property(get = __get_AssetUrlOverride, put = __set_AssetUrlOverride)) Il2CppString* AssetUrlOverride;
+struct AppConfig : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "AppConfig">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "AppConfig");
-    return class_helper;
-  }
-
-public:
-  Il2CppString* __get_PlatformSettingsUrl()
-  {
-    static auto prop = get_class_helper().GetProperty("PlatformSettingsUrl");
-    return prop.GetRaw<Il2CppString>((void*)this);
-  }
-
-  void __set_PlatformSettingsUrl(Il2CppString* v)
-  {
-    static auto prop = get_class_helper().GetProperty("PlatformSettingsUrl");
-    return prop.SetRaw((void*)this, *v);
-  }
-
-  Il2CppString* __get_PlatformApiKey()
-  {
-    static auto prop = get_class_helper().GetProperty("PlatformApiKey");
-    return prop.GetRaw<Il2CppString>((void*)this);
-  }
-
-  void __set_PlatformApiKey(Il2CppString* v)
-  {
-    static auto prop = get_class_helper().GetProperty("PlatformApiKey");
-    return prop.SetRaw((void*)this, *v);
-  }
-
-  Il2CppString* __get_AssetUrlOverride()
-  {
-    static auto prop = get_class_helper().GetProperty("AssetUrlOverride");
-    return prop.GetRaw<Il2CppString>((void*)this);
-  }
-
-  void __set_AssetUrlOverride(Il2CppString* v)
-  {
-    static auto prop = get_class_helper().GetProperty("AssetUrlOverride");
-    return prop.SetRaw((void*)this, *v);
-  }
+  Il2CppString* PlatformSettingsUrl()
+  { return Get<"PlatformSettingsUrl", Il2CppString*>(); }
+  void SetPlatformSettingsUrl(Il2CppString* value)
+  { Set<"PlatformSettingsUrl">(value); }
+  Il2CppString* PlatformApiKey()
+  { return Get<"PlatformApiKey", Il2CppString*>(); }
+  void SetPlatformApiKey(Il2CppString* value)
+  { Set<"PlatformApiKey">(value); }
+  Il2CppString* AssetUrlOverride()
+  { return Get<"AssetUrlOverride", Il2CppString*>(); }
+  void SetAssetUrlOverride(Il2CppString* value)
+  { Set<"AssetUrlOverride">(value); }
 };
 
-class Model
-{
-public:
-  __declspec(property(get = __get_AppConfig)) AppConfig* AppConfig_;
+struct Model : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Model">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "Model");
-    return class_helper;
-  }
-
-public:
-  AppConfig* __get_AppConfig()
-  {
-    static auto field = get_class_helper().GetField("_appConfig");
-    return *(AppConfig**)((ptrdiff_t)this + field.offset());
-  }
+  AppConfig* appConfig()
+  { return Field<"_appConfig", AppConfig*>(); }
 };
 
 void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* hotspot, int cursorMode)
@@ -111,30 +61,26 @@ void Cursor_SetCursor(auto original, void* _this, ptrdiff_t texture, Vector2* ho
   return original(_this, texture, hotspot, cursorMode);
 }
 
-AppConfig* Model_LoadConfigs(auto original, Model* _this)
+void Model_LoadConfigs(auto original, Model* _this)
 {
   original(_this);
-  auto config = _this->AppConfig_;
+  auto config = _this->appConfig();
   if (!config) {
-    return nullptr;
+    return;
   }
 
   if (!Config::Get().config_settings_url.empty()) {
-    auto new_settings_url       = il2cpp_string_new(Config::Get().config_settings_url.c_str());
-    config->PlatformSettingsUrl = new_settings_url;
+    config->SetPlatformSettingsUrl(il2cpp_string_new(Config::Get().config_settings_url.c_str()));
   }
 
   if (!Config::Get().config_assets_url_override.empty()) {
-    auto new_url             = il2cpp_string_new(Config::Get().config_assets_url_override.c_str());
-    config->AssetUrlOverride = new_url;
+    config->SetAssetUrlOverride(il2cpp_string_new(Config::Get().config_assets_url_override.c_str()));
   }
-
-  return config;
 }
 
 void SetActive_hook(auto original, void* _this, bool active)
 {
-  static auto IsActiveSelf = il2cpp_resolve_icall_typed<bool(void*)>("UnityEngine.GameObject::get_activeSelf()");
+  static auto IsActiveSelf = il2cpp::ResolveICall<bool(void*)>("UnityEngine.GameObject::get_activeSelf()");
 
   if (active && IsActiveSelf(_this)) {
     return;
@@ -154,55 +100,18 @@ bool IsQueueEnabled(auto original, void* _this)
 
 void InstallTestPatches()
 {
-  auto cursorManager = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Cursor");
-  if (!cursorManager.isValidHelper()) {
-    ErrorMsg::MissingHelper("UnityEngine", "Cursor");
-  } else {
-    auto cursorMethod = cursorManager.GetMethod("SetCursor_Injected");
-    if (cursorMethod == nullptr) {
-      ErrorMsg::MissingMethod("Cursor", "SetCursor_Injected");
-    } else {
-      SPUD_STATIC_DETOUR(cursorMethod, Cursor_SetCursor);
-    }
-  }
+  using Cursor = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Cursor">;
+  if (auto m = Cursor::Method("SetCursor_Injected"))
+    SPUD_STATIC_DETOUR(m.Pointer(), Cursor_SetCursor);
 
-  auto model = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "Model");
-  if (!model.isValidHelper()) {
-    ErrorMsg::MissingHelper("Core", "Model");
-  } else {
-    auto load_configs_ptr = model.GetMethod("LoadConfigs");
-    if (load_configs_ptr == nullptr) {
-      ErrorMsg::MissingMethod("Model", "LoadConfigs");
-    } else {
-      SPUD_STATIC_DETOUR(load_configs_ptr, Model_LoadConfigs);
-    }
-  }
+  if (auto m = Model::Class::Method("LoadConfigs", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), Model_LoadConfigs);
 
-// this method is not accessible in v48084
-//   auto battle_target_data =
-//       il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "BattleTargetData");
-//   if (!battle_target_data.isValidHelper()) {
-//     ErrorMsg::MissingHelper("Models", "BattleTargetData");
-//   } else {
-//     static auto SetActive =
-//         il2cpp_resolve_icall_typed<void(void*, bool)>("UnityEngine.GameObject::SetActive(System.Boolean)");
-//     if (SetActive == nullptr) {
-//       ErrorMsg::MissingStaticMethod("GameObject", "SetActive");
-//     } else {
-//       SPUD_STATIC_DETOUR(SetActive, SetActive_hook);
-//     }
-//   }
+  // this method is not accessible in v48084
+  //   static auto SetActive = il2cpp::ResolveICall<void(void*, bool)>("UnityEngine.GameObject::SetActive(System.Boolean)");
+  //   if (SetActive)
+  //     SPUD_STATIC_DETOUR(SetActive, SetActive_hook);
 
-  auto queue_manager = il2cpp_get_class_helper("Assembly-CSharp", "Prime.ActionQueue", "ActionQueueManager");
-  if (!queue_manager.isValidHelper()) {
-    ErrorMsg::MissingHelper("ActionQueue", "ActionQueueManager");
-  } else {
-
-    auto is_queue_unlocked = queue_manager.GetMethod("IsQueueUnlocked");
-    if (is_queue_unlocked == nullptr) {
-      ErrorMsg::MissingStaticMethod("ActionQueueManager", "IsQueueUnlocked");
-    } else {
-      SPUD_STATIC_DETOUR(is_queue_unlocked, IsQueueEnabled);
-    }
-  }
+  if (auto m = ActionQueueManager::Class::Method("IsQueueUnlocked"))
+    SPUD_STATIC_DETOUR(m.Pointer(), IsQueueEnabled);
 }

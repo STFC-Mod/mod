@@ -191,16 +191,16 @@ jobs:
 
       - name: Test IL2CPP runtime helpers
         run: |
-          xmake build -y il2cpp-runtime-tests
+          xmake build -y il2cpp-bindings-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          xmake run il2cpp-runtime-tests
+          xmake run il2cpp-bindings-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Test IL2CPP class lookup
         run: |
-          xmake build -y il2cpp-class-lookup-tests
+          xmake build -y il2cpp-gc-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          xmake run il2cpp-class-lookup-tests
+          xmake run il2cpp-gc-tests
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build
@@ -224,11 +224,6 @@ jobs:
           Move-Item `
             "build/windows/x64/release/stfc-community-mod.dll" `
             "version.dll"
-
-      - name: Test checked IL2CPP helpers
-        run: |
-          xmake build -y il2cpp-checked-tests
-          xmake run il2cpp-checked-tests
 
       - name: Verify DLL provenance
         shell: pwsh
@@ -500,13 +495,13 @@ jobs:
 
       - name: Test IL2CPP runtime helpers
         run: |
-          xmake build -y il2cpp-runtime-tests
-          xmake run il2cpp-runtime-tests
+          xmake build -y il2cpp-bindings-tests
+          xmake run il2cpp-bindings-tests
 
       - name: Test IL2CPP class lookup
         run: |
-          xmake build -y il2cpp-class-lookup-tests
-          xmake run il2cpp-class-lookup-tests
+          xmake build -y il2cpp-gc-tests
+          xmake run il2cpp-gc-tests
 
       - name: Build
         # -D keeps the existing XMake compiler-cache diagnostics too.
@@ -534,11 +529,6 @@ jobs:
           else
             echo "::warning::Swift module cache directory was not created"
           fi
-
-      - name: Test checked IL2CPP helpers
-        run: |
-          xmake build -y il2cpp-checked-tests
-          xmake run il2cpp-checked-tests
 
       - name: Verify portable macOS linkage
         shell: bash

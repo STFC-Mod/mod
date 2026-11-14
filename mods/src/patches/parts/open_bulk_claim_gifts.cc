@@ -1,84 +1,31 @@
 #include "config.h"
-#include "errormsg.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <prime/Widget.h>
+
+#include <il2cpp/il2cpp.h>
 #include <spud/detour.h>
-#include <spdlog/spdlog.h>
-
-#include <cstddef>
 
 namespace
 {
-class DrawerContext
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerContext");
-    return class_helper;
-  }
-
-public:
-  static IL2CppClassHelper& ClassHelper()
-  { return get_class_helper(); }
+struct DrawerContext : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerContext">;
 
   bool Enabled()
-  {
-    static auto field = get_class_helper().GetField("Enabled");
-    return field.isValidHelper() && *(bool*)((ptrdiff_t)this + field.offset());
-  }
+  { return Field<"Enabled", bool>(); }
 };
 
-class DrawerWidget
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerWidget");
-    return class_helper;
-  }
-
-public:
-  static IL2CppClassHelper& ClassHelper()
-  { return get_class_helper(); }
-
-  DrawerContext* Context()
-  {
-    static auto widget_base = get_class_helper().GetParent("Widget`1");
-    static auto field       = widget_base.GetProperty("Context");
-    return field.GetRaw<DrawerContext>(this);
-  }
+struct DrawerWidget : Widget<DrawerContext> {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerWidget">;
 
   void OpenViaButtonCallback()
-  {
-    static auto method = get_class_helper().GetMethod<void(DrawerWidget*)>("OnOpenButtonClicked");
-    if (method != nullptr) {
-      method(this);
-    }
-  }
+  { Call<"OnOpenButtonClicked">(); }
 };
 
-class ShopListScrollerViewController
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Shop", "ShopListScrollerViewController");
-    return class_helper;
-  }
-
-public:
-  static IL2CppClassHelper& ClassHelper()
-  { return get_class_helper(); }
+struct ShopListScrollerViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopListScrollerViewController">;
 
   DrawerWidget* SelectionDrawer()
-  {
-    static auto field = get_class_helper().GetField("_selectionDrawerWidget");
-    return field.isValidHelper() ? *(DrawerWidget**)((ptrdiff_t)this + field.offset()) : nullptr;
-  }
+  { return Field<"_selectionDrawerWidget", DrawerWidget*>(); }
 };
 
 ShopListScrollerViewController* g_active_scroller    = nullptr;
@@ -132,69 +79,11 @@ void ShopListScrollerViewController_UpdateDrawer(auto original, ShopListScroller
 
 void InstallGiftsBulkClaimHooks()
 {
-  bool can_install = true;
-
-  auto drawer_context = DrawerContext::ClassHelper();
-  if (!drawer_context.isValidHelper()) {
-    ErrorMsg::MissingHelper("Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerContext");
-    can_install = false;
-  } else if (!drawer_context.GetField("Enabled").isValidHelper()) {
-    ErrorMsg::MissingMethod("DrawerContext", "Enabled");
-    can_install = false;
-  }
-
-  auto drawer_widget = DrawerWidget::ClassHelper();
-  if (!drawer_widget.isValidHelper()) {
-    ErrorMsg::MissingHelper("Prime.SharedFeatures.Scripts.UI.Widgets", "DrawerWidget");
-    can_install = false;
-  } else {
-    auto widget_base = drawer_widget.GetParent("Widget`1");
-    if (!widget_base.isValidHelper() || !widget_base.GetProperty("Context").isValidHelper()) {
-      ErrorMsg::MissingMethod("DrawerWidget", "Widget<DrawerContext>.Context");
-      can_install = false;
-    }
-    if (drawer_widget.GetMethod("OnOpenButtonClicked") == nullptr) {
-      ErrorMsg::MissingMethod("DrawerWidget", "OnOpenButtonClicked");
-      can_install = false;
-    }
-  }
-
-  auto shop_list_scroller = ShopListScrollerViewController::ClassHelper();
-  if (!shop_list_scroller.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.Shop", "ShopListScrollerViewController");
-    spdlog::warn("Skipping GiftsBulkClaimHooks: required IL2CPP dependencies are unavailable; no hooks installed.");
-    return;
-  }
-
-  if (!shop_list_scroller.GetField("_selectionDrawerWidget").isValidHelper()) {
-    ErrorMsg::MissingMethod("ShopListScrollerViewController", "_selectionDrawerWidget");
-    can_install = false;
-  }
-
-  auto about_to_show = shop_list_scroller.GetMethod("AboutToShow");
-  if (about_to_show == nullptr) {
-    ErrorMsg::MissingMethod("ShopListScrollerViewController", "AboutToShow");
-    can_install = false;
-  }
-
-  auto about_to_hide = shop_list_scroller.GetMethod("AboutToHide");
-  if (about_to_hide == nullptr) {
-    ErrorMsg::MissingMethod("ShopListScrollerViewController", "AboutToHide");
-    can_install = false;
-  }
-
-  auto update_drawer = shop_list_scroller.GetMethod("UpdateDrawer");
-  if (update_drawer == nullptr) {
-    ErrorMsg::MissingMethod("ShopListScrollerViewController", "UpdateDrawer");
-    can_install = false;
-  }
-
-  if (!can_install) {
-    spdlog::warn("Skipping GiftsBulkClaimHooks: required IL2CPP dependencies are unavailable; no hooks installed.");
-    return;
-  }
-
-  SPUD_STATIC_DETOUR(about_to_show, ShopListScrollerViewController_AboutToShow);
-  SPUD_STATIC_DETOUR(about_to_hide, ShopListScrollerViewController_AboutToHide);
-  SPUD_STATIC_DETOUR(update_drawer, ShopListScrollerViewController_UpdateDrawer);
+  using Scroller = ShopListScrollerViewController::Class;
+  if (auto m = Scroller::Method("AboutToShow"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ShopListScrollerViewController_AboutToShow);
+  if (auto m = Scroller::Method("AboutToHide"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ShopListScrollerViewController_AboutToHide);
+  if (auto m = Scroller::Method("UpdateDrawer"))
+    SPUD_STATIC_DETOUR(m.Pointer(), ShopListScrollerViewController_UpdateDrawer);
 }

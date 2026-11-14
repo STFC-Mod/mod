@@ -2,69 +2,52 @@
 
 #include "SemaphoreButtonListener.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
+#include <spdlog/spdlog.h>
 
-struct ArtifactHallDetailsViewController {
-public:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ArtifactHall", "ArtifactHallDetailsViewController");
-    return class_helper;
-  }
+struct ArtifactHallDetailsViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.ArtifactHall", "ArtifactHallDetailsViewController">;
 
+  // Treat the controller as active if the icall is unavailable, so the arrow hotkeys still try.
   bool isActiveAndEnabled()
   {
-    static auto get_isActiveAndEnabled = il2cpp_resolve_icall_typed<bool(ArtifactHallDetailsViewController*)>(
+    static auto get_isActiveAndEnabled = il2cpp::ResolveICall<bool(ArtifactHallDetailsViewController*)>(
         "UnityEngine.Behaviour::get_isActiveAndEnabled()");
-    if (get_isActiveAndEnabled) {
-      return get_isActiveAndEnabled(this);
-    }
-    return true;
+    return get_isActiveAndEnabled ? get_isActiveAndEnabled(this) : true;
   }
 
   void PressLeftArrow()
   {
-    auto listener = LeftArrowButton();
+    auto* listener = leftArrowButton();
     if (!listener) {
       spdlog::trace("No left button listener");
       return;
     }
-
-    if (!listener->TheButton) {
+    auto* button = listener->TheButton();
+    if (!button) {
       spdlog::trace("No left button");
       return;
     }
-
-    listener->TheButton->Press();
+    button->Press();
   }
 
   void PressRightArrow()
   {
-    auto listener = RightArrowButton();
+    auto* listener = rightArrowButton();
     if (!listener) {
       spdlog::info("No right button listener");
       return;
     }
-
-    if (!listener->TheButton) {
+    auto* button = listener->TheButton();
+    if (!button) {
       spdlog::info("No right button");
       return;
     }
-
-    listener->TheButton->Press();
+    button->Press();
   }
 
-private:
-  SemaphoreButtonListener* LeftArrowButton()
-  {
-    static auto field = get_class_helper().GetField("_leftArrowButton").offset();
-    return *reinterpret_cast<SemaphoreButtonListener**>(reinterpret_cast<uint8_t*>(this) + field);
-  }
-
-  SemaphoreButtonListener* RightArrowButton()
-  {
-    static auto field = get_class_helper().GetField("_rightArrowButton").offset();
-    return *reinterpret_cast<SemaphoreButtonListener**>(reinterpret_cast<uint8_t*>(this) + field);
-  }
+  SemaphoreButtonListener* leftArrowButton()
+  { return Field<"_leftArrowButton", SemaphoreButtonListener*>(); }
+  SemaphoreButtonListener* rightArrowButton()
+  { return Field<"_rightArrowButton", SemaphoreButtonListener*>(); }
 };

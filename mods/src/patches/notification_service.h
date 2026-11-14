@@ -2,7 +2,7 @@
 
 struct Toast;
 
-// Initialize the notification service (resolve IL2CPP methods, init platform).
+// Initialize the notification platform (WinRT on Windows).
 // Call once during InstallToastBannerHooks().
 void notification_init();
 

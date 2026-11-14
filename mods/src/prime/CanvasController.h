@@ -1,95 +1,37 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
-#include "errormsg.h"
-
 #include "Canvas.h"
 #include "Transform.h"
 
-struct CanvasController {
-public:
-  __declspec(property(get = __get_Transform)) Transform* transform;
-  __declspec(property(get = __get_Name)) Il2CppString* name;
-  __declspec(property(get = __get_m_canvas)) Canvas* m_canvas;
+#include <il2cpp/il2cpp.h>
 
-  void ResetFocus()
-  {
-    static auto ResetFocusMethod = get_class_helper().GetMethod<void(CanvasController*)>("ResetFocus");
-    static auto ResetFocusWarn   = true;
+struct CanvasController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "CanvasController">;
 
-    if (ResetFocusMethod) {
-      ResetFocusMethod(this);
-    } else if (ResetFocusWarn) {
-      ResetFocusWarn = false;
-      ErrorMsg::MissingMethod("CanvasController", "ResetFocus");
-    }
-  }
-
+  bool ResetFocus()
+  { return Call<"ResetFocus", bool>(); }
   bool Visible()
-  {
-    static auto field = get_class_helper().GetProperty("Visible");
-    return field.Get<bool>(this);
-  }
-
+  { return Get<"Visible", bool>(); }
+  // The bound data context, of the class the canvas's view expects.
+  il2cpp::Object* Context()
+  { return Get<"Context", il2cpp::Object*>(); }
   bool get_enabled()
-  {
-    static auto field = get_class_helper().GetProperty("enabled");
-    return field.Get<bool>(this);
-  }
-
+  { return Get<"enabled", bool>(); }
   bool m_Visible()
-  {
-    static auto field = get_class_helper().GetField("m_visible").offset();
-    return *(bool*)((ptrdiff_t)this + field);
-  }
+  { return Field<"m_visible", bool>(); }
 
-  Il2CppString* __get_Name()
-  {
-    static auto field = get_class_helper().GetProperty("name");
-    return field.GetRaw<Il2CppString>(this);
-  }
-
-  Transform* __get_Transform()
-  {
-    static auto field = get_class_helper().GetProperty("transform");
-    return field.GetRaw<Transform>(this);
-  }
-
-  Canvas* __get_m_canvas()
-  {
-    static auto field = get_class_helper().GetField("m_canvas").offset();
-    return *(Canvas**)((ptrdiff_t)this + field);
-  }
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "CanvasController");
-    return class_helper;
-  }
+  Il2CppString* name()
+  { return Get<"name", Il2CppString*>(); }
+  Transform* transform()
+  { return Get<"transform", Transform*>(); }
+  Canvas* canvas()
+  { return Field<"m_canvas", Canvas*>(); }
 };
 
-inline CanvasController* GetCanvasControllerFromComponent(void* component)
+inline CanvasController* GetCanvasControllerFromComponent(il2cpp::Object* component)
 {
-  if (!component) {
+  if (!component)
     return nullptr;
-  }
-
-  static auto component_class = il2cpp_get_class_helper("UnityEngine.CoreModule", "UnityEngine", "Component");
-  static auto method          = component_class.GetMethodInfo("GetComponentInParent", 1);
-  if (!method) {
-    return nullptr;
-  }
-
-  static auto canvas_type = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "CanvasController").GetType();
-
-  Il2CppException* exception = nullptr;
-  void*            params[1] = {canvas_type};
-  auto             result    = il2cpp_runtime_invoke(method, component, params, &exception);
-  if (exception) {
-    spdlog::error("[CanvasController] GetComponentInParent threw an exception");
-    return nullptr;
-  }
-  return (CanvasController*)result;
+  // Passing System.Type selects GetComponentInParent(Type) over the generic overload.
+  return component->Call<"GetComponentInParent", CanvasController*>(CanvasController::Class::TypeObject());
 }

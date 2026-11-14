@@ -1,5 +1,6 @@
 #include "config.h"
 #include "patches/key.h"
+#include "patches/object_tracker.h"
 
 #include "double_click_assign_ship.h"
 #include "prime/AssignShipsWidget.h"
@@ -7,7 +8,8 @@
 #include "prime/KeyCode.h"
 #include "ship_tile_click.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
+#include "patches/object_tracker.h"
 
 #include <chrono>
 
@@ -24,12 +26,12 @@ void PressAssignButton()
     if (!widget) continue;
 
     auto canvas = GetCanvasControllerFromComponent(widget);
-    if (!canvas || !canvas->Visible() || !widget->isActiveAndEnabled) continue;
+    if (!canvas || !canvas->Visible() || !widget->isActiveAndEnabled()) continue;
 
-    auto* buttonWrapper = widget->_assignButton;
-    auto* buttonWidget  = buttonWrapper ? buttonWrapper->Widget : nullptr;
-    auto* listener      = buttonWidget ? buttonWidget->SemaphoreListener : nullptr;
-    auto* button        = listener ? listener->TheButton : nullptr;
+    auto* buttonWrapper = widget->assignButton();
+    auto* buttonWidget  = buttonWrapper ? buttonWrapper->Widget() : nullptr;
+    auto* listener      = buttonWidget ? buttonWidget->SemaphoreListener() : nullptr;
+    auto* button        = listener ? listener->TheButton() : nullptr;
     if (button) {
       button->Press();
     }

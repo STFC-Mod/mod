@@ -1,49 +1,20 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
-
 #include "ButtonAndContextWrapper.h"
 #include "InputFieldWidget.h"
 #include "SelectableList.h"
 
-struct AssignShipsWidget {
-public:
-  __declspec(property(get = __get__inputField)) InputFieldWidget* _inputField;
-  __declspec(property(get = __get_isActiveAndEnabled)) bool        isActiveAndEnabled;
-  __declspec(property(get = __get__assignButton)) ButtonAndContextWrapper* _assignButton;
-  __declspec(property(get = __get__selectableList)) SelectableList* _selectableList;
+#include <il2cpp/il2cpp.h>
 
-private:
-  friend class ObjectFinder<AssignShipsWidget>;
+struct AssignShipsWidget : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Ships", "AssignShipsWidget">;
 
-public:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Ships", "AssignShipsWidget");
-    return class_helper;
-  }
-
-  InputFieldWidget* __get__inputField()
-  {
-    static auto field = get_class_helper().GetField("_inputField").offset();
-    return *(InputFieldWidget**)((uintptr_t)this + field);
-  }
-
-  bool __get_isActiveAndEnabled()
-  {
-    static auto field = get_class_helper().GetProperty("isActiveAndEnabled");
-    return field.Get<bool>(this);
-  }
-
-  ButtonAndContextWrapper* __get__assignButton()
-  {
-    static auto field = get_class_helper().GetField("_assignButton").offset();
-    return *(ButtonAndContextWrapper**)((uintptr_t)this + field);
-  }
-
-  SelectableList* __get__selectableList()
-  {
-    static auto field = get_class_helper().GetField("_selectableList").offset();
-    return *(SelectableList**)((uintptr_t)this + field);
-  }
+  InputFieldWidget* inputField()
+  { return Field<"_inputField", InputFieldWidget*>(); }
+  bool isActiveAndEnabled()
+  { return Get<"isActiveAndEnabled", bool>(); }
+  ButtonAndContextWrapper* assignButton()
+  { return Field<"_assignButton", ButtonAndContextWrapper*>(); }
+  SelectableList* selectableList()
+  { return Field<"_selectableList", SelectableList*>(); }
 };

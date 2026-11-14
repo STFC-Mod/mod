@@ -4,41 +4,29 @@
 #include "CanvasScaler.h"
 #include "MonoSingleton.h"
 
+struct UIFrameManager : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "UIFrameManager">;
+
+  // The game clamps the width to the available space and the side frame's minimum. False when the call failed.
+  bool ResizeSideFrame(float width)
+  { return TryCall<"ResizeSideFrame", void(float)>(width); }
+};
+
 struct ScreenManager : MonoSingleton<ScreenManager> {
-public:
-  __declspec(property(get = __get_m_canvasRootScaler)) CanvasScaler* m_canvasRootScaler;
-  __declspec(property(get = __get__minimumCanvasScaleFactor)) float _minimumCanvasScaleFactor;
-  __declspec(property(get = __get__maximumCanvasScaleFactor)) float _maximumCanvasScaleFactor;
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "ScreenManager">;
 
   static CanvasController* GetTopCanvas(bool visibleOnly = false)
-  {
-    static auto GetTopCanvas = get_class_helper().GetMethod<CanvasController*(bool)>("GetTopCanvas");
-    return GetTopCanvas(visibleOnly);
-  }
+  { return Class::Call<"GetTopCanvas", CanvasController*>(visibleOnly); }
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "ScreenManager");
-    return class_helper;
-  }
-
-public:
-  CanvasScaler* __get_m_canvasRootScaler()
-  {
-    static auto field = get_class_helper().GetField("m_canvasRootScaler");
-    return *(CanvasScaler**)((ptrdiff_t)this + field.offset());
-  }
-
-  float __get__minimumCanvasScaleFactor()
-  {
-    static auto field = get_class_helper().GetField("_minimumCanvasScaleFactor").offset();
-    return *(float*)((ptrdiff_t)this + field);
-  }
-
-  float __get__maximumCanvasScaleFactor()
-  {
-    static auto field = get_class_helper().GetField("_maximumCanvasScaleFactor").offset();
-    return *(float*)((ptrdiff_t)this + field);
-  }
+  // Every registered canvas, visible or not.
+  il2cpp::List<CanvasController*>* screens()
+  { return Field<"_screens", il2cpp::List<CanvasController*>*>(); }
+  CanvasScaler* canvasRootScaler()
+  { return Field<"m_canvasRootScaler", CanvasScaler*>(); }
+  float minimumCanvasScaleFactor()
+  { return Field<"_minimumCanvasScaleFactor", float>(); }
+  float maximumCanvasScaleFactor()
+  { return Field<"_maximumCanvasScaleFactor", float>(); }
+  UIFrameManager* frameManager()
+  { return Field<"_frameManager", UIFrameManager*>(); }
 };

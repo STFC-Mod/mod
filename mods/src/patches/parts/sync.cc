@@ -5,14 +5,13 @@
 #include "patches/screen_update_hook.h"
 #include "str_utils.h"
 
-#include <Digit.Platform.Models.pb.h>
 #include <Digit.PrimePlatform.Content.pb.h>
 #include <Digit.PrimeServer.Models.pb.h>
 #include <stfc.sync.pb.h>
-#include <il2cpp-api-types.h>
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <prime/EntityGroup.h>
 #include <prime/FleetsManager.h>
+#include <prime/Hub.h>
 #include <prime/RealtimeDataPayload.h>
 #include <prime/ServiceResponse.h>
 #include <prime/UserProfileManager.h>
@@ -43,7 +42,6 @@
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
-#include <cstring>
 #include <filesystem>
 #include <format>
 #include <fstream>
@@ -1602,14 +1600,7 @@ static UserProfile* local_user_profile()
     return nullptr;
   }
 
-  static auto fn = UserProfileManager::get_class_helper().GetMethodInfo("GetLocalUserProfile");
-  if (fn == nullptr) {
-    return nullptr;
-  }
-
-  Il2CppException* exception = nullptr;
-  auto* const      profile   = reinterpret_cast<UserProfile*>(il2cpp_runtime_invoke(fn, manager, nullptr, &exception));
-  return exception == nullptr ? profile : nullptr;
+  return manager->GetLocalUserProfile();
 }
 
 static void planetary_map(std::unique_ptr<std::string>&& bytes)
@@ -1619,19 +1610,19 @@ static void planetary_map(std::unique_ptr<std::string>&& bytes)
 
     const auto& owner = response.owneruserid();
     if (!owner.empty()) {
-      auto localProfile = local_user_profile();
+      auto* localProfile = local_user_profile();
       if (localProfile == nullptr) {
         spdlog::error("Failed to get local user profile");
         return;
       }
 
-      const auto userId = localProfile->UserId;
+      const auto userId = localProfile->UserId();
       if (userId == nullptr) {
         spdlog::error("Local user profile has empty UserId");
         return;
       }
 
-      if (owner != userId) {
+      if (owner != to_string(userId)) {
         spdlog::debug("Planetary map data is not for local user, skipping processing");
         return;
       }
@@ -1650,7 +1641,7 @@ static std::string local_user_id(UserProfile* profile)
     return {};
   }
 
-  const auto* const user_id = profile->UserId;
+  auto* const user_id = profile->UserId();
   return user_id == nullptr ? std::string{} : to_string(user_id);
 }
 
@@ -2868,13 +2859,16 @@ namespace rtc
 
 static void HandleEntityGroup(EntityGroup* entity_group)
 {
-  if (entity_group == nullptr || entity_group->Group == nullptr || entity_group->Group->bytes == nullptr
-      || entity_group->Group->Length <= 0) {
+  if (entity_group == nullptr) {
+    return;
+  }
+  auto* const group = entity_group->Group();
+  if (group == nullptr || group->bytes() == nullptr || group->Length() <= 0) {
     return;
   }
 
-  const auto byteCount = static_cast<size_t>(entity_group->Group->Length);
-  const auto *bytesPtr = reinterpret_cast<const char*>(entity_group->Group->bytes->m_Items);
+  const auto byteCount = static_cast<size_t>(group->Length());
+  const auto *bytesPtr = reinterpret_cast<const char*>(group->bytes()->data());
 
   // Helper to run processing asynchronously with exception handling
   auto submit_async = [bytesPtr, byteCount]<typename T>(T&& func) {
@@ -2899,7 +2893,7 @@ static void HandleEntityGroup(EntityGroup* entity_group)
 
   const auto& sync_options = Config::Get().sync_options;
 
-  switch (entity_group->Type_) {
+  switch (entity_group->Type_()) {
     // away assignments
     case EntityGroup::Type::AwayAssignmentsList:
       if (sync_options.away_assignments) {
@@ -2911,7 +2905,6 @@ static void HandleEntityGroup(EntityGroup* entity_group)
         submit_async(processors::away_assignment_instance);
       }
       break;
-
     // battlelogs
     case EntityGroup::Type::BattleResultHeaders:
       if (sync_options.battlelogs) {
@@ -2931,7 +2924,7 @@ static void HandleEntityGroup(EntityGroup* entity_group)
         // Skipped if the local profile is not ready; a later response retries.
         auto* const local = processors::local_user_profile();
         if (auto self = processors::local_user_id(local); !self.empty()) {
-          submit_async([self = std::move(self), level = local->Level](std::unique_ptr<std::string>&& bytes) {
+          submit_async([self = std::move(self), level = local->Level()](std::unique_ptr<std::string>&& bytes) {
             processors::own_profile(std::move(bytes), self, level);
           });
         }
@@ -3100,70 +3093,26 @@ static void HandleEntityGroup(EntityGroup* entity_group)
 }
 
 // Platform responses (store offers among them) reach the same ProcessResultInternal detour as game server responses:
-// both model registries share one compiled method. Their entity group types use the Platform enum, so they must not
+// both model registries share one compiled method. Their entity groups use the Platform type enum, so they must not
 // go through HandleEntityGroup.
-static bool IsPlatformResponse(ServiceResponse* service_response)
+static void HandlePlatformResponse(PlatformServiceResponse* response)
 {
-  static const Il2CppClass* platform_class = nullptr;
-
-  const auto* const response = reinterpret_cast<Il2CppObject*>(service_response);
-  if (response == nullptr || response->klass == nullptr) {
-    return false;
-  }
-  if (response->klass == platform_class) {
-    return true;
-  }
-
-  const char* const name_space = il2cpp_class_get_namespace(response->klass);
-  const char* const name       = il2cpp_class_get_name(response->klass);
-  if (name_space != nullptr && name != nullptr && std::strcmp(name_space, "Digit.Platform.Models") == 0
-      && std::strcmp(name, "ServiceResponse") == 0) {
-    platform_class = response->klass;
-    return true;
-  }
-
-  return false;
-}
-
-static void HandlePlatformResponse(ServiceResponse* service_response)
-{
-  auto* const        response       = reinterpret_cast<Il2CppObject*>(service_response);
-  static auto* const response_class = response->klass;
-  static auto        entity_groups  = IL2CppClassHelper{response_class}.GetProperty("EntityGroups");
-  if (response->klass != response_class) {
+  auto* const entity_groups = response->EntityGroups();
+  if (entity_groups == nullptr) {
     return;
   }
 
-  auto* const groups = entity_groups.GetRaw<RepeatedField_EntityGroup>(response);
-  if (groups == nullptr) {
-    return;
-  }
-
-  for (int i = 0; i < groups->Count; ++i) {
-    auto* const group = reinterpret_cast<Il2CppObject*>(groups->get_Item(i));
-    if (group == nullptr || group->klass == nullptr) {
+  for (auto* const entity_group : *entity_groups) {
+    if (entity_group == nullptr || entity_group->Type_() != PlatformEntityGroup::StoreOffers) {
+      continue;
+    }
+    auto* const group = entity_group->Group();
+    if (group == nullptr || group->bytes() == nullptr || group->Length() <= 0) {
       continue;
     }
 
-    static auto* const group_class = group->klass;
-    static auto        group_type  = IL2CppClassHelper{group_class}.GetProperty("Type");
-    static auto        group_bytes = IL2CppClassHelper{group_class}.GetProperty("Group");
-    if (group->klass != group_class) {
-      continue;
-    }
-
-    const auto* const type = group_type.Get<int32_t>(group);
-    if (type == nullptr || *type != Digit::Platform::Models::EntityGroup::TYPE_STOREOFFERS) {
-      continue;
-    }
-
-    auto* const bytes = group_bytes.GetRaw<ByteString>(group);
-    if (bytes == nullptr || bytes->bytes == nullptr || bytes->Length <= 0) {
-      continue;
-    }
-
-    auto payload = std::make_unique<std::string>(reinterpret_cast<const char*>(bytes->bytes->m_Items),
-                                                 static_cast<size_t>(bytes->Length));
+    auto payload = std::make_unique<std::string>(reinterpret_cast<const char*>(group->bytes()->data()),
+                                                 static_cast<size_t>(group->Length()));
     try {
       std::thread([p = std::move(payload)]() mutable {
         try {
@@ -3232,7 +3181,7 @@ template <typename T> static void put(nlohmann::json& out, const char* key, cons
   }
 }
 
-// Game thread only. Missing members are left out.
+// Game thread only. Absent objects and unset times are left out; members missing from the client read as zero.
 static void add_live_state(nlohmann::json& out, FleetPlayerData* fleet, FleetState state)
 {
   const auto is_mining    = fleet->IsMining();
@@ -3241,57 +3190,57 @@ static void add_live_state(nlohmann::json& out, FleetPlayerData* fleet, FleetSta
   const auto is_home      = fleet->IsHome();
   const auto is_destroyed = fleet->IsDestroyed();
 
-  put(out, "is_home", is_home);
-  put(out, "is_deployed", fleet->IsDeployed());
-  put(out, "is_mining", is_mining);
-  put(out, "is_repairing", is_repairing);
-  put(out, "is_damaged", fleet->IsDamaged());
-  put(out, "is_destroyed", is_destroyed);
-  put(out, "drydock", fleet->DrydockID());
+  out["is_home"]      = is_home;
+  out["is_deployed"]  = fleet->IsDeployed();
+  out["is_mining"]    = is_mining;
+  out["is_repairing"] = is_repairing;
+  out["is_damaged"]   = fleet->IsDamaged();
+  out["is_destroyed"] = is_destroyed;
+  out["drydock"]      = fleet->DrydockID();
   // the client only updates this at the station; in space the server's hull points are the live value
-  if (is_home.value_or(false) || is_destroyed.value_or(false)) {
+  if (is_home || is_destroyed) {
     if (const auto damage = fleet->HullDamage()) {
       out["hull_damage"] = std::llround(*damage);
     }
   }
-  put(out, "cargo_fill", fleet->CargoResourceFillLevel());
+  out["cargo_fill"] = fleet->CargoResourceFillLevel();
 
-  if (auto* hold = fleet->GetCargoHoldData()) {
+  if (auto* hold = fleet->CargoHold()) {
     if (auto* current = hold->CurrentCargo()) {
-      put(out, "cargo", current->CurrentValue());
-      put(out, "cargo_max", current->MaxValue());
+      out["cargo"]     = current->CurrentValue();
+      out["cargo_max"] = current->MaxValue();
     }
     if (auto* protected_cargo = hold->ProtectedCargoProgress()) {
-      put(out, "protected_cargo", protected_cargo->CurrentValue());
+      out["protected_cargo"] = protected_cargo->CurrentValue();
     }
   }
 
-  if (is_mining.value_or(false)) {
+  if (is_mining) {
     if (auto* slot = fleet->MiningData()) {
-      put(out, "node_id", slot->ParentId());
-      put(out, "node_resource", slot->ResourceId());
-      put(out, "amount_mined", slot->AmountMined());
-      put(out, "occupied_since", ManagedRead::DateTimeToUnix(slot->OccupyTimeUtc()));
+      out["node_id"]       = slot->ParentId();
+      out["node_resource"] = slot->ResourceId();
+      out["amount_mined"]  = slot->AmountMined();
+      put(out, "occupied_since", slot->OccupyTimeUtc().UnixSeconds());
       if (auto* node = slot->PointData()) {
-        put(out, "node_amount", node->Amount());
+        out["node_amount"] = node->Amount();
       }
     }
-    put(out, "mining_rate", fleet->GetMiningRate());
+    out["mining_rate"] = fleet->GetMiningRate();
 
     if (auto* timer = fleet->MiningSlotTimer()) {
-      put(out, "mining_due", ManagedRead::DateTimeToUnix(timer->DueTime()));
+      put(out, "mining_due", timer->DueTime().UnixSeconds());
     }
   }
 
-  if (is_repairing.value_or(false)) {
+  if (is_repairing) {
     if (auto* timer = fleet->Timer()) {
-      put(out, "repair_due", ManagedRead::DateTimeToUnix(timer->DueTime()));
+      put(out, "repair_due", timer->DueTime().UnixSeconds());
     }
   }
 
   if (state == FleetState::WarpCharging || state == FleetState::Warping || state == FleetState::Impulsing) {
     if (auto* timer = fleet->Timer()) {
-      put(out, "travel_due", ManagedRead::DateTimeToUnix(timer->DueTime()));
+      put(out, "travel_due", timer->DueTime().UnixSeconds());
     }
   }
 }
@@ -3319,16 +3268,16 @@ static size_t late_fields(const nlohmann::json& record)
 // Game thread only: reads IL2CPP properties of a FleetPlayerData that is valid for the current frame.
 static nlohmann::json record(int slot, FleetPlayerData* fleet, FleetState state, FleetState previous)
 {
-  auto*         hull    = fleet->Hull;
-  // HullSpec::Id is read as a 32-bit long; hull ids run past 2^31 (e.g. Kumari 3005922948), so take
-  // the value as unsigned before widening or those come out negative in the record.
-  const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id)) : 0;
+  auto*         hull    = fleet->Hull();
+  // Hull ids are 32-bit and run past 2^31 (e.g. Kumari 3005922948); take the value as unsigned before widening so
+  // those never come out negative in the record.
+  const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id())) : 0;
 
   nlohmann::json out = {{"type", SyncConfig::Type::Fleets},
-                        {"fid", fleet->Id},
+                        {"fid", fleet->Id()},
                         {"slot", slot},
                         {"hull_id", hull_id},
-                        {"level", fleet->Level},
+                        {"level", fleet->Level()},
                         {"state", static_cast<int>(state)},
                         {"state_name", state_name(state)},
                         {"prev_state", static_cast<int>(previous)},
@@ -3338,10 +3287,10 @@ static nlohmann::json record(int slot, FleetPlayerData* fleet, FleetState state,
   try {
     add_live_state(out, fleet, state);
   } catch (const std::exception& e) {
-    spdlog::warn("Sync: fleet live state read failed for {}: {}", fleet->Id, e.what());
+    spdlog::warn("Sync: fleet live state read failed for {}: {}", fleet->Id(), e.what());
   }
 
-  sent_late[fleet->Id] = late_fields(out);
+  sent_late[fleet->Id()] = late_fields(out);
   return out;
 }
 
@@ -3356,7 +3305,7 @@ static void queue_snapshot(const char* reason)
   auto fleet_array = nlohmann::json::array();
   for (int slot = 0; slot < kFleetSlotCount; ++slot) {
     if (auto* fleet = manager->GetFleetPlayerData(slot); fleet) {
-      fleet_array.push_back(record(slot, fleet, fleet->CurrentState, fleet->PreviousState));
+      fleet_array.push_back(record(slot, fleet, fleet->CurrentState(), fleet->PreviousState()));
     }
   }
 
@@ -3415,11 +3364,11 @@ static void reread_requested()
   for (int slot = 0; slot < kFleetSlotCount; ++slot) {
     try {
       auto* fleet = manager->GetFleetPlayerData(slot);
-      if (!fleet || std::ranges::find(due, fleet->Id) == due.end()) {
+      if (!fleet || std::ranges::find(due, fleet->Id()) == due.end()) {
         continue;
       }
-      const auto before = sent_late[fleet->Id];
-      auto       entry  = record(slot, fleet, fleet->CurrentState, fleet->PreviousState);
+      const auto before = sent_late[fleet->Id()];
+      auto       entry  = record(slot, fleet, fleet->CurrentState(), fleet->PreviousState());
       if (late_fields(entry) != before) {
         fleet_array.push_back(std::move(entry));
       }
@@ -3460,6 +3409,14 @@ static void install()
 }
 } // namespace fleets
 
+using GameServerModelRegistry =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry">;
+using GameServer = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServer">;
+using SlotAssignRtcParser =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotAssignRtcParser">;
+using SlotClearRtcParser =
+    il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotClearRtcParser">;
+
 namespace hooks
 {
 // IL2CPP value type: keep this parameter by value so following arguments retain their platform ABI positions.
@@ -3473,11 +3430,11 @@ static_assert(sizeof(CentrifugoInfo) == 16);
 static void* RtcParser_ParseFinalPayload(auto original, void* _this, CentrifugoInfo centrifugoInfo,
                                          RealtimeDataPayload* realtimeDataPayload, void* finalPayload)
 {
-  if (realtimeDataPayload != nullptr && realtimeDataPayload->Target != nullptr
-      && realtimeDataPayload->DataType != nullptr && realtimeDataPayload->Data != nullptr) {
-    if (const auto type_string = to_string(realtimeDataPayload->DataType); std::stoi(type_string) == DataType::JSON) {
-      const auto target   = to_string(realtimeDataPayload->Target);
-      const auto rtc_data = to_string(realtimeDataPayload->Data);
+  if (realtimeDataPayload != nullptr && realtimeDataPayload->Target() != nullptr
+      && realtimeDataPayload->DataType() != nullptr && realtimeDataPayload->Data() != nullptr) {
+    if (const auto type_string = to_string(realtimeDataPayload->DataType()); std::stoi(type_string) == DataType::JSON) {
+      const auto target   = to_string(realtimeDataPayload->Target());
+      const auto rtc_data = to_string(realtimeDataPayload->Data());
 
       // spdlog::debug("Received RTC payload for target '{}': {}", target, rtc_data);
       auto payload = std::make_unique<std::string>(rtc_data);
@@ -3501,15 +3458,20 @@ static void GameServerModelRegistry_ProcessResultInternal(auto original, void* _
                                                           ServiceResponse* service_response, MethodInfo* method)
 {
   // Only the store offers option looks at Platform responses; everyone else keeps the unchanged path below.
-  if (Config::Get().sync_options.store_offers && IsPlatformResponse(service_response)) {
-    HandlePlatformResponse(service_response);
-    return original(_this, parsing_context, service_response, method);
+  if (Config::Get().sync_options.store_offers && service_response != nullptr) {
+    if (auto* const platform = service_response->As<PlatformServiceResponse>()) {
+      HandlePlatformResponse(platform);
+      return original(_this, parsing_context, service_response, method);
+    }
   }
 
-  auto* const entity_groups = service_response->EntityGroups;
-  for (int i = 0; i < entity_groups->Count; ++i) {
-    auto* const entity_group = entity_groups->get_Item(i);
-    HandleEntityGroup(entity_group);
+  // The hooked method is shared generic code; PlatformModelRegistry passes its own response type.
+  auto* const entity_groups =
+      service_response && service_response->Is<ServiceResponse>() ? service_response->EntityGroups() : nullptr;
+  if (entity_groups) {
+    for (auto* const entity_group : *entity_groups) {
+      HandleEntityGroup(entity_group);
+    }
   }
 
   return original(_this, parsing_context, service_response, method);
@@ -3543,74 +3505,31 @@ void InstallSyncPatches()
 {
   trackers::load_previously_sent_logs();
 
-  if (auto game_server_model_registry =
-          il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServerModelRegistry");
-      !game_server_model_registry.isValidHelper()) {
-    ErrorMsg::MissingHelper("Core", "GameServerModelRegistry");
-  } else {
-    if (auto *const ptr = game_server_model_registry.GetMethod("ProcessResultInternal"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("GameServerModelRegistry", "ProcessResultInternal");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, hooks::GameServerModelRegistry_ProcessResultInternal);
-    }
+  if (auto m = GameServerModelRegistry::Method("ProcessResultInternal"))
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::GameServerModelRegistry_ProcessResultInternal);
+
+  if (auto m = PrimeApp::Class::Method("InitPrimeServer"))
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::PrimeApp_InitPrimeServer);
+
+  // This hook only captures the game version for the X-PRIME-VERSION sync header
+  // (headers::primeVersion has a static fallback). It is optional so users can turn
+  // it off when another mod detours the same method — a native and a managed detour
+  // on one prologue corrupt each other and crash at login.
+  if (!Config::Get().installGameVersionHook) {
+    spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
+  } else if (auto m = GameServer::Method("Initialise")) {
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::GameServer_Initialise);
   }
 
-  if (auto prime_app = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "PrimeApp");
-      !prime_app.isValidHelper()) {
-    ErrorMsg::MissingHelper("Core", "PrimeApp");
-  } else {
-    if (auto *const ptr = prime_app.GetMethod("InitPrimeServer"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("PrimeApp", "InitPrimeServer");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, hooks::PrimeApp_InitPrimeServer);
-    }
-  }
+  if (auto m = GameServer::Method("SetInstanceIdHeader"))
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::GameServer_SetInstanceIdHeader);
 
-  if (auto game_server =
-          il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Core", "GameServer");
-      !game_server.isValidHelper()) {
-    ErrorMsg::MissingHelper("Core", "GameServer");
-  } else {
-    // This hook only captures the game version for the X-PRIME-VERSION sync header
-    // (headers::primeVersion has a static fallback). It is optional so users can turn
-    // it off when another mod detours the same method — a native and a managed detour
-    // on one prologue corrupt each other and crash at login.
-    if (!Config::Get().installGameVersionHook) {
-      spdlog::info("Sync: skipping GameServer::Initialise hook (patches.game_version = false)");
-    } else if (auto *const ptr = game_server.GetMethod("Initialise"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("GameServer", "Initialise");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, hooks::GameServer_Initialise);
-    }
+  // Each parser overrides ParseFinalPayload, so these are two distinct native methods.
+  if (auto m = SlotAssignRtcParser::Method("ParseFinalPayload"))
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::RtcParser_ParseFinalPayload);
 
-    if (auto *const ptr = game_server.GetMethod("SetInstanceIdHeader"); ptr == nullptr) {
-      ErrorMsg::MissingMethod("GameServer", "SetInstanceIdHeader");
-    } else {
-      SPUD_STATIC_DETOUR(ptr, hooks::GameServer_SetInstanceIdHeader);
-    }
-  }
-
-  if (auto slot_assign_parser = il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotAssignRtcParser");
-    !slot_assign_parser.isValidHelper()) {
-    ErrorMsg::MissingHelper("Parsers", "SlotAssignRtcParser");
-    } else {
-      if (auto* const ptr = slot_assign_parser.GetMethod("ParseFinalPayload"); ptr == nullptr) {
-        ErrorMsg::MissingMethod("SlotAssignRtcParser", "ParseFinalPayload");
-      } else {
-        SPUD_STATIC_DETOUR(ptr, hooks::RtcParser_ParseFinalPayload);
-      }
-    }
-
-  if (auto slot_clear_parser = il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Parsers", "SlotClearRtcParser");
-    !slot_clear_parser.isValidHelper()) {
-    ErrorMsg::MissingHelper("Parsers", "SlotClearRtcParser");
-    } else {
-      if (auto* const ptr = slot_clear_parser.GetMethod("ParseFinalPayload"); ptr == nullptr) {
-        ErrorMsg::MissingMethod("SlotClearRtcParser", "ParseFinalPayload");
-      } else {
-        SPUD_STATIC_DETOUR(ptr, hooks::RtcParser_ParseFinalPayload);
-      }
-    }
+  if (auto m = SlotClearRtcParser::Method("ParseFinalPayload"))
+    SPUD_STATIC_DETOUR(m.Pointer(), hooks::RtcParser_ParseFinalPayload);
 
   fleets::install();
 

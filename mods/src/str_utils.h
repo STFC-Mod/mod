@@ -8,8 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include <il2cpp/il2cpp.h>
 #include <simdutf.h>
-#include <il2cpp/il2cpp_helper.h>
 
 #if _WIN32
 #include <winrt/base.h>

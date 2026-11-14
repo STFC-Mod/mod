@@ -77,7 +77,7 @@ void InstallHavenHistoryHooks()
   auto context = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.PlanetaryBase", "PlanetaryHelpHistoryContext");
   auto applyRecords = context.GetMethod("ApplyRecords", 1);
   if (!applyRecords) {
-    ErrorMsg::MissingMethod("PlanetaryHelpHistoryContext", "ApplyRecords");
+    spdlog::error("Unable to find method PlanetaryHelpHistoryContext.ApplyRecords");
     return;
   }
 

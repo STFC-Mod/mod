@@ -1,8 +1,17 @@
 // Alliance Games store: native material research tooltips and currency refresh
 // after bundle readiness. One feature owner, no claim-trace or file probe.
-#include "patches/alliance_store_bindings.h"
 #include "patches/native_hook_extent.h"
 #include "patches/screen_update_hook.h"
+
+#include <il2cpp/il2cpp.h>
+#include <il2cpp/method_contract.h>
+#include <prime/BundleDataWidget.h>
+#include <prime/Component.h>
+#include <prime/GameObject.h>
+#include <prime/Hub.h>
+#include <prime/LocaleTextContext.h>
+#include <prime/Transform.h>
+#include <prime/Vector2.h>
 
 #include <spud/detour.h>
 #if _WIN32
@@ -11,64 +20,341 @@
 #include <spdlog/spdlog.h>
 #include <thread>
 
+#include <array>
 #include <chrono>
 #include <memory>
+#include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace
 {
-namespace store_game                  = alliance_store_game;
-using Clock                           = std::chrono::steady_clock;
-using StoreInventoryTooltip           = Il2CppObject;
-using StoreTooltipTrigger             = Il2CppObject;
-using StoreTooltipAction              = Il2CppObject;
-using StoreActionLocale               = Il2CppObject;
-using StoreActionLocales              = Il2CppObject;
-using AllianceStoreScroller           = Il2CppObject;
-using InventoryItem                   = Il2CppObject;
-using AllianceStoreContext            = Il2CppObject;
-using ShopListScrollerViewController  = Il2CppObject;
-using BundleDataWidget                = Il2CppObject;
-using Bundle                          = Il2CppObject;
+using Clock = std::chrono::steady_clock;
+
+struct UnityObject {
+  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Object">;
+};
+struct UnityResources {
+  using Class = il2cpp::Class<"UnityEngine.CoreModule", "UnityEngine", "Resources">;
+};
+
+// Digit.Client.Serialization.OverridableBool.
+struct OverridableBool {
+  bool serialized, current, modified;
+};
+static_assert(sizeof(OverridableBool) == 3);
+
+struct ActionLocaleSetting : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Actions", "ActionLocaleSetting">;
+};
+struct ActionLocaleSettingsList : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Actions", "ActionLocaleSettingsList">;
+};
+struct TooltipLoadAndShow : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipLoadAndShow">;
+};
+
+// A MonoBehaviour; the appearance fields are copied onto an action trigger that replaces it.
+struct TooltipTrigger : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipTrigger">;
+
+  OverridableBool showHeader()
+  { return Field<"_showHeader", OverridableBool>(); }
+  LocaleTextContext* header()
+  { return Field<"_header", LocaleTextContext*>(); }
+  OverridableBool showDescription()
+  { return Field<"_showDescription", OverridableBool>(); }
+  LocaleTextContext* description()
+  { return Field<"_description", LocaleTextContext*>(); }
+  bool overrideLocale()
+  { return Field<"_overrideLocale", bool>(); }
+  // Digit.Client.Tooltip.TooltipAnchor; -1 is Undefined.
+  int32_t anchorOverride()
+  { return Field<"_anchorOverride", int32_t>(); }
+  Vector2 sizeOverride()
+  { return Field<"_sizeOverride", Vector2>(); }
+  Transform* positionOverrideTarget()
+  { return Field<"_positionOverrideTarget", Transform*>(); }
+  Vector2 positionOverrideOffset()
+  { return Field<"_positionOverrideOffset", Vector2>(); }
+  bool isInteractable()
+  { return Field<"_isInteractable", bool>(); }
+  Il2CppString* descriptionOverrideText()
+  { return Field<"<DescriptionOverrideText>k__BackingField", Il2CppString*>(); }
+  TooltipLoadAndShow* loader()
+  { return Field<"_loader", TooltipLoadAndShow*>(); }
+
+  // Behaviour.enabled, distinguishing a failed call from the value.
+  std::optional<bool> Enabled()
+  { return TryCall<"get_enabled", bool()>(); }
+  bool SetEnabled(bool value)
+  { return TryCall<"set_enabled", void(bool)>(value); }
+};
+
+struct TooltipActionTrigger : TooltipTrigger {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Tooltip", "TooltipActionTrigger">;
+
+  void CopyAppearance(TooltipTrigger* plain)
+  {
+    SetField<"_showHeader">(plain->showHeader());
+    SetField<"_header">(plain->header());
+    SetField<"_showDescription">(plain->showDescription());
+    SetField<"_description">(plain->description());
+    SetField<"_overrideLocale">(plain->overrideLocale());
+    SetField<"_anchorOverride">(plain->anchorOverride());
+    SetField<"_sizeOverride">(plain->sizeOverride());
+    SetField<"_positionOverrideTarget">(plain->positionOverrideTarget());
+    SetField<"_positionOverrideOffset">(plain->positionOverrideOffset());
+    SetField<"_isInteractable">(plain->isInteractable());
+    SetField<"<DescriptionOverrideText>k__BackingField">(plain->descriptionOverrideText());
+    SetField<"_loader">(plain->loader());
+  }
+};
+
+// The tooltip on a shop card. Its context is the card's inventory item.
+struct InventoryTooltipTriggerWidget : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Inventories", "InventoryTooltipTriggerWidget">;
+
+  il2cpp::Object* Context()
+  { return Get<"Context", il2cpp::Object*>(); }
+  GameObject* gameObject()
+  { return Get<"gameObject", GameObject*>(); }
+
+  TooltipTrigger* tooltipTrigger()
+  { return Field<"_tooltipTrigger", TooltipTrigger*>(); }
+  void SetTooltipTrigger(TooltipTrigger* value)
+  { SetField<"_tooltipTrigger">(value); }
+  TooltipActionTrigger* tooltipActionTrigger()
+  { return Field<"_tooltipActionTrigger", TooltipActionTrigger*>(); }
+  void SetTooltipActionTrigger(TooltipActionTrigger* value)
+  { SetField<"_tooltipActionTrigger">(value); }
+  ActionLocaleSetting* searchActionLocaleSetting()
+  { return Field<"_searchActionLocaleSetting", ActionLocaleSetting*>(); }
+  void SetSearchActionLocaleSetting(ActionLocaleSetting* value)
+  { SetField<"_searchActionLocaleSetting">(value); }
+  ActionLocaleSetting* actionLocaleSetting()
+  { return Field<"_actionLocaleSetting", ActionLocaleSetting*>(); }
+  void SetActionLocaleSetting(ActionLocaleSetting* value)
+  { SetField<"_actionLocaleSetting">(value); }
+  ActionLocaleSettingsList* settings()
+  { return Field<"_settings", ActionLocaleSettingsList*>(); }
+  void SetSettings(ActionLocaleSettingsList* value)
+  { SetField<"_settings">(value); }
+
+  bool UpdateTooltipDescription()
+  { return TryCall<"UpdateTooltipDescription", void()>(); }
+  bool SetupActionTooltipTrigger()
+  { return TryCall<"SetupActionTooltipTrigger", void()>(); }
+};
+
+// Digit.Client.UI.SmartScrollerBase, the store's card pool.
+struct SmartScrollerBase : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SmartScrollerBase">;
+
+  il2cpp::List<il2cpp::Object*>* spawnedItems()
+  { return Field<"_spawnedItems", il2cpp::List<il2cpp::Object*>*>(); }
+  bool regeneratingContent()
+  { return Field<"_regeneratingContent", bool>(); }
+  il2cpp::Object* spawnerCoroutine()
+  { return Field<"_spawnerCoroutine", il2cpp::Object*>(); }
+  il2cpp::Object* dataHeldWhilstInitializing()
+  { return Field<"_dataHeldWhilstInitializing", il2cpp::Object*>(); }
+
+  std::optional<Vector2> NormalizedPosition()
+  { return TryCall<"get_NormalizedPosition", Vector2()>(); }
+  bool OnValueChangedCallback(Vector2 value)
+  { return TryCall<"OnValueChangedCallback", void(Vector2)>(value); }
+  std::optional<int32_t> VisibleItemsCount()
+  { return TryCall<"get_VisibleItemsCount", int32_t()>(); }
+  std::optional<float> ScrollPosition()
+  { return TryCall<"get_ScrollPosition", float()>(); }
+};
+
+struct ShopListScrollerViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopListScrollerViewController">;
+
+  // Declared as some scroller; only a SmartScrollerBase is used.
+  il2cpp::Object* smartScroller()
+  { return Field<"_smartScroller", il2cpp::Object*>(); }
+};
+
+// The store's context; its members resolve on the runtime class.
+struct AllianceGamesStoreContext : il2cpp::Object {
+  bool IsShopViewActive()
+  { return Get<"IsShopViewActive", bool>(); }
+  std::optional<bool> IsFetchingBundlesInProgress()
+  { return TryCall<"get_IsFetchingBundlesInProgress", bool()>(); }
+  int32_t BundlesCount()
+  { return Get<"BundlesCount", int32_t>(); }
+  il2cpp::Object* StoreCurrency()
+  { return Get<"StoreCurrency", il2cpp::Object*>(); }
+  bool UpdateStoreCurrency()
+  { return TryCall<"UpdateStoreCurrency", void()>(); }
+};
+
+struct AllianceGamesStoreScrollerViewController : ShopListScrollerViewController {
+  using Class =
+      il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Alliances.Games", "AllianceGamesStoreScrollerViewController">;
+
+  AllianceGamesStoreContext* AllianceGamesContext()
+  { return Get<"AllianceGamesContext", AllianceGamesStoreContext*>(); }
+};
+
+InventoryTooltipTriggerWidget* BundleTooltip(BundleDataWidget* card)
+{ return card->Field<"_invTooltip", InventoryTooltipTriggerWidget*>(); }
+ShopListScrollerViewController* BundleOwner(BundleDataWidget* card)
+{ return card->Field<"_scrollerController", ShopListScrollerViewController*>(); }
+
+// Upstream refuses to install when the native field contract changed: the hooks write these fields, and a missing
+// one would read as zero.
+template <typename Binding, il2cpp::Name N, typename T> bool StoreHasField()
+{ return il2cpp::detail::ResolveField(Binding::Class::Raw(), N.View(), il2cpp::detail::SlotOf<T>(), false); }
+
+bool StoreFieldsResolve()
+{
+  using Widget   = InventoryTooltipTriggerWidget;
+  using Trigger  = TooltipTrigger;
+  using Scroller = SmartScrollerBase;
+  bool ok        = true;
+  ok &= StoreHasField<Widget, "_tooltipTrigger", TooltipTrigger*>();
+  ok &= StoreHasField<Widget, "_tooltipActionTrigger", TooltipActionTrigger*>();
+  ok &= StoreHasField<Widget, "_searchActionLocaleSetting", ActionLocaleSetting*>();
+  ok &= StoreHasField<Widget, "_actionLocaleSetting", ActionLocaleSetting*>();
+  ok &= StoreHasField<Widget, "_settings", ActionLocaleSettingsList*>();
+  ok &= StoreHasField<Trigger, "_showHeader", OverridableBool>();
+  ok &= StoreHasField<Trigger, "_showDescription", OverridableBool>();
+  ok &= StoreHasField<Trigger, "_header", LocaleTextContext*>();
+  ok &= StoreHasField<Trigger, "_description", LocaleTextContext*>();
+  ok &= StoreHasField<Trigger, "_overrideLocale", bool>();
+  ok &= StoreHasField<Trigger, "_anchorOverride", int32_t>();
+  ok &= StoreHasField<Trigger, "_sizeOverride", Vector2>();
+  ok &= StoreHasField<Trigger, "_positionOverrideOffset", Vector2>();
+  ok &= StoreHasField<Trigger, "_positionOverrideTarget", Transform*>();
+  ok &= StoreHasField<Trigger, "_isInteractable", bool>();
+  ok &= StoreHasField<Trigger, "<DescriptionOverrideText>k__BackingField", Il2CppString*>();
+  ok &= StoreHasField<Trigger, "_loader", TooltipLoadAndShow*>();
+  ok &= StoreHasField<ShopListScrollerViewController, "_smartScroller", il2cpp::Object*>();
+  ok &= StoreHasField<Scroller, "_spawnedItems", il2cpp::List<il2cpp::Object*>*>();
+  ok &= StoreHasField<BundleDataWidget, "_invTooltip", InventoryTooltipTriggerWidget*>();
+  ok &= StoreHasField<BundleDataWidget, "_scrollerController", ShopListScrollerViewController*>();
+  ok &= StoreHasField<Scroller, "_regeneratingContent", bool>();
+  ok &= StoreHasField<Scroller, "_spawnerCoroutine", il2cpp::Object*>();
+  ok &= StoreHasField<Scroller, "_dataHeldWhilstInitializing", il2cpp::Object*>();
+  return ok;
+}
+
+// Unity's bool(Object): false for null and for destroyed native objects.
+bool Alive(il2cpp::Object* object)
+{ return object && UnityObject::Class::Call<"op_Implicit", bool>(object); }
+
+bool IsStore(il2cpp::Object* object)
+{ return object && object->Is<AllianceGamesStoreScrollerViewController>(); }
+
+// Native research eligibility of the card's resource. Empty when it cannot be determined.
+std::optional<bool> Eligible(il2cpp::Object* item, il2cpp::GcRoots& roots)
+{
+  auto* spec = roots.Keep(item->Get<"ResourceSpec", il2cpp::Object*>());
+  auto  id   = spec ? spec->Get<"Id", int64_t>() : 0;
+  if (id <= 0)
+    return std::nullopt;
+  auto* manager = roots.Keep(Hub::Class::Get<"ResearchManager", il2cpp::Object*>());
+  // Digit.PrimeServer.Models.ResearchTreeType; 0 is the main tree.
+  enum class ResearchTreeType : int32_t {};
+  return manager ? manager->TryCall<"IsResourceRequiredByVisibleResearches", bool(int64_t, ResearchTreeType)>(
+                       id, ResearchTreeType{})
+                 : std::nullopt;
+}
+
+std::optional<int32_t> CurrencyCount(AllianceGamesStoreContext* context, il2cpp::GcRoots& roots)
+{
+  auto* currencies = roots.Keep(context->StoreCurrency());
+  auto* soft = currencies ? roots.Keep(currencies->Get<"SoftResources", il2cpp::List<il2cpp::Object*>*>()) : nullptr;
+  return soft ? soft->TryCall<"get_Count", int32_t()>() : std::nullopt;
+}
+
+// The action trigger on the widget's GameObject; with `create`, added when there is none. Null when the lookup
+// failed, so a failed lookup never adds a second component.
+TooltipActionTrigger* ActionComponent(InventoryTooltipTriggerWidget* widget, bool create, il2cpp::GcRoots& roots)
+{
+  auto* object = roots.Keep(widget->gameObject());
+  auto* type   = object ? roots.Keep(TooltipActionTrigger::Class::TypeObject()) : nullptr;
+  if (!type)
+    return nullptr;
+  const auto found = object->TryCall<"GetComponent", TooltipActionTrigger*(Il2CppReflectionType*)>(type);
+  if (!found)
+    return nullptr;
+  if (*found)
+    return roots.Keep(*found);
+  return create ? roots.Keep(object->AddComponent<TooltipActionTrigger>()) : nullptr;
+}
+
+// The widget's own plain trigger, not an action trigger.
+TooltipTrigger* PlainComponent(InventoryTooltipTriggerWidget* widget, il2cpp::GcRoots& roots)
+{
+  auto* object = roots.Keep(widget->gameObject());
+  auto* value  = object ? roots.Keep(object->GetComponent<TooltipTrigger>()) : nullptr;
+  return value && value->klass == TooltipTrigger::Class::Raw() ? value : nullptr;
+}
+
+// A loaded tooltip widget that carries native research actions, whose locale settings the store cards borrow.
+InventoryTooltipTriggerWidget* Template(il2cpp::GcRoots& roots)
+{
+  auto* type  = roots.Keep(InventoryTooltipTriggerWidget::Class::TypeObject());
+  auto* found = type ? roots.Keep(UnityResources::Class::Call<"FindObjectsOfTypeAll", il2cpp::Array<il2cpp::Object*>*>(
+                           type))
+                     : nullptr;
+  if (!found)
+    return nullptr;
+  for (auto* object : *found) {
+    auto* widget = object ? object->As<InventoryTooltipTriggerWidget>() : nullptr;
+    if (widget && widget->tooltipActionTrigger() && widget->searchActionLocaleSetting())
+      return roots.Keep(widget);
+  }
+  return nullptr;
+}
+
 bool            alliance_store_active = false;
 std::thread::id alliance_store_thread;
 bool            StoreThread()
 { return alliance_store_active && std::this_thread::get_id() == alliance_store_thread; }
 
 struct AllianceStoreWork {
-  store_game::Handle source;
-  uint64_t           epoch   = 0;
-  bool               pending = false, currency = false, refreshing_currency = false, layout = false;
-  Clock::time_point  due{};
+  il2cpp::GcHandle  source;
+  uint64_t          epoch   = 0;
+  bool              pending = false, currency = false, refreshing_currency = false, layout = false;
+  Clock::time_point due{};
 } alliance_store_work;
 
 enum class ResearchUpdate { Unchanged, Upgraded, Restored, Unavailable, Failed };
 
-bool SameStoreItem(StoreInventoryTooltip* tooltip, InventoryItem* item)
-{
-  const auto alive = store_game::Alive(tooltip);
-  if (!alive || !alive.value)
-    return false;
-  const auto current = store_game::Call<Il2CppObject*>(tooltip, "get_Context");
-  return current && current.value == item;
-}
+bool SameStoreItem(InventoryTooltipTriggerWidget* tooltip, il2cpp::Object* item)
+{ return Alive(tooltip) && tooltip->Context() == item; }
 
 // Weak component identity survives pooled reuse without retaining a scene. Only
 // the original serialized assets stay rooted while our replacement is bound.
 struct OwnedStoreTooltip {
-  store_game::Handle widget, plain, action, store;
-  store_game::Handle search, locale, settings;
-  bool               bound = false, plain_enabled = true, retiring = false;
-  uint64_t           generation = 0;
+  il2cpp::GcHandle widget, plain, action, store;
+  il2cpp::GcHandle search, locale, settings;
+  bool             bound = false, plain_enabled = true, retiring = false;
+  uint64_t         generation = 0;
 };
 std::vector<std::shared_ptr<OwnedStoreTooltip>> alliance_store_tooltips;
 
-std::shared_ptr<OwnedStoreTooltip> OwnedTooltip(StoreInventoryTooltip* tooltip)
+std::shared_ptr<OwnedStoreTooltip> OwnedTooltip(InventoryTooltipTriggerWidget* tooltip)
 {
   for (auto& entry : alliance_store_tooltips)
     if (entry->widget.Get() == tooltip)
       return entry;
   return nullptr;
+}
+
+void ReleaseStoreAssets(OwnedStoreTooltip& entry)
+{
+  entry.bound = false;
+  entry.search.Reset();
+  entry.locale.Reset();
+  entry.settings.Reset();
 }
 
 bool RestoreStoreTooltip(OwnedStoreTooltip& entry)
@@ -84,111 +370,95 @@ bool RestoreStoreTooltip(OwnedStoreTooltip& entry)
     ~ClearRetiring()
     { value = false; }
   } clear{entry.retiring};
-  store_game::Roots roots;
-  auto*             widget = roots.Keep(entry.widget.Get<StoreInventoryTooltip>());
-  auto*             plain  = roots.Keep(entry.plain.Get<StoreTooltipTrigger>());
-  auto*             action = roots.Keep(entry.action.Get<StoreTooltipAction>());
-  const auto        alive  = store_game::Alive(widget);
-  if (!roots.healthy || !widget || !plain || !action || !alive)
+  il2cpp::GcRoots roots;
+  auto*           widget = roots.Keep(entry.widget.Get<InventoryTooltipTriggerWidget>());
+  auto*           plain  = roots.Keep(entry.plain.Get<TooltipTrigger>());
+  auto*           action = roots.Keep(entry.action.Get<TooltipActionTrigger>());
+  if (!roots.healthy() || !widget || !plain || !action)
     return false;
-  if (!alive.value) {
-    entry.bound = false;
-    entry.search.Reset();
-    entry.locale.Reset();
-    entry.settings.Reset();
+  if (!Alive(widget)) {
+    ReleaseStoreAssets(entry);
     return true;
   }
-  auto& f = store_game::Members();
-  if ((f.trigger.Read(widget) != plain && f.trigger.Read(widget) != action)
-      || (f.action.Read(widget) && f.action.Read(widget) != action)) {
+  auto* trigger = widget->tooltipTrigger();
+  if ((trigger != plain && trigger != action)
+      || (widget->tooltipActionTrigger() && widget->tooltipActionTrigger() != action)) {
     // A new native owner replaced our arrangement. Disable only our component;
     // never overwrite the replacement owner's fields or enabled state.
-    (void)store_game::Enabled(action, false);
-    entry.bound = false;
-    entry.search.Reset();
-    entry.locale.Reset();
-    entry.settings.Reset();
+    (void)action->SetEnabled(false);
+    ReleaseStoreAssets(entry);
     return true;
   }
-  bool ok = store_game::Enabled(action, false);
-  ok &= f.trigger.Write(widget, plain);
-  ok &= f.action.Write(widget, nullptr);
-  ok &= f.search.Write(widget, entry.search.Get<StoreActionLocale>());
-  ok &= f.locale.Write(widget, entry.locale.Get<StoreActionLocale>());
-  ok &= f.settings.Write(widget, entry.settings.Get<StoreActionLocales>());
-  ok &= store_game::Call<void>(widget, "UpdateTooltipDescription").succeeded;
-  ok &= store_game::Enabled(plain, entry.plain_enabled);
-  if (ok) {
-    entry.bound = false;
-    entry.search.Reset();
-    entry.locale.Reset();
-    entry.settings.Reset();
-  }
+  bool ok = action->SetEnabled(false);
+  widget->SetTooltipTrigger(plain);
+  widget->SetTooltipActionTrigger(nullptr);
+  widget->SetSearchActionLocaleSetting(entry.search.Get<ActionLocaleSetting>());
+  widget->SetActionLocaleSetting(entry.locale.Get<ActionLocaleSetting>());
+  widget->SetSettings(entry.settings.Get<ActionLocaleSettingsList>());
+  ok &= widget->UpdateTooltipDescription();
+  ok &= plain->SetEnabled(entry.plain_enabled);
+  if (ok)
+    ReleaseStoreAssets(entry);
   return ok;
 }
 
-ResearchUpdate ReconcileStoreTooltip(StoreInventoryTooltip* tooltip, StoreInventoryTooltip*& donor,
-                                     store_game::Roots& pass_roots)
+ResearchUpdate ReconcileStoreTooltip(InventoryTooltipTriggerWidget* tooltip, InventoryTooltipTriggerWidget*& donor,
+                                     il2cpp::GcRoots& pass_roots)
 {
-  store_game::Roots roots;
+  il2cpp::GcRoots roots;
   if (!roots.Keep(tooltip))
     return ResearchUpdate::Unavailable;
   const auto epoch     = alliance_store_work.epoch;
-  auto*      store     = roots.Keep(alliance_store_work.source.Get<AllianceStoreScroller>());
-  const auto alive     = store_game::Alive(tooltip);
-  const auto observed  = alive && alive.value ? store_game::Call<Il2CppObject*>(tooltip, "get_Context")
-                                              : store_game::Result<InventoryItem*>{};
-  auto*      item      = observed ? roots.Keep(observed.value) : nullptr;
+  auto*      store     = roots.Keep(alliance_store_work.source.Get<AllianceGamesStoreScrollerViewController>());
+  auto*      item      = Alive(tooltip) ? roots.Keep(tooltip->Context()) : nullptr;
   auto       same_item = [&] {
     if (!store || alliance_store_work.epoch != epoch || alliance_store_work.source.Get() != store)
       return false;
-    const auto live_store = store_game::Alive(store);
-    return live_store && live_store.value && SameStoreItem(tooltip, item) && alliance_store_work.epoch == epoch
+    return Alive(store) && SameStoreItem(tooltip, item) && alliance_store_work.epoch == epoch
            && alliance_store_work.source.Get() == store;
   };
-  auto* plain = item ? store_game::PlainComponent(tooltip, roots) : nullptr;
+  auto* plain = item ? PlainComponent(tooltip, roots) : nullptr;
   if (!plain)
     return ResearchUpdate::Unchanged;
-  auto& f           = store_game::Members();
-  auto* old_action  = roots.Keep(f.action.Read(tooltip));
-  auto* old_trigger = roots.Keep(f.trigger.Read(tooltip));
+  auto* old_action  = roots.Keep(tooltip->tooltipActionTrigger());
+  auto* old_trigger = roots.Keep(tooltip->tooltipTrigger());
   auto  owned       = OwnedTooltip(tooltip);
   // Existing native action components and unrelated arrangements remain native.
-  if (!roots.healthy || (old_action && (!owned || owned->action.Get() != old_action))
+  if (!roots.healthy() || (old_action && (!owned || owned->action.Get() != old_action))
       || (old_action ? old_trigger != old_action : old_trigger != plain))
     return ResearchUpdate::Unchanged;
-  const auto eligible = store_game::Eligible(item);
+  const auto eligible = Eligible(item, roots);
   if (!eligible || !same_item())
     return ResearchUpdate::Unavailable;
-  if (!eligible.value)
+  if (!*eligible)
     return owned && owned->bound ? (RestoreStoreTooltip(*owned) ? ResearchUpdate::Restored : ResearchUpdate::Failed)
                                  : ResearchUpdate::Unchanged;
   if (!donor)
-    donor = store_game::Template(pass_roots);
+    donor = Template(pass_roots);
   if (!donor)
     return ResearchUpdate::Unavailable;
-  auto*      search        = roots.Keep(f.search.Read(donor));
-  auto*      locale        = roots.Keep(f.locale.Read(donor));
-  auto*      settings      = roots.Keep(f.settings.Read(donor));
-  auto*      loader        = roots.Keep(f.loader.Read(plain));
-  const auto plain_enabled = store_game::Call<bool>(plain, "get_enabled");
-  if (!roots.healthy || !search || !loader || !plain_enabled || !same_item())
+  auto*      search        = roots.Keep(donor->searchActionLocaleSetting());
+  auto*      locale        = roots.Keep(donor->actionLocaleSetting());
+  auto*      settings      = roots.Keep(donor->settings());
+  auto*      loader        = roots.Keep(plain->loader());
+  const auto plain_enabled = plain->Enabled();
+  if (!roots.healthy() || !search || !loader || !plain_enabled || !same_item())
     return ResearchUpdate::Unavailable;
-  auto* action = store_game::ActionComponent(tooltip, false, roots);
+  auto* action = ActionComponent(tooltip, false, roots);
   // Reuse only the disabled component this feature previously added.
   if (action && (!owned || owned->action.Get() != action))
     return ResearchUpdate::Unchanged;
   if (!action)
-    action = store_game::ActionComponent(tooltip, true, roots);
+    action = ActionComponent(tooltip, true, roots);
   if (!action)
     return ResearchUpdate::Unavailable;
   if (!owned) {
     auto entry    = std::make_shared<OwnedStoreTooltip>();
-    entry->widget = store_game::Handle::Weak(tooltip);
-    entry->plain  = store_game::Handle::Weak(plain);
-    entry->action = store_game::Handle::Weak(action);
-    if (!entry->widget || !entry->plain || !entry->action) {
-      store_game::Enabled(action, false);
+    entry->widget = il2cpp::GcHandle::Weak(tooltip);
+    entry->plain  = il2cpp::GcHandle::Weak(plain);
+    entry->action = il2cpp::GcHandle::Weak(action);
+    if (entry->widget.Get() != tooltip || entry->plain.Get() != plain || entry->action.Get() != action) {
+      (void)action->SetEnabled(false);
       return ResearchUpdate::Unavailable;
     }
     alliance_store_tooltips.push_back(std::move(entry));
@@ -196,27 +466,23 @@ ResearchUpdate ReconcileStoreTooltip(StoreInventoryTooltip* tooltip, StoreInvent
   }
   const bool previously_bound = owned->bound;
   if (!owned->bound) {
-    auto retain = []<typename T>(T* value, store_game::Handle& handle) {
-      handle = store_game::Handle::Strong(value);
-      return !value || (handle && handle.Get() == value);
+    auto retain = [](il2cpp::Object* value, il2cpp::GcHandle& handle) {
+      handle = il2cpp::GcHandle::Strong(value);
+      return !value || handle.Get() == value;
     };
-    if (!retain(f.search.Read(tooltip), owned->search) || !retain(f.locale.Read(tooltip), owned->locale)
-        || !retain(f.settings.Read(tooltip), owned->settings)) {
-      owned->search.Reset();
-      owned->locale.Reset();
-      owned->settings.Reset();
-      store_game::Enabled(action, false);
+    if (!retain(tooltip->searchActionLocaleSetting(), owned->search)
+        || !retain(tooltip->actionLocaleSetting(), owned->locale) || !retain(tooltip->settings(), owned->settings)) {
+      ReleaseStoreAssets(*owned);
+      (void)action->SetEnabled(false);
       return ResearchUpdate::Unavailable;
     }
-    owned->store = store_game::Handle::Weak(store);
-    if (!owned->store || owned->store.Get() != store) {
-      owned->search.Reset();
-      owned->locale.Reset();
-      owned->settings.Reset();
-      store_game::Enabled(action, false);
+    owned->store = il2cpp::GcHandle::Weak(store);
+    if (owned->store.Get() != store) {
+      ReleaseStoreAssets(*owned);
+      (void)action->SetEnabled(false);
       return ResearchUpdate::Unavailable;
     }
-    owned->plain_enabled = plain_enabled.value;
+    owned->plain_enabled = *plain_enabled;
     owned->bound         = true;
   }
   const auto generation = ++owned->generation;
@@ -231,30 +497,35 @@ ResearchUpdate ReconcileStoreTooltip(StoreInventoryTooltip* tooltip, StoreInvent
     }
   } rollback{owned};
 
-  if (!store_game::Enabled(action, false) || !store_game::CopyAppearance(plain, action, roots) || !current()
-      || !f.search.Write(tooltip, search) || !f.locale.Write(tooltip, locale) || !f.settings.Write(tooltip, settings)
-      || !f.trigger.Write(tooltip, action) || !f.action.Write(tooltip, action)
-      || !store_game::Call<void>(tooltip, "UpdateTooltipDescription") || !current()
-      || !store_game::Call<void>(tooltip, "SetupActionTooltipTrigger") || !current()
-      || !store_game::Enabled(plain, false) || !store_game::Enabled(action, true) || !current())
+  if (!action->SetEnabled(false))
     return ResearchUpdate::Failed;
-  const auto enabled = store_game::Call<bool>(action, "get_enabled");
-  if (!current() || !enabled || !enabled.value || f.trigger.Read(tooltip) != action || f.action.Read(tooltip) != action)
+  action->CopyAppearance(plain);
+  if (!current())
+    return ResearchUpdate::Failed;
+  tooltip->SetSearchActionLocaleSetting(search);
+  tooltip->SetActionLocaleSetting(locale);
+  tooltip->SetSettings(settings);
+  tooltip->SetTooltipTrigger(action);
+  tooltip->SetTooltipActionTrigger(action);
+  if (!tooltip->UpdateTooltipDescription() || !current() || !tooltip->SetupActionTooltipTrigger() || !current()
+      || !plain->SetEnabled(false) || !action->SetEnabled(true) || !current())
+    return ResearchUpdate::Failed;
+  const auto enabled = action->Enabled();
+  if (!current() || !enabled || !*enabled || tooltip->tooltipTrigger() != action
+      || tooltip->tooltipActionTrigger() != action)
     return ResearchUpdate::Failed;
   rollback.committed = true;
   return previously_bound ? ResearchUpdate::Unchanged : ResearchUpdate::Upgraded;
 }
 
-void QueueStore(AllianceStoreScroller* source, bool currency)
+void QueueStore(AllianceGamesStoreScrollerViewController* source, bool currency)
 {
-  if (!store_game::IsStore(source))
-    return;
   auto& work = alliance_store_work;
   if (work.source.Get() != source) {
-    work.source = store_game::Handle::Weak(source);
+    work.source = il2cpp::GcHandle::Weak(source);
     ++work.epoch;
   }
-  if (!work.source)
+  if (work.source.Get() != source)
     return;
   // Debounce through separate-frame native card spawning.
   work.due     = Clock::now() + std::chrono::milliseconds(250);
@@ -263,7 +534,7 @@ void QueueStore(AllianceStoreScroller* source, bool currency)
   work.layout |= currency && !work.refreshing_currency;
 }
 
-void AllianceStoreScroller_OnDidBindCanvasContext_Hook(auto original, AllianceStoreScroller* self)
+void AllianceStoreScroller_OnDidBindCanvasContext_Hook(auto original, AllianceGamesStoreScrollerViewController* self)
 {
   if (!StoreThread()) {
     original(self);
@@ -271,10 +542,12 @@ void AllianceStoreScroller_OnDidBindCanvasContext_Hook(auto original, AllianceSt
   }
   original(self);
   std::erase_if(alliance_store_tooltips, [](auto& entry) { return !entry->widget.Get(); });
-  QueueStore(self, true);
+  if (IsStore(self))
+    QueueStore(self, true);
 }
 
-void AllianceStoreScroller_OnAboutToReleaseCanvasContext_Hook(auto original, AllianceStoreScroller* self)
+void AllianceStoreScroller_OnAboutToReleaseCanvasContext_Hook(auto                                      original,
+                                                              AllianceGamesStoreScrollerViewController* self)
 {
   if (!StoreThread()) {
     original(self);
@@ -303,8 +576,8 @@ void ShopListScrollerViewController_RegenerateSortedBundles_Hook(auto original, 
     return;
   }
   original(self, instant);
-  if (store_game::IsStore(self) && !alliance_store_work.refreshing_currency)
-    QueueStore(reinterpret_cast<AllianceStoreScroller*>(self), true);
+  if (IsStore(self) && !alliance_store_work.refreshing_currency)
+    QueueStore(static_cast<AllianceGamesStoreScrollerViewController*>(self), true);
 }
 
 void BundleDataWidget_OnAboutToReleaseContext_Hook(auto original, BundleDataWidget* self)
@@ -313,8 +586,7 @@ void BundleDataWidget_OnAboutToReleaseContext_Hook(auto original, BundleDataWidg
     original(self);
     return;
   }
-  auto* tooltip = store_game::Members().bundle_tooltip.Read(self);
-  if (auto entry = OwnedTooltip(tooltip))
+  if (auto entry = OwnedTooltip(BundleTooltip(self)))
     (void)RestoreStoreTooltip(*entry);
   original(self);
 }
@@ -323,9 +595,9 @@ void QueueStoreCard(BundleDataWidget* self)
 {
   // Native OnDidBindContext sets this AFTER SetupTooltip. Never use the
   // RefreshBundle argument or a pre-bind owner as current-card identity.
-  auto* owner = store_game::Members().bundle_owner.Read(self);
-  if (owner && alliance_store_work.source.Get() == owner)
-    QueueStore(reinterpret_cast<AllianceStoreScroller*>(owner), false);
+  auto* owner = BundleOwner(self);
+  if (owner && alliance_store_work.source.Get() == owner && IsStore(owner))
+    QueueStore(static_cast<AllianceGamesStoreScrollerViewController*>(owner), false);
 }
 void BundleDataWidget_RefreshBundle_Hook(auto original, BundleDataWidget* self, Bundle* bundle)
 {
@@ -346,6 +618,9 @@ void BundleDataWidget_OnDidBindContext_Hook(auto original, BundleDataWidget* sel
   QueueStoreCard(self);
 }
 
+std::string StoreCount(const auto& value)
+{ return value ? std::to_string(*value) : "unavailable"; }
+
 void AllianceStoreFrame()
 {
   if (!StoreThread())
@@ -353,25 +628,20 @@ void AllianceStoreFrame()
   auto& work = alliance_store_work;
   if (!work.pending || Clock::now() < work.due)
     return;
-  const bool currency     = std::exchange(work.currency, false);
-  const bool layout       = std::exchange(work.layout, false);
-  work.pending            = false;
-  const auto        epoch = work.epoch;
-  store_game::Roots roots;
-  auto*             source   = roots.Keep(work.source.Get<AllianceStoreScroller>());
-  const auto        alive    = store_game::Alive(source);
-  const auto        observed = source && alive && alive.value
-                                   ? store_game::Call<Il2CppObject*>(source, "get_AllianceGamesContext")
-                                   : store_game::Result<AllianceStoreContext*>{};
-  auto*             context  = observed ? roots.Keep(observed.value) : nullptr;
-  const auto active = context ? store_game::Call<bool>(context, "get_IsShopViewActive") : store_game::Result<bool>{};
-  if (!context || !active || !active.value)
+  const bool currency = std::exchange(work.currency, false);
+  const bool layout   = std::exchange(work.layout, false);
+  work.pending        = false;
+  const auto      epoch = work.epoch;
+  il2cpp::GcRoots roots;
+  auto*           source  = roots.Keep(work.source.Get<AllianceGamesStoreScrollerViewController>());
+  auto*           context = source && Alive(source) ? roots.Keep(source->AllianceGamesContext()) : nullptr;
+  if (!context || !context->IsShopViewActive())
     return;
   if (work.epoch != epoch || work.source.Get() != source)
     return;
-  auto& fields = store_game::Members();
-  auto* smart  = roots.Keep(fields.scroller.Read(source));
-  if (smart && (fields.regenerating.Read(smart) || fields.spawning.Read(smart) || fields.initializing.Read(smart))) {
+  auto* scroller = roots.Keep(source->smartScroller());
+  auto* smart    = scroller ? scroller->As<SmartScrollerBase>() : nullptr;
+  if (smart && (smart->regeneratingContent() || smart->spawnerCoroutine() || smart->dataHeldWhilstInitializing())) {
     work.pending = true;
     work.currency |= currency;
     work.layout |= layout;
@@ -380,36 +650,34 @@ void AllianceStoreFrame()
   }
   bool position_notified = false;
   if (layout && smart) {
-    const auto position   = store_game::NormalizedPosition(smart);
-    const auto live_smart = store_game::Alive(smart);
-    if (position && live_smart && live_smart.value && work.epoch == epoch && work.source.Get() == source
-        && fields.scroller.Read(source) == smart) {
-      position_notified = store_game::NotifyPosition(smart, position.value);
+    const auto position = smart->NormalizedPosition();
+    if (position && Alive(smart) && work.epoch == epoch && work.source.Get() == source
+        && source->smartScroller() == smart) {
+      position_notified = smart->OnValueChangedCallback(*position);
     }
   }
-  if (work.epoch != epoch || work.source.Get() != source || fields.scroller.Read(source) != smart)
+  if (work.epoch != epoch || work.source.Get() != source || source->smartScroller() != scroller)
     return;
-  auto*      pool  = smart ? roots.Keep(fields.spawned.Read(smart)) : nullptr;
-  const auto count = pool ? store_game::Call<int32_t>(pool, "get_Count") : store_game::Result<int32_t>{};
-  if (!count || count.value < 0)
+  auto*      pool  = smart ? roots.Keep(smart->spawnedItems()) : nullptr;
+  const auto count = pool ? pool->TryCall<"get_Count", int32_t()>() : std::nullopt;
+  if (!count || *count < 0)
     return;
-  int                    upgraded = 0, restored = 0, unavailable = 0, failed = 0;
-  StoreInventoryTooltip* donor        = nullptr;
-  auto*                  tooltip_type = roots.Keep(store_game::TypeObject(store_game::TooltipClass()));
+  int                            upgraded = 0, restored = 0, unavailable = 0, failed = 0;
+  InventoryTooltipTriggerWidget* donor        = nullptr;
+  auto*                          tooltip_type = roots.Keep(InventoryTooltipTriggerWidget::Class::TypeObject());
   if (!tooltip_type)
     return;
-  for (int32_t index = 0; index < count.value; ++index) {
+  for (int32_t index = 0; index < *count; ++index) {
     if (work.epoch != epoch || work.source.Get() != source)
       return;
-    store_game::Roots card_roots;
-    const auto entry = store_game::Call<Il2CppObject*>(pool, "get_Item", {store_game::Scalar(index, "System.Int32")});
-    auto*      rect  = entry ? card_roots.Keep(entry.value) : nullptr;
-    const auto live  = store_game::Alive(rect);
-    if (!rect || !live || !live.value)
+    il2cpp::GcRoots card_roots;
+    auto*           rect = card_roots.Keep((*pool)[index]);
+    if (!rect || !Alive(rect))
       continue;
-    const auto tooltip = store_game::Result<Il2CppObject*>{
-        true, store_game::Component(rect, "GetComponentInChildren", store_game::TooltipClass(), card_roots, true)};
-    switch (tooltip && tooltip.value ? ReconcileStoreTooltip(tooltip.value, donor, roots) : ResearchUpdate::Unchanged) {
+    auto* tooltip =
+        card_roots.Keep(rect->Call<"GetComponentInChildren", InventoryTooltipTriggerWidget*(Il2CppReflectionType*, bool)>(
+            tooltip_type, true));
+    switch (tooltip ? ReconcileStoreTooltip(tooltip, donor, roots) : ResearchUpdate::Unchanged) {
       case ResearchUpdate::Upgraded:
         ++upgraded;
         break;
@@ -426,40 +694,34 @@ void AllianceStoreFrame()
         break;
     }
   }
-  bool                        refreshed = false;
-  store_game::Result<int32_t> currency_before, currency_after;
+  bool                   refreshed = false;
+  std::optional<int32_t> currency_before, currency_after;
   // Native bundle-derived discovery, not a fixed list of currency IDs. An
   // empty/loading store waits for its real data/regeneration event.
-  const auto fetching = store_game::Call<bool>(context, "get_IsFetchingBundlesInProgress");
-  const auto bundles  = store_game::Call<int32_t>(context, "get_BundlesCount");
-  if (currency && work.epoch == epoch && work.source.Get() == source && fetching && !fetching.value && bundles
-      && bundles.value > 0) {
+  const auto fetching = context->IsFetchingBundlesInProgress();
+  if (currency && work.epoch == epoch && work.source.Get() == source && fetching && !*fetching
+      && context->BundlesCount() > 0) {
     work.refreshing_currency = true;
     struct Reset {
       bool& value;
       ~Reset()
       { value = false; }
     } reset{work.refreshing_currency};
-    currency_before        = store_game::CurrencyCount(context, roots);
-    const auto current     = store_game::Call<Il2CppObject*>(source, "get_AllianceGamesContext");
-    const auto live_source = store_game::Alive(source);
-    if (current && current.value == context && live_source && live_source.value && work.epoch == epoch
+    currency_before = CurrencyCount(context, roots);
+    if (source->AllianceGamesContext() == context && Alive(source) && work.epoch == epoch
         && work.source.Get() == source) {
-      refreshed      = store_game::Call<void>(context, "UpdateStoreCurrency").succeeded;
-      currency_after = store_game::CurrencyCount(context, roots);
+      refreshed      = context->UpdateStoreCurrency();
+      currency_after = CurrencyCount(context, roots);
     }
   }
   if (layout)
     spdlog::info("[AllianceGamesStore] settled layout notification={} (position unchanged)", position_notified);
-  const auto visible  = store_game::Call<int32_t>(smart, "get_VisibleItemsCount");
-  const auto position = store_game::Call<float>(smart, "get_ScrollPosition");
+  const auto visible  = smart ? smart->VisibleItemsCount() : std::nullopt;
+  const auto position = smart ? smart->ScrollPosition() : std::nullopt;
   spdlog::info("[AllianceGamesStore] pool={} upgraded={} restored={} unavailable={} failed={} currency_refresh={} "
                "currencies={}->{} visible={} position={}",
-               count.value, upgraded, restored, unavailable, failed, refreshed,
-               currency_before ? std::to_string(currency_before.value) : "unavailable",
-               currency_after ? std::to_string(currency_after.value) : "unavailable",
-               visible ? std::to_string(visible.value) : "unavailable",
-               position ? std::to_string(position.value) : "unavailable");
+               *count, upgraded, restored, unavailable, failed, refreshed, StoreCount(currency_before),
+               StoreCount(currency_after), StoreCount(visible), StoreCount(position));
 }
 
 bool StoreHookFits(const MethodInfo* method)
@@ -490,9 +752,9 @@ void InstallAllianceGamesStoreHooks()
   static bool attempted = false;
   if (std::exchange(attempted, true))
     return;
-  auto*            store = store_game::Class("Digit.Prime.Alliances.Games", "AllianceGamesStoreScrollerViewController");
-  auto*            shop  = store_game::Class("Digit.Prime.Shop", "ShopListScrollerViewController");
-  auto*            card  = store_game::Class("Digit.Prime.Shop", "BundleDataWidget");
+  auto*            store = AllianceGamesStoreScrollerViewController::Class::Raw();
+  auto*            shop  = ShopListScrollerViewController::Class::Raw();
+  auto*            card  = BundleDataWidget::Class::Raw();
   const std::array targets{
       method_contract::Resolve(store, "OnDidBindCanvasContext", false, "System.Void", {}),
       method_contract::Resolve(store, "OnAboutToReleaseCanvasContext", false, "System.Void", {}),
@@ -500,7 +762,7 @@ void InstallAllianceGamesStoreHooks()
       method_contract::Resolve(card, "RefreshBundle", false, "System.Void", {"Digit.PrimePlatform.Content.Bundle"}),
       method_contract::Resolve(card, "OnAboutToReleaseContext", false, "System.Void", {}),
       method_contract::Resolve(card, "OnDidBindContext", false, "System.Void", {})};
-  if (!store_game::Members().Resolve()) {
+  if (!StoreFieldsResolve()) {
     spdlog::warn("[AllianceGamesStore] unavailable: native field contract changed");
     return;
   }

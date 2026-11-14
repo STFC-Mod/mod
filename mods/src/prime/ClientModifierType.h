@@ -1,6 +1,8 @@
+#pragma once
 
+#include <cstdint>
 
-enum class ClientModifierType {
+enum class ClientModifierType : int32_t {
   Invalid                                 = -0x7FFF,
   FleetOfficerBonusHealth                 = -17,
   FleetOfficerBonusDefense                = -16,

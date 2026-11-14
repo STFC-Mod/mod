@@ -1,75 +1,31 @@
 #pragma once
 
-#include "errormsg.h"
-
-#include <il2cpp/il2cpp_helper.h>
-
 #include "ChatManager.h"
 
-class SwipeScroller
-{
-public:
-  __declspec(property(get = __get__currentContentIndex)) int32_t _currentContentIndex;
+#include <il2cpp/il2cpp.h>
 
+struct SwipeScroller : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "SwipeScroller">;
+
+  int32_t currentContentIndex()
+  { return Field<"_currentContentIndex", int32_t>(); }
   void FocusOnInstantly(int32_t index)
-  {
-    static auto FocusOnInstantlyMethod = get_class_helper().GetMethod<void(SwipeScroller*, int32_t)>("FocusOnInstantly");
-    static auto FocusOnInstantlyWarn = true;
-    if (FocusOnInstantlyMethod) {
-      FocusOnInstantlyMethod(this, index);
-    } else if (FocusOnInstantlyWarn) {
-      FocusOnInstantlyWarn = false;
-      ErrorMsg::MissingMethod("SwipeScroller", "FocusOnInstantly");
-    }
-  }
-
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "SwipeScroller");
-    return class_helper;
-  }
-
-  int32_t __get__currentContentIndex()
-  {
-    static auto field = get_class_helper().GetField("_currentContentIndex");
-    return *(int32_t*)((ptrdiff_t)this + field.offset());
-  }
+  { Call<"FocusOnInstantly">(index); }
 };
 
-class ChatPreviewController
-{
-public:
-  __declspec(property(get = __get__panelIndicators)) Il2CppArray* _panelIndicators;
-  __declspec(property(get = __get__swipeScroller)) SwipeScroller* _swipeScroller;
-  __declspec(property(get = __get__focusedPanel, put = __set__focusedPanel)) ChatChannelCategory _focusedPanel;
+struct ChatPreviewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController">;
 
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Chat", "ChatPreviewController");
-    return class_helper;
-  }
-
-  Il2CppArray* __get__panelIndicators()
-  {
-    static auto field = get_class_helper().GetField("_panelIndicators");
-    return *(Il2CppArray**)((ptrdiff_t)this + field.offset());
-  }
-
-  SwipeScroller* __get__swipeScroller()
-  {
-    static auto field = get_class_helper().GetField("_swipeScroller");
-    return *(SwipeScroller**)((ptrdiff_t)this + field.offset());
-  }
-
-  ChatChannelCategory __get__focusedPanel()
-  {
-    static auto field = get_class_helper().GetField("_focusedPanel");
-    return *(ChatChannelCategory*)((ptrdiff_t)this + field.offset());
-  }
-
-  void __set__focusedPanel(ChatChannelCategory v)
-  {
-    static auto field                                         = get_class_helper().GetField("_focusedPanel");
-    *(ChatChannelCategory*)((ptrdiff_t)this + field.offset()) = v;
-  }
+  // ImageSelector[]
+  il2cpp::Array<il2cpp::Object*>* panelIndicators()
+  { return Field<"_panelIndicators", il2cpp::Array<il2cpp::Object*>*>(); }
+  SwipeScroller* swipeScroller()
+  { return Field<"_swipeScroller", SwipeScroller*>(); }
+  ChatChannelCategory focusedPanel()
+  { return Field<"_focusedPanel", ChatChannelCategory>(); }
+  void SetFocusedPanel(ChatChannelCategory value)
+  { SetField<"_focusedPanel">(value); }
+  // Set by the game after its visibility refresh for a section change.
+  bool isSectionChangedCompleted()
+  { return Field<"_isSectionChangedCompleted", bool>(); }
 };

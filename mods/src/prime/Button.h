@@ -1,20 +1,10 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-class Button
-{
-public:
+struct Button : il2cpp::Object {
+  using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Button">;
+
   void Press()
-  {
-    auto PressMethod = get_class_helper().GetMethod<void(Button*)>("Press");
-    PressMethod(this);
-  };
-
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("UnityEngine.UI", "UnityEngine.UI", "Button");
-    return class_helper;
-  };
+  { Call<"Press">(); }
 };

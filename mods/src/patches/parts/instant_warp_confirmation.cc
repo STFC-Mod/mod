@@ -1,5 +1,4 @@
 #include "config.h"
-#include "errormsg.h"
 #include "patches/instant_warp_policy.h"
 #include "ship_name_match.h"
 
@@ -14,31 +13,27 @@
 
 namespace
 {
-using PopupAction                         = void(CoursePromptPopupWidget*);
-PopupAction* initiate_regular_warp        = nullptr;
-PopupAction* on_instant_warp_button_click = nullptr;
-
 void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromptPopupViewController* _this)
 {
   original(_this);
 
-  const auto widget  = _this == nullptr ? nullptr : _this->PopupWidget;
-  const auto context = widget == nullptr ? nullptr : widget->Context;
-  if (context == nullptr || !context->HasInstantWarp) {
+  const auto widget  = _this == nullptr ? nullptr : _this->PopupWidget();
+  const auto context = widget == nullptr ? nullptr : widget->Context();
+  if (context == nullptr || !context->HasInstantWarp()) {
     return;
   }
 
   FleetPlayerData* fleet = nullptr;
   if (const auto course = context->GetCourseData(); course != nullptr)
-    fleet = course->PlayerFleet;
+    fleet = course->PlayerFleet();
   const auto action = ResolveInstantWarpConfirmation(fleet);
   spdlog::debug("InstantWarpConfirmation: resolved action {}", static_cast<int>(action));
   switch (action) {
     case InstantWarpConfirmation::Warp:
-      initiate_regular_warp(widget);
+      widget->InitiateRegularWarp();
       break;
     case InstantWarpConfirmation::Jump:
-      on_instant_warp_button_click(widget);
+      widget->OnInstantWarpButtonClick();
       break;
     case InstantWarpConfirmation::None:
       break;
@@ -66,36 +61,13 @@ InstantWarpConfirmation ResolveInstantWarpConfirmation(FleetPlayerData* fleet)
 
 void InstallInstantWarpConfirmationHooks()
 {
-  auto helper = CoursePromptPopupViewController::get_class_helper();
-  if (!helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.ObjectViewer", "CoursePromptPopupViewController");
+  // The hook is useless without both popup actions, so skip it (and the label) when either has drifted.
+  const auto about_to_show = CoursePromptPopupViewController::Class::Method("AboutToShow", 0);
+  if (!about_to_show || !CoursePromptPopupWidget::Class::Method("InitiateRegularWarp", 0)
+      || !CoursePromptPopupWidget::Class::Method("OnInstantWarpButtonClick", 0)) {
     return;
   }
 
-  const auto about_to_show = helper.GetMethod("AboutToShow", 0);
-  if (about_to_show == nullptr) {
-    ErrorMsg::MissingMethod("CoursePromptPopupViewController", "AboutToShow");
-    return;
-  }
-
-  auto widget_helper = CoursePromptPopupWidget::get_class_helper();
-  if (!widget_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.Navigation", "CoursePromptPopupWidget");
-    return;
-  }
-
-  initiate_regular_warp = widget_helper.GetMethod<PopupAction>("InitiateRegularWarp", 0);
-  if (initiate_regular_warp == nullptr) {
-    ErrorMsg::MissingMethod("CoursePromptPopupWidget", "InitiateRegularWarp");
-    return;
-  }
-
-  on_instant_warp_button_click = widget_helper.GetMethod<PopupAction>("OnInstantWarpButtonClick", 0);
-  if (on_instant_warp_button_click == nullptr) {
-    ErrorMsg::MissingMethod("CoursePromptPopupWidget", "OnInstantWarpButtonClick");
-    return;
-  }
-
-  if (SPUD_STATIC_DETOUR(about_to_show, CoursePromptPopupViewController_AboutToShow_Hook))
+  if (SPUD_STATIC_DETOUR(about_to_show.Pointer(), CoursePromptPopupViewController_AboutToShow_Hook))
     InstallWarpActionLabel();
 }

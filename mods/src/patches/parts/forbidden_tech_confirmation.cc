@@ -1,9 +1,8 @@
-#include "errormsg.h"
 #include "config.h"
 
-#include <il2cpp/il2cpp_helper.h>
-#include <spud/detour.h>
+#include <il2cpp/il2cpp.h>
 #include <spdlog/spdlog.h>
+#include <spud/detour.h>
 
 #include <cstring>
 
@@ -12,7 +11,15 @@ namespace
 constexpr int32_t ConfirmButtonResult = 1;
 constexpr int32_t YesButtonResult     = 3;
 
-const FieldInfo* on_selection_field = nullptr;
+using MessageBox = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageBox">;
+
+struct MessageBoxContext : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.UI", "MessageBoxContext">;
+
+  // Action<MessageBox.ButtonResult>
+  Il2CppDelegate* OnSelection()
+  { return Field<"OnSelection", Il2CppDelegate*>(); }
+};
 
 bool IsForbiddenTechConfirmation(const Il2CppDelegate* callback)
 {
@@ -46,16 +53,18 @@ bool ConfirmForbiddenTechUpgrade(Il2CppDelegate* callback)
     return false;
   }
 
-  int32_t          result    = ConfirmButtonResult;
-  void*            args[]    = {&result};
-  Il2CppException* exception = nullptr;
-  il2cpp_runtime_invoke(callback->method, callback->target, args, &exception);
-
-  if (exception != nullptr) {
-    spdlog::warn("ForbiddenTechConfirmation: failed to invoke the confirmation callback");
+  // The closure was identified above, so call its method directly. If it throws, show the dialog
+  // instead so the upgrade is never lost silently.
+  using Closure = void (*)(Il2CppObject*, int32_t, const MethodInfo*);
+  if (callback->method->parameters_count != 1)
+    return false;
+  try {
+    reinterpret_cast<Closure>(callback->method->methodPointer)(callback->target, ConfirmButtonResult,
+                                                               callback->method);
+  } catch (...) {
+    spdlog::warn("ForbiddenTechConfirmation: confirmation callback threw; showing the dialog");
     return false;
   }
-
   return true;
 }
 
@@ -79,23 +88,14 @@ bool ConfirmAllianceContribution(Il2CppDelegate* callback)
   return true;
 }
 
-Il2CppDelegate* GetSelectionCallback(void* context)
+void MessageBox_Show_Hook(auto original, MessageBoxContext* context)
 {
-  if (context == nullptr || on_selection_field == nullptr) {
-    return nullptr;
-  }
-
-  return *reinterpret_cast<Il2CppDelegate**>(reinterpret_cast<char*>(context) + on_selection_field->offset);
-}
-
-void MessageBox_Show_Hook(auto original, void* context)
-{
-  if (!ConfirmForbiddenTechUpgrade(GetSelectionCallback(context))) {
+  if (!context || !ConfirmForbiddenTechUpgrade(context->OnSelection())) {
     original(context);
   }
 }
 
-void MessageBox_ShowWithCallback_Hook(auto original, void* context, Il2CppDelegate* callback)
+void MessageBox_ShowWithCallback_Hook(auto original, MessageBoxContext* context, Il2CppDelegate* callback)
 {
   if (!ConfirmForbiddenTechUpgrade(callback) && !ConfirmAllianceContribution(callback)) {
     original(context, callback);
@@ -105,35 +105,8 @@ void MessageBox_ShowWithCallback_Hook(auto original, void* context, Il2CppDelega
 
 void InstallForbiddenTechConfirmationHooks()
 {
-  auto message_box_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "MessageBox");
-  if (!message_box_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Client.UI", "MessageBox");
-    return;
-  }
-
-  auto context_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "MessageBoxContext");
-  if (!context_helper.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Client.UI", "MessageBoxContext");
-    return;
-  }
-
-  on_selection_field = il2cpp_class_get_field_from_name(context_helper.get_cls(), "OnSelection");
-  if (on_selection_field == nullptr) {
-    spdlog::error("Unable to find field 'MessageBoxContext->OnSelection'");
-    return;
-  }
-
-  const auto show = message_box_helper.GetMethod("Show", 1);
-  if (show == nullptr) {
-    ErrorMsg::MissingMethod("MessageBox", "Show");
-  } else {
-    SPUD_STATIC_DETOUR(show, MessageBox_Show_Hook);
-  }
-
-  const auto show_with_callback = message_box_helper.GetMethod("Show", 2);
-  if (show_with_callback == nullptr) {
-    ErrorMsg::MissingMethod("MessageBox", "Show");
-  } else {
-    SPUD_STATIC_DETOUR(show_with_callback, MessageBox_ShowWithCallback_Hook);
-  }
+  if (auto m = MessageBox::Method("Show", 1))
+    SPUD_STATIC_DETOUR(m.Pointer(), MessageBox_Show_Hook);
+  if (auto m = MessageBox::Method("Show", 2))
+    SPUD_STATIC_DETOUR(m.Pointer(), MessageBox_ShowWithCallback_Hook);
 }

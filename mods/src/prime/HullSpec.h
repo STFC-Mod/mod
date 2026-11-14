@@ -1,8 +1,10 @@
 #pragma once
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 
-enum class HullType {
+#include <cstdint>
+
+enum class HullType : int32_t {
   Any          = -1,
   Destroyer    = 0,
   Survey       = 1,
@@ -12,43 +14,26 @@ enum class HullType {
   ArmadaTarget = 5
 };
 
-struct HullSpec {
-public:
-  __declspec(property(get = __get_Id)) long Id;
-  __declspec(property(get = __get_Name)) Il2CppString* Name;
-  __declspec(property(get = __get_IdStr)) Il2CppString* IdStr;
-  __declspec(property(get = __get_Type)) HullType Type;
+struct IdRefs : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "IdRefs">;
 
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "HullSpec");
-    return class_helper;
-  }
+  Il2CppString* locaStringId()
+  { return Field<"_locaStringId", Il2CppString*>(); }
+  int64_t locaId()
+  { return Field<"locaId_", int64_t>(); }
+};
 
-public:
-  long __get_Id()
-  {
-    static auto field = get_class_helper().GetField("id_").offset();
-    return *(long*)((char*)this + field);
-  }
+struct HullSpec : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "HullSpec">;
 
-  Il2CppString* __get_Name()
-  {
-    static auto field = get_class_helper().GetField("name_").offset();
-    return *(Il2CppString**)((char*)this + field);
-  }
-
-  Il2CppString* __get_IdStr()
-  {
-    static auto field = get_class_helper().GetField("idStr_").offset();
-    return *(Il2CppString**)((char*)this + field);
-  }
-
-  HullType __get_Type()
-  {
-    static auto prop = get_class_helper().GetProperty("Type");
-    return *prop.Get<HullType>(this);
-  }
+  int64_t Id()
+  { return Field<"id_", int64_t>(); }
+  Il2CppString* Name()
+  { return Field<"name_", Il2CppString*>(); }
+  Il2CppString* IdStr()
+  { return Field<"idStr_", Il2CppString*>(); }
+  HullType Type()
+  { return Get<"Type", HullType>(); }
+  IdRefs* idRefs()
+  { return Field<"idRefs_", IdRefs*>(); }
 };

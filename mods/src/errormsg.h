@@ -10,21 +10,6 @@
 
 namespace ErrorMsg
 {
-static auto MissingMethod(const char* classname, const char* methodname)
-{
-  spdlog::error("Unable to find method '{}->{}'", classname, methodname);
-}
-
-static void MissingStaticMethod(const char* classname, const char* methodname)
-{
-  spdlog::error("Unable to find method '{}::{}'", classname, methodname);
-}
-
-static void MissingHelper(const char* namespacename, const char* classname)
-{
-  spdlog::error("Unable to find helper '{}.{}'", namespacename, classname);
-}
-
 static void SyncMsg(const char* section, const std::string& msg)
 {
   spdlog::error("Failed to send {} sync data: {}", section, msg);

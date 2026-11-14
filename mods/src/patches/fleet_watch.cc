@@ -149,8 +149,8 @@ int occupied_slot_count()
 void dispatch_transition(int slot, FleetPlayerData* fleet, FleetState before, FleetState after)
 {
   const fleet_watch::Transition transition{
-      .before = fleet_watch::Snapshot{slot, fleet->Id, before},
-      .after  = fleet_watch::Snapshot{slot, fleet->Id, after},
+      .before = fleet_watch::Snapshot{slot, fleet->Id(), before},
+      .after  = fleet_watch::Snapshot{slot, fleet->Id(), after},
       .fleet  = fleet,
   };
   CallbackScope callback_scope;
@@ -190,8 +190,8 @@ void observe_fleet(FleetPlayerData* fleet, int requested_slot, bool publish)
   const auto slot = requested_slot;
 
   auto&      previous   = s_slots[slot];
-  const auto fleet_id   = fleet->Id;
-  const auto state      = fleet->CurrentState;
+  const auto fleet_id   = fleet->Id();
+  const auto state      = fleet->CurrentState();
   const bool same_fleet = previous.occupied && previous.fleet_id == fleet_id;
   const bool same_state = same_fleet && previous.state == state;
   if (!same_fleet && !s_seed_pending) {
@@ -260,7 +260,7 @@ ScanResult scan_manager(bool publish, bool only_fast_polling)
       continue;
     }
     const bool occupied = fleets[slot] != nullptr;
-    const auto fleet_id = occupied ? fleets[slot]->Id : 0;
+    const auto fleet_id = occupied ? fleets[slot]->Id() : 0;
     if (s_slots[slot].occupied != occupied || (occupied && s_slots[slot].fleet_id != fleet_id)) {
       result.topology_changed = true;
       if (result.changed_slot < 0) {
@@ -412,7 +412,7 @@ void Tick()
     s_manager_probe_slot = (slot + 1) % kFleetSlotCount;
     auto*      fleet     = manager->GetFleetPlayerData(slot);
     const bool occupied  = fleet != nullptr;
-    const auto fleet_id  = occupied ? fleet->Id : 0;
+    const auto fleet_id  = occupied ? fleet->Id() : 0;
     if (s_slots[slot].occupied != occupied || (occupied && s_slots[slot].fleet_id != fleet_id)) {
       restart_seed(slot, fleet_id);
       return;

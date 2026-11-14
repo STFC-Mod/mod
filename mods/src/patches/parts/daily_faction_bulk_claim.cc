@@ -1,12 +1,12 @@
 #include "config.h"
-#include "errormsg.h"
 #include "str_utils.h"
 
+#include <prime/Component.h>
+#include <prime/EventSystem.h>
 #include <prime/GameObject.h>
-#include <prime/IList.h>
 #include <prime/Transform.h>
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/il2cpp.h>
 #include <spud/detour.h>
 
 #include <spdlog/fmt/ranges.h>
@@ -19,74 +19,53 @@ namespace
 {
 constexpr std::string_view kFactionPointResourcePrefix = "Resource_FactionPoint_";
 
-class ResourceSpec
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ResourceSpec");
-    return class_helper;
-  }
+struct ResourceSpec : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ResourceSpec">;
 
-public:
-  static IL2CppClassHelper& ClassHelper()
+  Il2CppString* resourceId()
+  { return Field<"resourceId_", Il2CppString*>(); }
+};
+
+struct InventoryItem : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem">;
+
+  ResourceSpec* resourceSpec()
+  { return Field<"_resourceSpec", ResourceSpec*>(); }
+};
+
+struct PointerEventData : il2cpp::Object {
+  using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.EventSystems", "PointerEventData">;
+};
+
+struct Toggle : Component {
+  using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Toggle">;
+
+  bool isOn()
+  { return Get<"isOn", bool>(); }
+  void OnPointerClick(PointerEventData* event)
+  { Call<"OnPointerClick">(event); }
+
+  // Goes through the pointer handler instead of the isOn setter, so interactable checks and
+  // listeners behave as for a real click.
+  void SimulateClick()
   {
-    return get_class_helper();
+    if (auto* event = il2cpp::New<PointerEventData>(EventSystem::current()))
+      OnPointerClick(event);
   }
 };
 
-class InventoryItem
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem");
-    return class_helper;
-  }
+struct MissionViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Missions", "MissionViewController">;
 
-public:
-  static IL2CppClassHelper& ClassHelper()
-  {
-    return get_class_helper();
-  }
+  Toggle* ClaimAllToggle()
+  { return Field<"_claimAllToggle", Toggle*>(); }
 };
 
-class MissionViewController
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Missions", "MissionViewController");
-    return class_helper;
-  }
+// GetClaimableDailiesList returns List<ITournament>; the items are EventModel today.
+using TournamentList = il2cpp::List<il2cpp::Object*>;
 
-public:
-  static IL2CppClassHelper& ClassHelper()
-  {
-    return get_class_helper();
-  }
-
-  Il2CppObject* ClaimAllToggle()
-  {
-    static auto field = get_class_helper().GetField("_claimAllToggle");
-    return field.isValidHelper() ? *(Il2CppObject**)((ptrdiff_t)this + field.offset()) : nullptr;
-  }
-};
-
-Transform* GetTransformOf(Il2CppObject* component)
-{
-  if (component == nullptr || component->klass == nullptr) {
-    return nullptr;
-  }
-  auto helper = IL2CppClassHelper{component->klass}.GetParent("Component");
-  if (!helper.isValidHelper()) {
-    return nullptr;
-  }
-  return helper.GetProperty("transform").GetRaw<Transform>(component);
-}
+Transform* GetTransformOf(Component* component)
+{ return component ? component->transform() : nullptr; }
 
 Transform* FindChildByName(Transform* root, const char* name)
 {
@@ -94,12 +73,12 @@ Transform* FindChildByName(Transform* root, const char* name)
     return nullptr;
   }
 
-  auto* go = root->gameObject;
+  auto* go = root->gameObject();
   if (go != nullptr && go->Name() == name) {
     return root;
   }
 
-  for (int32_t i = 0; i < root->childCount; ++i) {
+  for (int32_t i = 0; i < root->childCount(); ++i) {
     if (auto* found = FindChildByName(root->GetChild(i), name)) {
       return found;
     }
@@ -125,7 +104,7 @@ void ApplyFactionIconVisibility(Transform* toggle_tf)
     return;
   }
 
-  auto* parent = toggle_tf->parent;
+  auto* parent = toggle_tf->parent();
   if (parent == nullptr) {
     spdlog::debug("[DailyFactionBulkClaim] ApplyFactionIconVisibility: toggle has no parent Transform");
     return;
@@ -140,7 +119,7 @@ void ApplyFactionIconVisibility(Transform* toggle_tf)
       continue;
     }
 
-    auto* go = icon_transform->gameObject;
+    auto* go = icon_transform->gameObject();
     if (go == nullptr) {
       continue;
     }
@@ -151,114 +130,9 @@ void ApplyFactionIconVisibility(Transform* toggle_tf)
   }
 }
 
-class UnityEventSystem
-{
-public:
-  static Il2CppObject* Current()
-  {
-    static auto class_helper =
-        il2cpp_get_class_helper("UnityEngine.UI", "UnityEngine.EventSystems", "EventSystem");
-    static auto get_current = class_helper.GetMethodInfo("get_current", 0);
-    if (get_current == nullptr) {
-      return nullptr;
-    }
-    Il2CppException* exception = nullptr;
-    auto*            result    = il2cpp_runtime_invoke(get_current, nullptr, nullptr, &exception);
-    return exception != nullptr ? nullptr : result;
-  }
-};
-
-class UnityToggle
-{
-private:
-  static IL2CppClassHelper& get_class_helper()
-  {
-    static auto class_helper = il2cpp_get_class_helper("UnityEngine.UI", "UnityEngine.UI", "Toggle");
-    return class_helper;
-  }
-
-public:
-  static IL2CppClassHelper& ClassHelper()
-  {
-    return get_class_helper();
-  }
-
-  static bool IsOn(Il2CppObject* toggle)
-  {
-    if (toggle == nullptr) {
-      return false;
-    }
-    static auto get_is_on = get_class_helper().GetMethodInfo("get_isOn", 0);
-    if (get_is_on == nullptr) {
-      return false;
-    }
-    Il2CppException* exception = nullptr;
-    auto*            result    = il2cpp_runtime_invoke(get_is_on, toggle, nullptr, &exception);
-    if (exception != nullptr || result == nullptr) {
-      return false;
-    }
-    return *(bool*)il2cpp_object_unbox(result);
-  }
-
-  static void SimulateClick(Il2CppObject* toggle)
-  {
-    if (toggle == nullptr) {
-      return;
-    }
-
-    static auto on_pointer_click = get_class_helper().GetMethodInfoSpecial("OnPointerClick", [](auto count, auto) {
-      return count == 1;
-    });
-    if (on_pointer_click == nullptr) {
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: OnPointerClick(PointerEventData) not "
-                   "found");
-      return;
-    }
-
-    static auto event_data_helper =
-        il2cpp_get_class_helper("UnityEngine.UI", "UnityEngine.EventSystems", "PointerEventData");
-    if (event_data_helper.get_cls() == nullptr) {
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: PointerEventData class not found");
-      return;
-    }
-    static auto ctor = event_data_helper.GetMethodInfoSpecial(".ctor", [](auto count, auto) { return count == 1; });
-    if (ctor == nullptr) {
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: PointerEventData(EventSystem) ctor not "
-                   "found");
-      return;
-    }
-
-    auto* event_data = il2cpp_object_new(event_data_helper.get_cls());
-    if (event_data == nullptr) {
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: PointerEventData allocation failed");
-      return;
-    }
-
-    Il2CppException* exception    = nullptr;
-    auto*            event_system = UnityEventSystem::Current();
-    void*            ctor_args[1] = {event_system};
-    il2cpp_runtime_invoke(ctor, event_data, ctor_args, &exception);
-    if (exception != nullptr) {
-      char buffer[256] = {};
-      il2cpp_format_exception(exception, buffer, sizeof(buffer));
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: PointerEventData ctor threw: {}", buffer);
-      return;
-    }
-
-    exception       = nullptr;
-    void* args[1]   = {event_data};
-    il2cpp_runtime_invoke(on_pointer_click, toggle, args, &exception);
-    if (exception != nullptr) {
-      char buffer[256] = {};
-      il2cpp_format_exception(exception, buffer, sizeof(buffer));
-      spdlog::debug("[DailyFactionBulkClaim] UnityToggle::SimulateClick: OnPointerClick invoke threw: {}", buffer);
-    }
-  }
-};
-
-bool          g_applied_default_toggle_on      = false;
-int           g_default_toggle_attempts        = 0;
-Il2CppObject* g_active_mission_view_controller = nullptr;
+bool                   g_applied_default_toggle_on      = false;
+int                    g_default_toggle_attempts        = 0;
+MissionViewController* g_active_mission_view_controller = nullptr;
 
 constexpr int kMaxDefaultToggleAttempts = 300;
 
@@ -269,7 +143,7 @@ void ApplyDefaultToggleOnOnce(MissionViewController* controller)
     return;
   }
 
-  if (UnityToggle::IsOn(toggle)) {
+  if (toggle->isOn()) {
     g_applied_default_toggle_on = true;
     return;
   }
@@ -281,9 +155,9 @@ void ApplyDefaultToggleOnOnce(MissionViewController* controller)
     return;
   }
 
-  UnityToggle::SimulateClick(toggle);
+  toggle->SimulateClick();
 
-  if (UnityToggle::IsOn(toggle)) {
+  if (toggle->isOn()) {
     spdlog::debug("[DailyFactionBulkClaim] daily_bulk_claim_toggle_default_on: forced Claim All toggle on "
                  "(attempt {})",
                  g_default_toggle_attempts);
@@ -308,45 +182,15 @@ bool IsMainFactionDaily(const std::string& faction_name)
   return std::ranges::any_of(kFactionIconNames, [&](const auto& entry) { return lowered == entry.faction; });
 }
 
-std::string FactionNameOfTournament(Il2CppObject* tournament)
+std::string FactionNameOfTournament(il2cpp::Object* tournament)
 {
-  if (tournament == nullptr || tournament->klass == nullptr) {
+  auto* rewards = tournament ? tournament->Field<"_factionPointRewards", il2cpp::List<InventoryItem*>*>() : nullptr;
+  if (!rewards)
     return {};
-  }
 
-  auto list_field = IL2CppClassHelper{tournament->klass}.GetField("_factionPointRewards");
-  if (!list_field.isValidHelper()) {
-    return {};
-  }
-
-  auto* list_obj = *(Il2CppObject**)((char*)tournament + list_field.offset());
-  if (list_obj == nullptr) {
-    return {};
-  }
-
-  auto* list = (IList*)list_obj;
-  for (int32_t i = 0; i < list->Count; ++i) {
-    auto* item = list->Get(i);
-    if (item == nullptr || item->klass == nullptr) {
-      continue;
-    }
-
-    auto spec_field = IL2CppClassHelper{item->klass}.GetField("_resourceSpec");
-    if (!spec_field.isValidHelper()) {
-      continue;
-    }
-
-    auto* spec = *(Il2CppObject**)((char*)item + spec_field.offset());
-    if (spec == nullptr || spec->klass == nullptr) {
-      continue;
-    }
-
-    auto id_field = IL2CppClassHelper{spec->klass}.GetField("resourceId_");
-    if (!id_field.isValidHelper()) {
-      continue;
-    }
-
-    auto* id_str = *(Il2CppString**)((char*)spec + id_field.offset());
+  for (auto* item : *rewards) {
+    auto* spec   = item ? item->resourceSpec() : nullptr;
+    auto* id_str = spec ? spec->resourceId() : nullptr;
     if (id_str == nullptr) {
       continue;
     }
@@ -360,20 +204,20 @@ std::string FactionNameOfTournament(Il2CppObject* tournament)
   return {};
 }
 
-void FilterClaimableDailiesByFaction(IList* list, const std::vector<std::string>& configured)
+void FilterClaimableDailiesByFaction(TournamentList* list, const std::vector<std::string>& configured)
 {
   if (list == nullptr) {
     spdlog::debug("[DailyFactionBulkClaim] GetClaimableDailiesList returned null; nothing to filter");
     return;
   }
 
-  const auto total = list->Count;
+  const auto total = list->Count();
   spdlog::debug("[DailyFactionBulkClaim] filtering {} claimable daily(ies) against configured factions [{}]", total,
                fmt::join(configured, ", "));
 
   int kept = 0;
   for (int32_t i = total - 1; i >= 0; --i) {
-    auto* tournament    = list->Get(i);
+    auto* tournament    = (*list)[i];
     auto  faction_name  = FactionNameOfTournament(tournament);
     const bool is_main_faction_daily = IsMainFactionDaily(faction_name);
     auto  matches       = FactionMatches(faction_name, configured);
@@ -393,12 +237,11 @@ void FilterClaimableDailiesByFaction(IList* list, const std::vector<std::string>
   spdlog::debug("[DailyFactionBulkClaim] kept {}/{} daily(ies) for claiming", kept, total);
 }
 
-IList* MissionViewController_GetClaimableDailiesList(auto original, Il2CppObject* _this)
+TournamentList* MissionViewController_GetClaimableDailiesList(auto original, MissionViewController* _this)
 {
-  auto* list = (IList*)original(_this);
+  auto* list = original(_this);
 
-  auto* controller = (MissionViewController*)_this;
-  ApplyFactionIconVisibility(GetTransformOf(controller->ClaimAllToggle()));
+  ApplyFactionIconVisibility(GetTransformOf(_this->ClaimAllToggle()));
 
   const auto& configured = Config::Get().daily_bulk_claim_factions;
   if (configured.empty()) {
@@ -409,20 +252,16 @@ IList* MissionViewController_GetClaimableDailiesList(auto original, Il2CppObject
   return list;
 }
 
-void MissionViewController_AboutToShow(auto original, Il2CppObject* _this)
+void MissionViewController_AboutToShow(auto original, MissionViewController* _this)
 {
   original(_this);
 
-  auto* controller = (MissionViewController*)_this;
-  auto* toggle     = controller->ClaimAllToggle();
-  auto* toggle_tf  = GetTransformOf(toggle);
-
-  ApplyFactionIconVisibility(toggle_tf);
+  ApplyFactionIconVisibility(GetTransformOf(_this->ClaimAllToggle()));
 
   g_active_mission_view_controller = _this;
 }
 
-void MissionViewController_AboutToHide(auto original, Il2CppObject* _this)
+void MissionViewController_AboutToHide(auto original, MissionViewController* _this)
 {
   if (g_active_mission_view_controller == _this) {
     g_active_mission_view_controller = nullptr;
@@ -435,65 +274,17 @@ void MissionViewController_AboutToHide(auto original, Il2CppObject* _this)
 void DailyFactionBulkClaimUpdate()
 {
   if (g_active_mission_view_controller != nullptr) {
-    ApplyDefaultToggleOnOnce((MissionViewController*)g_active_mission_view_controller);
+    ApplyDefaultToggleOnOnce(g_active_mission_view_controller);
   }
 }
 
 void InstallDailyFactionBulkClaimHooks()
 {
-  auto resource_spec = ResourceSpec::ClassHelper();
-  if (!resource_spec.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.PrimeServer.Models", "ResourceSpec");
-  } else if (!resource_spec.GetField("resourceId_").isValidHelper()) {
-    ErrorMsg::MissingMethod("ResourceSpec", "resourceId_");
-  }
-
-  auto inventory_item = InventoryItem::ClassHelper();
-  if (!inventory_item.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.PrimeServer.Models", "InventoryItem");
-  } else if (!inventory_item.GetField("_resourceSpec").isValidHelper()) {
-    ErrorMsg::MissingMethod("InventoryItem", "_resourceSpec");
-  }
-
-  auto unity_toggle = UnityToggle::ClassHelper();
-  if (!unity_toggle.isValidHelper()) {
-    ErrorMsg::MissingHelper("UnityEngine.UI", "Toggle");
-  } else {
-    if (unity_toggle.GetMethodInfo("get_isOn", 0) == nullptr) {
-      ErrorMsg::MissingMethod("Toggle", "get_isOn");
-    }
-    if (unity_toggle.GetMethodInfoSpecial("OnPointerClick", [](auto count, auto) { return count == 1; })
-        == nullptr) {
-      ErrorMsg::MissingMethod("Toggle", "OnPointerClick");
-    }
-  }
-
-  if (il2cpp_get_class_helper("UnityEngine.UI", "UnityEngine.EventSystems", "PointerEventData").get_cls()
-      == nullptr) {
-    ErrorMsg::MissingHelper("UnityEngine.EventSystems", "PointerEventData");
-  }
-
-  auto mission_view_controller = MissionViewController::ClassHelper();
-  if (!mission_view_controller.isValidHelper()) {
-    ErrorMsg::MissingHelper("Digit.Prime.Missions", "MissionViewController");
-    return;
-  }
-
-  if (auto ptr = mission_view_controller.GetMethod("GetClaimableDailiesList", 0); ptr == nullptr) {
-    ErrorMsg::MissingMethod("MissionViewController", "GetClaimableDailiesList");
-  } else {
-    SPUD_STATIC_DETOUR(ptr, MissionViewController_GetClaimableDailiesList);
-  }
-
-  if (auto ptr = mission_view_controller.GetMethod("AboutToShow", 0); ptr == nullptr) {
-    ErrorMsg::MissingMethod("MissionViewController", "AboutToShow");
-  } else {
-    SPUD_STATIC_DETOUR(ptr, MissionViewController_AboutToShow);
-  }
-
-  if (auto ptr = mission_view_controller.GetMethod("AboutToHide", 0); ptr == nullptr) {
-    ErrorMsg::MissingMethod("MissionViewController", "AboutToHide");
-  } else {
-    SPUD_STATIC_DETOUR(ptr, MissionViewController_AboutToHide);
-  }
+  using Controller = MissionViewController::Class;
+  if (auto m = Controller::Method("GetClaimableDailiesList", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_GetClaimableDailiesList);
+  if (auto m = Controller::Method("AboutToShow", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToShow);
+  if (auto m = Controller::Method("AboutToHide", 0))
+    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToHide);
 }

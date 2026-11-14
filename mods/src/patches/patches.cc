@@ -1,9 +1,9 @@
+#include <filesystem>
 #include "patches.h"
 #include "file.h"
-#include "log_history.h"
 #include "version.h"
 
-#include <il2cpp/il2cpp-functions.h>
+#include <il2cpp/il2cpp.h>
 
 #include <spud/detour.h>
 
@@ -82,12 +82,17 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
 
   std::string rotation_error;
   try {
-    RotateLogHistory(File::Log());
+    const auto backup = [](int index) { return std::filesystem::path(std::string(File::Log()) + "." + std::to_string(index)); };
+    std::filesystem::remove(backup(5));
+    for (int index = 4; index >= 1; --index)
+      if (std::filesystem::exists(backup(index)))
+        std::filesystem::rename(backup(index), backup(index + 1));
+    if (std::filesystem::exists(File::Log()))
+      std::filesystem::rename(File::Log(), backup(1));
   } catch (const std::filesystem::filesystem_error& error) {
     rotation_error = error.what();
   }
-
-  // Append if rotation failed so an existing log is never truncated.
+  // Append if rotation failed so an existing session log is not truncated.
   auto file_logger = spdlog::basic_logger_mt("default", File::Log(), false);
   auto sink        = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
   file_logger->sinks().push_back(sink);
@@ -98,9 +103,9 @@ __int64 il2cpp_init_hook(auto original, const char* domain_name)
 
   spdlog::set_level(log_level);
   spdlog::flush_on(log_level);
-  if (!rotation_error.empty()) {
+  if (!rotation_error.empty())
     spdlog::warn("Failed to rotate log history; preserving existing log: {}", rotation_error);
-  }
+  il2cpp::SetErrorHandler([](std::string_view message) { spdlog::error("{}", message); });
 
 #if VERSION_PATCH
   if constexpr (sizeof(VERSION_COMMIT_HASH) > 1) {
@@ -238,7 +243,6 @@ void ApplyPatches()
   printf("Loading %s\n", assembly_path);
   auto assembly = dlopen(assembly_path, RTLD_LAZY | RTLD_GLOBAL);
 
-  init_il2cpp_pointers();
 #endif
 
   if (assembly == nullptr) {
@@ -246,6 +250,7 @@ void ApplyPatches()
     return;
   } else {
     try {
+      il2cpp::Initialize(assembly);
 #if _WIN32
       auto n = GetProcAddress(assembly, "il2cpp_init");
 #else
@@ -254,8 +259,8 @@ void ApplyPatches()
       printf("Got il2cpp_init %p\n", n);
 
       SPUD_STATIC_DETOUR(n, il2cpp_init_hook);
-    } catch (...) {
-      // Failed to Apply at least some patches
+    } catch (const std::exception& error) {
+      spdlog::error("Failed to initialize IL2CPP hooks: {}", error.what());
     }
   }
 }
