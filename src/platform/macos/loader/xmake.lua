@@ -1,0 +1,9 @@
+target("stfc-community-mod-loader")
+do
+    set_kind("binary")
+    add_files("*.cc")
+    add_files("*.mm")
+    add_headerfiles("*.h")
+    add_frameworks("Foundation")
+    add_packages("inifile-cpp")
+end

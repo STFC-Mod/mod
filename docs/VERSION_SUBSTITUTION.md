@@ -2,20 +2,20 @@
 
 ## Overview
 
-The macOS launcher's `Info.plist` file now automatically uses the version defined in `mods/src/version.h` during the build process. This ensures consistency between the application version and the mod version.
+The macOS launcher's `Info.plist` file now automatically uses the version defined in `src/mod/version.h` during the build process. This ensures consistency between the application version and the mod version.
 
 ## Implementation
 
 ### Files Involved
 
-- **Template**: `macos-launcher/src/Info.plist.template` - Contains version placeholders
-- **Generated**: `macos-launcher/src/Info.plist` - Generated during build (not committed to git)
-- **Source**: `mods/src/version.h` - Contains version definitions
-- **Build**: `macos-launcher/xmake.lua` - Contains version extraction and substitution logic
+- **Template**: `src/launcher/macos/Info.plist.template` - Contains version placeholders
+- **Generated**: `src/launcher/macos/Info.plist` - Generated during build (not committed to git)
+- **Source**: `src/mod/version.h` - Contains version definitions
+- **Build**: `src/launcher/macos/xmake.lua` - Contains version extraction and substitution logic
 
 ### Version Extraction
 
-The build process extracts version components from `mods/src/version.h`:
+The build process extracts version components from `src/mod/version.h`:
 
 ```c
 #define VERSION_MAJOR     0
@@ -42,7 +42,7 @@ During build, these placeholders are replaced with the actual version.
 ## Build Process
 
 1. **Configuration Phase**: `on_config` function in xmake.lua executes
-2. **Version Extraction**: Reads and parses `mods/src/version.h`
+2. **Version Extraction**: Reads and parses `src/mod/version.h`
 3. **Template Processing**: Replaces `${VERSION}` in template with extracted version
 4. **File Generation**: Writes processed `Info.plist` to source directory
 5. **Build**: Xcode uses the generated `Info.plist` for app bundle creation
@@ -66,7 +66,7 @@ This script simulates the build process and verifies:
 
 ### Updating Version
 
-Version updates are made in `mods/src/version.h` only. The macOS launcher will automatically pick up changes during the next build.
+Version updates are made in `src/mod/version.h` only. The macOS launcher will automatically pick up changes during the next build.
 
 ### Modifying Info.plist
 
@@ -76,7 +76,7 @@ Changes to the Info.plist should be made to `Info.plist.template`, not the gener
 
 If version substitution fails:
 
-1. Check that `mods/src/version.h` exists and contains expected `VERSION_*` definitions
+1. Check that `src/mod/version.h` exists and contains expected `VERSION_*` definitions
 2. Verify `Info.plist.template` contains `${VERSION}` placeholders
 3. Run the verification script to identify specific issues
 4. Check xmake build output for error messages

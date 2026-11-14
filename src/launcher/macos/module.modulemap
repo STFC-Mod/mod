@@ -1,0 +1,9 @@
+module libplzma {
+    header "../../../macos-launcher/deps/PLzmaSDK/libplzma.h"
+    export *
+}
+
+module librsync {
+    header "rsync.h"
+    export *
+}

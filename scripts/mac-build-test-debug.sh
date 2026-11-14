@@ -222,7 +222,7 @@ package_app_bundle() {
         exit 1
     fi
 
-    local info_plist_path="${PROJECT_ROOT}/macos-launcher/src/Info.plist"
+    local info_plist_path="${PROJECT_ROOT}/src/launcher/macos/Info.plist"
     if [[ ! -f "$info_plist_path" ]]; then
         print_error "Generated Info.plist not found at: $info_plist_path"
         print_info "Run the configure/build step so xmake can generate it from Info.plist.template"

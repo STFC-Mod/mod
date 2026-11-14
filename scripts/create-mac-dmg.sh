@@ -26,7 +26,7 @@ lipo -create build/macosx/$ARCH/$CONFIG/macOSLauncher build/macosx/x86_64/$CONFI
 lipo -create build/macosx/$ARCH/$CONFIG/stfc-community-mod-loader build/macosx/x86_64/$CONFIG/stfc-community-mod-loader -output build/macosx/$ARCH/$CONFIG/macOSLauncher.app/Contents/stfc-community-mod-loader
 lipo -create build/macosx/$ARCH/$CONFIG/libstfc-community-mod.dylib build/macosx/x86_64/$CONFIG/libstfc-community-mod.dylib -output build/macosx/$ARCH/$CONFIG/macOSLauncher.app/Contents/libstfc-community-mod.dylib
 cp assets/launcher.icns build/macosx/$ARCH/$CONFIG/macOSLauncher.app/Contents/Resources/
-cp macos-launcher/src/Info.plist build/macosx/$ARCH/$CONFIG/macOSLauncher.app/Contents/
+cp src/launcher/macos/Info.plist build/macosx/$ARCH/$CONFIG/macOSLauncher.app/Contents/
 
 rm -rf build/macosx/$ARCH/$CONFIG/*.dSYM || true
 rm -rf build/macosx/$ARCH/$CONFIG/STFC\ Community\ Mod.app || true
