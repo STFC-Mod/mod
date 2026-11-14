@@ -387,27 +387,14 @@ void SlideShowViewController_ShowCurrentSlide_Hook(auto original, SlideShowViewC
 }
 
 // The hierarchy holding our overlays is destroyed during a reload; forget it so Awake does not touch dead objects.
-void MonoSingleton_PrepareAllForReload_Hook(auto original)
+void ResetLoadingScreens()
 {
   transition_screen = {};
   tip_picker.Reset();
-  original();
-}
-
-// Shared by the login, tip and transition installs, whichever of them run, so it is its own set, installed on the
-// first call.
-void InstallReloadReset()
-{
-  [[maybe_unused]] static const bool installed = [] {
-    il2cpp::HookSet hooks("LoadingScreens");
-    IL2CPP_STAGE(hooks, MonoSingletonBase::Method("PrepareAllForReload"), MonoSingleton_PrepareAllForReload_Hook);
-    return hooks.Commit();
-  }();
 }
 
 bool InstallLoginScreen()
 {
-  InstallReloadReset();
   il2cpp::HookSet hooks("LoginScreen");
   IL2CPP_STAGE(hooks, LoginSequence::Class::Method("Awake"), LoginSequence_Awake_Hook);
   return hooks.Commit();
@@ -415,7 +402,6 @@ bool InstallLoginScreen()
 
 bool InstallTransitionScreen()
 {
-  InstallReloadReset();
   il2cpp::HookSet hooks("TransitionScreen");
   IL2CPP_STAGE(hooks, TransitionViewController::Class::Method("Awake"), TransitionViewController_Awake_Hook);
   IL2CPP_STAGE(hooks, TransitionViewController::Class::Method("AboutToShow"),
@@ -429,7 +415,6 @@ bool InstallTransitionScreen()
 
 bool InstallLoadingTips()
 {
-  InstallReloadReset();
   il2cpp::HookSet hooks("LoadingTips");
   IL2CPP_STAGE(hooks, LoadingTipViewController::Class::Method("SetRandomTipLocalisedText"),
                LoadingTipViewController_SetRandomTipLocalisedText_Hook);
@@ -437,6 +422,9 @@ bool InstallLoadingTips()
 }
 } // namespace
 
-const Feature kLoginScreen{"LoginScreen", &Config::Patches::loadingscreenhooks, InstallLoginScreen};
-const Feature kTransitionScreen{"TransitionScreen", &Config::Patches::transitionscreenhooks, InstallTransitionScreen};
-const Feature kLoadingTips{"LoadingTips", &Config::Patches::loadingtiphooks, InstallLoadingTips};
+const Feature kLoginScreen{"LoginScreen", &Config::Patches::loadingscreenhooks, InstallLoginScreen, nullptr,
+                           ResetLoadingScreens};
+const Feature kTransitionScreen{"TransitionScreen", &Config::Patches::transitionscreenhooks, InstallTransitionScreen,
+                                nullptr, ResetLoadingScreens};
+const Feature kLoadingTips{"LoadingTips", &Config::Patches::loadingtiphooks, InstallLoadingTips, nullptr,
+                           ResetLoadingScreens};

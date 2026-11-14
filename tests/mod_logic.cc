@@ -4,6 +4,7 @@
 #include "features/notification_audio.h"
 #include "features/ship_shortcut_hint.h"
 #include "features/toast_text.h"
+#include "reload.h"
 #include "shortcuts.h"
 #include "text.h"
 
@@ -534,6 +535,23 @@ void ChatStartupGate()
         "chat already open consumes the gate, even before readiness");
 }
 
+void ReloadGate()
+{
+  reload::Gate gate;
+  Check(!gate.suspended && !gate.Tick(false, 0), "normal startup is not suspended");
+  gate.Begin();
+  Check(gate.suspended && !gate.Tick(false, 10), "reload stays suspended without managers");
+  Check(!gate.Tick(true, 20) && !gate.Tick(true, 22.9), "readiness must settle before mod work resumes");
+  Check(!gate.Tick(false, 23) && !gate.Tick(true, 24), "a transition restarts the settling period");
+  Check(!gate.Tick(true, 26.9) && gate.Tick(true, 27) && !gate.suspended, "stable readiness resumes work");
+  Check(!gate.Tick(true, 30), "completion is emitted only once");
+  gate.Begin();
+  Check(!gate.Tick(true, 40), "a later reload suspends again");
+  gate.Begin();
+  Check(!gate.Tick(true, 43) && !gate.Tick(true, 45.9) && gate.Tick(true, 46),
+        "nested teardown notifications restart the settling period");
+}
+
 int main()
 {
   ShipHints();
@@ -553,6 +571,7 @@ int main()
   ParseDoesNotActivateSettings();
   Matching();
   ChatStartupGate();
+  ReloadGate();
   if (failures)
     return EXIT_FAILURE;
   std::cout << "mod logic tests passed\n";

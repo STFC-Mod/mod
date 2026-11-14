@@ -107,6 +107,13 @@ Proxy, certificate verification, name-cache, and diagnostic options are in the s
 
 ## Compatibility switches
 
+During an in-process game restart, including one initiated by the server, the mod pauses its frame work and
+shortcuts while the game continues updating. Pending UI actions and session-owned UI references are cleared.
+Mod frame work resumes after the game has left login and section changes have settled for three seconds.
+The log records these steps under `[Reload]`, warns once if readiness takes over a minute, and records the first
+system or galaxy view reached afterward. These guards reduce interference during reload; they do not repair a
+failed game connection or asset download.
+
 `[patches]` keys disable hook groups in every build. Changes require a restart.
 Use them to isolate a broken hook or a conflict with another mod.
 Normal feature settings remain separate and can change during play.

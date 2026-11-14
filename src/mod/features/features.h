@@ -24,6 +24,8 @@ struct Feature {
   // Runs every frame from the frame tick once installed, in every hotkey mode, before the shortcuts. Never runs for a
   // feature that failed to install. Returns at once when its feature is off.
   void (*frame)() = nullptr;
+  // Drops session-owned state before the game tears down its managers. Must not call into game objects.
+  void (*reset)() = nullptr;
 };
 
 // Frame work that only needs to run every so often, such as a scan of the UI. Game thread only.
@@ -108,6 +110,8 @@ void InstallFleetActions();
 bool TargetViewerShown();
 // The number keys. True when the key was used.
 bool SelectShipShortcuts();
+// Discards deferred fleet actions and selection double taps at the reload boundary.
+void ResetFleetShortcuts();
 // Select current and the queue switch. True when the key was used.
 bool FleetShortcuts();
 // The actions on the selected fleet and the open viewer. True when the key must not reach the game.
@@ -164,6 +168,7 @@ extern const Feature kOfficerSort;
 bool PressAwaitedButton();
 // The shortcuts that open, step through, or search game screens. True when the key must not reach the game.
 bool ScreenShortcuts();
+void ResetScreenShortcuts();
 
 // shop.cc
 extern const Feature kGiftsAutoOpen;

@@ -10,6 +10,7 @@
 #include "features/action_queue.h"
 #include "config.h"
 #include "features/features.h"
+#include "mod.h"
 
 #include "game/queues.h"
 
@@ -27,7 +28,7 @@ namespace
 bool QueueFixesEnabled()
 {
   const auto& control = Config::Get().control;
-  return control.kirshara_fixes && control.queue_enabled;
+  return !ModReloading() && control.kirshara_fixes && control.queue_enabled;
 }
 
 // Sets a thread-local for the length of one native call, so hooks the game reaches from inside it can see it.
@@ -82,6 +83,9 @@ action_queue::QueueSnapshot SnapshotOf(ActionQueueInstance* queue)
 // --- Faster queue recovery ---
 
 action_queue::Attempts recovery_attempts;
+
+void ResetActionQueueRecovery()
+{ recovery_attempts = {}; }
 
 // Set while the course response handler runs for a failed, non-recall response whose queue was engaging on entry.
 // Only then may the retry decision the handler makes inside hand over to the planner.
@@ -150,7 +154,7 @@ bool ActionQueueManager_ShouldRetryFailedSetCourse_Hook(auto original, ActionQue
                                                         ActionQueueInstance* queue)
 {
   const bool retry = original(_this, target, queue);
-  if (retry || !failed_while_engaging)
+  if (ModReloading() || retry || !failed_while_engaging)
     return retry;
   const auto state = RetryStateOf(queue, target);
   // The native false branch removes the target from every fleet's queue. Leave that to it while any queue might
@@ -188,7 +192,7 @@ bool ResumeAfterPrune(ActionQueueManager* manager, ActionQueueInstance* queue, F
                       const action_queue::QueueSnapshot& before, const action_queue::QueueSnapshot& after,
                       const char* source)
 {
-  if (!action_queue::IsNativePruneResumeCandidate(idle, before, after))
+  if (ModReloading() || !action_queue::IsNativePruneResumeCandidate(idle, before, after))
     return false;
   // The game's own engage entry, so faster recovery sees this attempt like any other. If it throws, the binding
   // contains the exception and reports it, but the result reads as Success.
@@ -247,6 +251,8 @@ void ActionQueueManager_OnFleetsDisposedEventHandler_Hook(auto original, ActionQ
         destroyed.push_back(id);
   original(_this, fleets);
   for (const auto target : destroyed) {
+    if (ModReloading())
+      return;
     const auto queue = SnapshotOf(FindQueueWithHead(_this, target));
     if (!action_queue::ShouldProcessDestroyedHead(target, queue))
       continue;
@@ -389,7 +395,7 @@ bool InstallQueueAddressGuard()
 // Recovery and thin protection run on Windows and both Mac architectures: the host ABI passes the 24-byte
 // SetCourseResponse as the game does, and the method lookups reject a client whose managed layout differs.
 const Feature kActionQueueRecovery{"ActionQueueRecovery", &Config::Patches::actionqueuerecoveryhooks,
-                                   InstallActionQueueRecovery};
+                                   InstallActionQueueRecovery, nullptr, ResetActionQueueRecovery};
 const Feature kThinQueueProtection{"ThinQueueProtection", &Config::Patches::thinqueueprotectionhooks,
                                    InstallThinQueueProtection};
 const Feature kQueueAddressGuard{"QueueAddressGuard", &Config::Patches::queueaddressguardhooks,
