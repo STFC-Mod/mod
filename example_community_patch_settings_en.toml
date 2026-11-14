@@ -192,7 +192,7 @@ keyboard_zoom_speed = 350.0
 system_pan_speed = 1.0
 
 # Momentum retained each frame after releasing the mouse, touch or movement keys.
-# Lower = quicker stop; 0 = immediate stop; 1 = no decay. Valid range: 0 to 1. Defaults to 0.8.
+# Lower = quicker stop; 0 = immediate stop; 0.99 = long glide. Clamped to 0 to 0.99. Defaults to 0.8.
 system_pan_momentum_falloff = 0.8
 
 # Subgroup: Loader

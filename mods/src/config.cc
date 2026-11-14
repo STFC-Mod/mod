@@ -1114,11 +1114,13 @@ void Config::Load()
 
   this->system_pan_momentum_falloff = get_config_or_default(config, parsed, "graphics", "system_pan_momentum_falloff",
                                                             DCG::system_pan_momentum_falloff, write_config);
-  if (!std::isfinite(this->system_pan_momentum_falloff) || this->system_pan_momentum_falloff < 0.0f
-      || this->system_pan_momentum_falloff > 1.0f) {
+  const auto bounded_falloff = std::isfinite(this->system_pan_momentum_falloff)
+                                   ? std::clamp(this->system_pan_momentum_falloff, 0.0f, 0.99f)
+                                   : static_cast<float>(DCG::system_pan_momentum_falloff);
+  if (this->system_pan_momentum_falloff != bounded_falloff) {
     spdlog::warn("Invalid system_pan_momentum_falloff {}; using {}", this->system_pan_momentum_falloff,
-                 DCG::system_pan_momentum_falloff);
-    this->system_pan_momentum_falloff = DCG::system_pan_momentum_falloff;
+                 bounded_falloff);
+    this->system_pan_momentum_falloff = bounded_falloff;
     parsed["graphics"].as_table()->insert_or_assign("system_pan_momentum_falloff", this->system_pan_momentum_falloff);
   }
   this->disable_target_camera_lock = get_config_or_default(config, parsed, "graphics", "disable_target_camera_lock",
