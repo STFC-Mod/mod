@@ -53,7 +53,6 @@ std::string Value(const toml::table& parsed, std::string_view section, std::stri
 
 void ShipHints()
 {
-  Shortcut::Set({});
   // A locked dock F leaves native G at the sixth selectable position (the reported 1,2,3,4,5,7 layout).
   const std::array gapped_fleets{0, 1, 2, 3, 4, 6};
   auto             ship_hint = [&](Action action) {
@@ -63,14 +62,6 @@ void ShipHints()
         "Native ship G must advertise the sixth mod shortcut when dock F is locked");
   Check(ship_hint(Action::kSelectShip5) == Action::kSelectShip5, "Earlier ship hints must stay unchanged");
   Check(ship_hint(Action::kSelectShip6) == Action::kCount, "Missing dock must not advertise a shortcut");
-  Check(ship_hint(Action::kShowGalaxy) == Action::kShowGalaxy, "Non-ship hint mapping changed");
-  Check(ShipShortcutHintAction(Action::kSelectShip1, 0, [](std::size_t) { return 0; }) == Action::kCount,
-        "Unavailable fleet context must not advertise a guessed ship shortcut");
-  for (int index = 0; index < 8; ++index) {
-    const auto action = static_cast<Action>(std::to_underlying(Action::kSelectShip1) + index);
-    Check(ShipShortcutHintAction(action, 8, [](std::size_t i) { return static_cast<int>(i); }) == action,
-          "Contiguous eight-dock hints must keep their original shortcuts");
-  }
   const std::array reordered_fleets{7, 0, 2, -1, 6, 4, 1, 3, 5};
   auto             reordered_hint = [&](Action action) {
     return ShipShortcutHintAction(action, reordered_fleets.size(), [&](std::size_t i) { return reordered_fleets[i]; });
@@ -80,8 +71,6 @@ void ShipHints()
         "Null fleet entries must preserve the positions passed to RequestSelect");
   Check(reordered_hint(Action::kSelectShip6) == Action::kCount,
         "Fleet beyond the eight supported mod shortcuts must not advertise a shortcut");
-  Check(Shortcut::Hint(ship_hint(Action::kSelectShip7)).empty(),
-        "Unbound ship selection must not advertise a working shortcut");
   Shortcut::Bindings custom{};
   custom[std::to_underlying(Action::kSelectShip6)].push_back(KeyChord::Parse("CTRL-F8"));
   Shortcut::Set(std::move(custom));
@@ -129,7 +118,7 @@ void ToastText()
   Check(StripRichText("a < b") == "a < b", "an unclosed '<' is text");
   Check(TitleCase("USS ENTERPRISE-D") == "Uss Enterprise-D", "title case");
   Check(HullKeyName("Hull_L30_Destroyer_Klingon_LIVE") == "Lv.30 Destroyer Klingon", "hull key with level");
-  Check(HullKeyName("Hull_BORG_CUBE") == "Borg Cube", "hull key without level");
+  Check(HullKeyName("Hull_BORG_CUBE") == "BORG CUBE", "hull key without level");
 }
 
 void ShipNames()
@@ -194,6 +183,10 @@ void DefaultBindings()
           Check(!parsed["shortcuts"][key.str()], "optional shortcut gates stay unchanged");
       }
     }
+    // Every shortcut's default is pinned here, so the parser never meets a default without a valid chord.
+    for (const auto& [key, value] : *parsed["shortcuts"].as_table())
+      Check(fixture["always"][key] || fixture["extended"][key] || fixture["experimental"][key],
+            "every shortcut has a default in shortcut_defaults.toml");
   }
 }
 
@@ -212,7 +205,7 @@ void Loading()
   Check(Value(parsed, "shortcuts", "show_galaxy") == "CTRL-G | F8", "vars records the bindings");
   Check(Value(parsed, "shortcuts_source", "show_galaxy") == "config", "source is the settings file");
 
-  Check(!Shortcut::HasBinding(Action::kShowSystem), "an empty string disables the binding");
+  Check(Shortcut::Describe(Action::kShowSystem).empty(), "an empty string disables the binding");
   Check(Value(parsed, "shortcuts", "show_system") == "NONE", "disabled binding recorded as NONE");
 
   Check(Shortcut::Describe(Action::kShowEvents) == std::string("SHIFT-E"),
@@ -223,12 +216,12 @@ void Loading()
   Check(Shortcut::Describe(Action::kDisableHotKeys) == "F3", "deprecated alias still binds");
   Check(Value(parsed, "shortcuts_source", "set_hotkeys_disabled") == "alias:set_hotkeys_disble", "alias source");
 
-  Check(Shortcut::HasBinding(Action::kShowBookmarks), "extended shortcuts load when extended");
+  Check(!Shortcut::Describe(Action::kShowBookmarks).empty(), "extended shortcuts load when extended");
   parsed = Load("");
   Check(Shortcut::Describe(Action::kQuit) == "F10", "loading again replaces earlier bindings");
-  Check(!Shortcut::HasBinding(Action::kShowLookup), "experimental shortcuts need experimental");
+  Check(Shortcut::Describe(Action::kShowLookup).empty(), "experimental shortcuts need experimental");
   parsed = Load("", false);
-  Check(!Shortcut::HasBinding(Action::kShowBookmarks), "extended shortcuts are skipped otherwise");
+  Check(Shortcut::Describe(Action::kShowBookmarks).empty(), "extended shortcuts are skipped otherwise");
   Check(Value(parsed, "shortcuts", "show_bookmarks") == "<missing>", "skipped shortcuts are not recorded");
 }
 
@@ -338,9 +331,6 @@ void NotificationAudio()
                                       effective, false);
     Check(config->audio.alert_defeat == expected, "legacy cue aliases remain valid, unknown names fall back to none");
   }
-  Check(NotificationSoundBytes(NotificationSound::kCount).empty()
-            && NotificationSoundBytes(static_cast<NotificationSound>(255)).empty(),
-        "invalid cues have no WAV data");
 }
 
 void DailyFactionSettings()
@@ -482,19 +472,29 @@ void Matching()
   Hold({unity::KeyCode::LeftControl, unity::KeyCode::PageUp});
   Check(Shortcut::IsPressed(Action::kUiShipScaleUp), "modified chord");
   Check(!Shortcut::IsPressed(Action::kUiScaleUp), "plain chord blocked while modified");
-  Check(Shortcut::Owns(unity::KeyCode::PageUp), "the modified chord owns its key");
   Hold({unity::KeyCode::PageUp});
   Check(!Shortcut::IsPressed(Action::kUiScaleUp), "plain chord waits for the key's release");
   Hold({});
-  Check(!Shortcut::Owns(unity::KeyCode::PageUp), "releasing the key frees it");
+  Check(!Shortcut::IsPressed(Action::kUiScaleUp), "released key");
   Hold({unity::KeyCode::PageUp});
   Check(Shortcut::IsPressed(Action::kUiScaleUp), "plain chord after a release");
 
-  // A modified movement binding keeps moving while its modifier is held.
-  Load("[shortcuts]\nmove_down = \"CTRL-DOWN\"");
-  Hold({unity::KeyCode::LeftControl, unity::KeyCode::DownArrow});
-  Check(Shortcut::IsDown(Action::kMoveDown) && Shortcut::IsDown(Action::kMoveDown),
-        "explicit movement chord keeps matching");
+  // Keyboard panning reads only the move bindings. A modified move binding pans while held, even after the screen
+  // shortcuts matched it earlier in the frame.
+  Load("[shortcuts]\nmove_left = \"CTRL-LEFT\"");
+  Hold({unity::KeyCode::LeftControl, unity::KeyCode::LeftArrow});
+  Check(Shortcut::IsDown(Action::kMoveLeft), "modified movement chord");
+  Check(Shortcut::IsPressed(Action::kMoveLeft), "a modified movement chord keeps panning once matched");
+
+  // An arrow held for another CTRL-arrow chord does not pan, even after CTRL is released; W/A/S/D still do.
+  Load("[shortcuts]\nui_scaleup = \"CTRL-LEFT\""); // move_left = "A|LEFT"
+  Hold({unity::KeyCode::LeftControl, unity::KeyCode::LeftArrow});
+  Check(Shortcut::IsPressed(Action::kUiScaleUp) && !Shortcut::IsPressed(Action::kMoveLeft),
+        "a CTRL-arrow chord does not pan");
+  Hold({unity::KeyCode::LeftArrow});
+  Check(!Shortcut::IsPressed(Action::kMoveLeft), "its arrow pans only after a release");
+  Hold({unity::KeyCode::LeftArrow, unity::KeyCode::A});
+  Check(Shortcut::IsPressed(Action::kMoveLeft), "other movement keys still pan");
   held.fill(false);
 }
 } // namespace

@@ -36,26 +36,11 @@ void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, ColourTextLo
 //
 // TODO: Windows only. Enabling it on macOS needs SetWidgetData's prologue checked against SPUD's detour size.
 #if _WIN32
-bool IsCargoText(LegacyComparableProgressBar* bar)
-{
-  auto* label = bar->currentValue_X_of_Y();
-  if (!label || !label->IdentifierIs(kCargoIdentifier))
-    return false;
-  auto* context = bar->context();
-  if (context && context->klass == CargoProgressData::Raw())
-    return true;
-  static bool reported = false;
-  if (!reported) {
-    reported = true;
-    spdlog::warn("[InstantCargo] the cargo label shows a {}, not cargo; keeping the game's count-up",
-                 context ? il2cpp::ClassName(context->klass) : "null");
-  }
-  return false;
-}
-
 void LegacyComparableProgressBar_SetWidgetData_Hook(auto original, LegacyComparableProgressBar* _this)
 {
-  if (!Config::Get().ui.instant_cargo_counter || !IsCargoText(_this)) {
+  // The bar's data decides whether it shows cargo; the X-of-Y label identifier is shared with other bars.
+  auto* context = _this->context();
+  if (!Config::Get().ui.instant_cargo_counter || !context || context->klass != CargoProgressData::Raw()) {
     original(_this);
     return;
   }

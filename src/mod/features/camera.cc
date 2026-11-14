@@ -19,7 +19,6 @@
 #include <unity/ui.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <unordered_map>
 #include <utility>
@@ -194,16 +193,11 @@ void NavigationZoom_SetDepth_Hook(auto original, NavigationZoom* _this, NodeDept
 { EnterDepth(original, _this, depth, _this->viewRadius(), depth); }
 
 // Planet flat renderables (the 2D planet sprites) are scaled by fr_scale. The game reuses them and asks for them on
-// every zoom, so each transform remembers the size it was scaled to and is left alone while it still has it.
-// Planets differ in base size, so this is per transform: one shared value made two planets rescale each other.
-//
-// A backdrop that was just created or reloaded has its authored scale again and is always scaled. The getter is
-// hooked, so ScaleAuthoredBackdrop asks for the renderable with authored_backdrop set; backdrop_revision counts
-// CreateBackdrop calls so Populate can tell whether one ran.
-bool     authored_backdrop = false;
-uint64_t backdrop_revision = 0;
-
-void ScaleFlatRenderable(unity::Component* renderable, bool authored)
+// every zoom, so each transform remembers the size it was scaled to and is left alone while it has exactly that size.
+// Planets differ in base size, so this is per transform: one shared value made two planets rescale each other. A
+// backdrop that was just created or reloaded has its authored scale again, which never equals the remembered one
+// while fr_scale is not 1, so it is scaled again.
+void ScaleFlatRenderable(unity::Component* renderable)
 {
   // A system has a handful of planets; past this, entries from earlier systems are dropped.
   constexpr size_t                                    kRemembered = 256;
@@ -216,7 +210,7 @@ void ScaleFlatRenderable(unity::Component* renderable, bool authored)
   if (!transform)
     return;
   const auto scale = transform->localScale();
-  if (const auto it = scaled.find(transform); !authored && it != scaled.end() && std::fabs(scale.x - it->second) < 0.1f)
+  if (const auto it = scaled.find(transform); it != scaled.end() && scale.x == it->second)
     return;
   if (scaled.size() >= kRemembered)
     scaled.clear();
@@ -228,7 +222,7 @@ void ScaleFlatRenderable(unity::Component* renderable, bool authored)
 unity::Component* PlanetViewUtils_get_FlatRenderable_Hook(auto original, PlanetViewUtils* _this)
 {
   auto* renderable = original(_this);
-  ScaleFlatRenderable(renderable, authored_backdrop);
+  ScaleFlatRenderable(renderable);
   return renderable;
 }
 
@@ -240,55 +234,27 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
   _this->FlatRenderable();
 }
 
-void ScaleAuthoredBackdrop(PlanetViewUtils* view)
-{
-  const auto previous = std::exchange(authored_backdrop, true);
-  view->FlatRenderable();
-  authored_backdrop = previous;
-}
-
 void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* backdrop,
                                          Il2CppObject* resource, bool using_default)
 {
   original(_this, backdrop, resource, using_default);
-  if (resource) {
-    ++backdrop_revision;
-    ScaleAuthoredBackdrop(_this);
-  }
+  if (resource)
+    _this->FlatRenderable();
 }
 
+// A cached variation backdrop reloads its authored scale without calling CreateBackdrop.
 void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils* _this, Il2CppObject* system, int64_t node_id,
                                    NodeDepth depth)
 {
-  auto*      previous = _this->popData();
-  const auto revision = backdrop_revision;
   original(_this, system, node_id, depth);
-  auto* population = _this->popData();
-  // A cached variation backdrop reloads its authored scale without calling CreateBackdrop.
-  if (depth == NodeDepth::SolarSystem && population && population != previous && population->VariationCollection()
-      && revision == backdrop_revision)
-    ScaleAuthoredBackdrop(_this);
+  if (depth == NodeDepth::SolarSystem)
+    _this->FlatRenderable();
 }
 
 // --- Panning and rotation ---
 
-// Whether the mod, not the game, moves the camera with the Move* shortcuts.
-bool ModMovesCamera()
-{
-  const auto& config = Config::Get();
-  return config.control.hotkeys_enabled && !config.control.use_scopely_hotkeys && !config.ui.disable_move_keys;
-}
-
 bool PointerHeld()
 { return unity::Input::GetMouseButton(0) || unity::Input::touchCount() > 0; }
-
-// The game's own tutorial and modal/text-input gates for keyboard panning.
-bool KeyboardPanAllowed()
-{
-  auto* manager = Hub::Tutorial();
-  return manager && manager->IsSceneInputAllowed() && ShortcutsManager::CanUseShortcuts()
-         && !unity::Key::IsInputFocused();
-}
 
 // Replaces the game's LateUpdate: the keyboard source is the mod's shortcuts, and the pan keeps gliding after the
 // drag or key is released. Each frame moves the camera once: by the keys while one is held, otherwise by the
@@ -301,11 +267,9 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   // Dropping the tracked target before either pan path runs lets the player pan away from it.
   if (disable_target_camera_lock && _this->trackingPOI())
     _this->SetTrackingPOI(nullptr);
-  // An arrow held for a CTRL-arrow style shortcut must not pan as well, natively or through the mod.
-  constexpr std::array kArrows{unity::KeyCode::LeftArrow, unity::KeyCode::RightArrow, unity::KeyCode::UpArrow,
-                               unity::KeyCode::DownArrow};
-  const bool           arrow_owned = std::ranges::any_of(kArrows, Shortcut::Owns);
-  const bool           keyboard    = config.control.hotkeys_enabled && !config.ui.disable_move_keys && !arrow_owned;
+  // An arrow held for a CTRL-arrow shortcut does not pan: Shortcut::Matches keeps the plain move binding waiting
+  // until the arrow is released. A modified move binding such as CTRL-LEFT still pans.
+  const bool keyboard = config.control.hotkeys_enabled && !config.ui.disable_move_keys;
 
   // With the game's own hotkeys, its LateUpdate pans and glides by itself. The mod still applies its momentum falloff
   // to that glide, without moving the camera a second time.
@@ -319,7 +283,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   // Never replay its delta as momentum.
   const bool pointer = PointerHeld() || _this->panningStarted();
   bool       by_keys = false;
-  if (keyboard && !native && !blocked && !pointer && KeyboardPanAllowed()) {
+  // The game's own gate for its shortcuts also covers the tutorial's input lock, modals and a focused text field.
+  if (keyboard && !native && !blocked && !pointer && ShortcutsManager::CanUseShortcuts()) {
     // Opposite bindings cancel; normalize diagonals like the native 2D composite. MoveCamera takes a drag, and
     // dragging left moves the view right, hence the negation.
     const float x = float(Shortcut::IsPressed(Action::kMoveRight)) - float(Shortcut::IsPressed(Action::kMoveLeft));
@@ -353,9 +318,10 @@ void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* 
   original(_this, primary_camera);
   unity::Key::Poll();
 
-  auto* sections = Hub::Sections();
-  if (!ModMovesCamera() || !sections || sections->CurrentSection() != SectionID::Starbase_Exterior
-      || unity::Key::IsInputFocused())
+  const auto& config   = Config::Get();
+  auto*       sections = Hub::Sections();
+  if (!config.control.hotkeys_enabled || config.control.use_scopely_hotkeys || config.ui.disable_move_keys || !sections
+      || sections->CurrentSection() != SectionID::Starbase_Exterior || unity::Key::IsInputFocused())
     return;
 
   constexpr float kDegreesPerSecond = 45.0f;

@@ -269,9 +269,6 @@ namespace detail
     return klass;
   }
 
-  void ReportFault(const char* what)
-  { Report(std::format("[IL2CPP] access violation while reading {}", what)); }
-
   Il2CppClass* FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name)
   {
     const std::string namespace_name(namespaze);

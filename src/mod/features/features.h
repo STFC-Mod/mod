@@ -53,8 +53,6 @@ private:
 extern const Feature kActionQueueRecovery;
 extern const Feature kThinQueueProtection;
 extern const Feature kQueueAddressGuard;
-// Forgets the pending recovery attempts when the queue is switched off or on. Never touches the game's queues.
-void ResetQueueRecoveryTracking();
 
 // alliance_store.cc
 extern const Feature kAllianceGamesStore;

@@ -108,8 +108,6 @@ struct OwnedLabel {
       if (label->textOverride())
         return;
       handle = il2cpp::GcHandle::Weak(label);
-      if (!handle)
-        return;
     }
     const auto current = CurrentLabelText(label);
     if (!text.empty() && label->textOverride() && current != text) {

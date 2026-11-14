@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <optional>
 
 enum class SectionID : int32_t {
   ArtifactHall_Inventory                   = -2058246328,
@@ -218,25 +217,6 @@ struct Model : il2cpp::Object {
   { return Field<"_appConfig", AppConfig*>(); }
 };
 
-// Research progress. Its members resolve on the runtime class.
-struct ResearchManager : il2cpp::Object {
-  // Whether a visible research needs the resource. Empty when that could not be determined.
-  std::optional<bool> IsResourceRequiredByVisibleResearches(int64_t resource_id)
-  {
-    // Digit.PrimeServer.Models.ResearchTreeType; 0 is the main tree.
-    enum class ResearchTreeType : int32_t {};
-    return TryCall<"IsResourceRequiredByVisibleResearches", bool(int64_t, ResearchTreeType)>(resource_id,
-                                                                                             ResearchTreeType{});
-  }
-};
-
-struct TutorialManager : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager">;
-
-  bool IsSceneInputAllowed()
-  { return Call<"IsSceneInputAllowed", bool>(); }
-};
-
 // Digit.Client.Core.Hub is a static class.
 struct Hub {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Client.Core", "Hub">;
@@ -245,10 +225,6 @@ struct Hub {
   { return Class::Get<"SectionManager", SectionManager*>(); }
   static PrimeApp* App()
   { return Class::Get<"App", PrimeApp*>(); }
-  static TutorialManager* Tutorial()
-  { return Class::Get<"TutorialManager", TutorialManager*>(); }
-  static ResearchManager* Research()
-  { return Class::Get<"ResearchManager", ResearchManager*>(); }
 
   static SectionID CurrentSection()
   {

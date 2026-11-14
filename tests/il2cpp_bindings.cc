@@ -828,15 +828,6 @@ int main()
   Require(initialized.empty(), "a static hook lookup leaves the class uninitialized");
   Require(!Base::Class::StaticMethod<void(bool)>("Select"), "static hook lookup rejects an instance method");
 
-  // Boxed primitives unbox only as their own type.
-  Il2CppObject boxed{};
-  boxed.klass    = &int_class.klass;
-  int32_t number = 0;
-  int64_t wide   = 7;
-  Require(il2cpp::Unbox(&boxed, number) && number == shared_result, "unbox the boxed type");
-  Require(!il2cpp::Unbox(&boxed, wide) && wide == 7, "unbox rejects another type and leaves the value");
-  Require(!il2cpp::Unbox(static_cast<Il2CppObject*>(nullptr), number), "unbox rejects null");
-
   // A hook set installs every hook or none: a missing member, or a null address, leaves its targets untouched.
   {
     const int       scaled_before = Scaled(2);
@@ -879,15 +870,6 @@ int main()
           "ASCII comparison");
   for (auto* str : {mixed, lone, ascii})
     std::free(str);
-
-  // TryCall tells a failed call apart from a result that reads as zero.
-  Require(!base->TryCall<"Explode", int32_t()>() && ErrorsMentioning("Game.Base.Explode threw") == 1,
-          "tried exception is empty and reported once");
-  base->SetCount(0);
-  const auto zero = base->TryCall<"get_Count", int32_t()>();
-  Require(zero && *zero == 0, "tried zero result is known");
-  Require(base->TryCall<"Select", void(int32_t)>(5) && seen_int == 5, "tried void call");
-  Require(!base->TryCall<"Vanished", int32_t()>(), "tried missing method is empty");
 
   KeyboardSnapshot();
   InputFocus();

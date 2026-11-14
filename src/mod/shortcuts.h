@@ -55,14 +55,11 @@ Bindings Parse(const toml::table& config, toml::table& parsed, bool extended, bo
 // Activates a complete set of bindings and releases keys owned by the previous set. Game thread only.
 void Set(Bindings bindings) noexcept;
 
-bool HasBinding(Action action);
 // Any binding of `action` is held with its modifiers. A binding without modifiers needs none held; one with
 // modifiers still fires when extra modifiers are held (CTRL-F1 fires under CTRL+SHIFT).
 bool IsPressed(Action action);
 // Any binding of `action` went down this frame with its modifiers held.
 bool IsDown(Action action);
-// A binding with modifiers matched on `key`, which is still held. Plain bindings on it wait for the release.
-bool Owns(unity::KeyCode key);
 
 // "CTRL-G | F8"
 std::string Describe(Action action);

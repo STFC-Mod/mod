@@ -55,7 +55,7 @@ The [shortcut reference](KEYMAPPING.md) lists the defaults.
 ## Rewards and interface
 
 - Skip chest reveals, open bulk gift claims, and leave the section after the supported gift-collection flow.
-- Extend Alliance donations and, on Windows, supported tagged chest-purchase sliders.
+- Extend Alliance donations and supported tagged chest-purchase sliders.
 - Limit Daily Goals **Claim All** to selected Federation, Klingon, or Romulan goals. Its toggle can start enabled each session.
   `ui.daily_bulk_claim_factions` lists the factions; blank means all three, and `none` by itself excludes all of them. Other dailies stay eligible.
 - Hide Galaxy or Veil Chat, and player titles under chat names. Set supported HUD buttons to automatic, always shown, or always hidden.

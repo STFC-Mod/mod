@@ -1,6 +1,6 @@
 #pragma once
 
-// The mod's version and build identity, for the logs, the loading screen and the Windows version resource. CI
+// The mod's version, for the logs, the loading screen and the Windows version resource. CI
 // stamps VERSION_COMMIT_HASH, so keep that line's shape.
 
 // clang-format off
@@ -24,35 +24,6 @@
 
 #define VER_FILE_VERSION            VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION, VERSION_PATCH
 #define VER_FILE_VERSION_STR        VERSION_STRINGIFY(VERSION_MAJOR) "." VERSION_STRINGIFY(VERSION_MINOR) "." VERSION_STRINGIFY(VERSION_REVISION) "." VERSION_STRINGIFY(VERSION_PATCH)
-
-#define STFC_DISTRIBUTION_ID        "netniv.stfc-community-mod"
-
-#ifndef STFC_SOURCE_STATE_ID
-#define STFC_SOURCE_STATE_ID        "unknown"
-#endif
-
-#ifndef STFC_BASE_COMMIT
-#define STFC_BASE_COMMIT            "unknown"
-#endif
-
-#ifndef STFC_BUILD_INVOCATION_ID
-#define STFC_BUILD_INVOCATION_ID    "zig-direct"
-#endif
-
-#ifndef STFC_BUILD_MODE
-#define STFC_BUILD_MODE             "unknown"
-#endif
-
-#ifndef STFC_BUILD_CHANNEL
-#define STFC_BUILD_CHANNEL          "local"
-#endif
-
-#define STFC_IDENTITY_COMMENT_STR   "stfc-identity-v1;distribution=" STFC_DISTRIBUTION_ID \
-                                    ";source=" STFC_SOURCE_STATE_ID \
-                                    ";base=" STFC_BASE_COMMIT \
-                                    ";build=" STFC_BUILD_INVOCATION_ID \
-                                    ";mode=" STFC_BUILD_MODE \
-                                    ";channel=" STFC_BUILD_CHANNEL
 
 #define VER_PRODUCTNAME_STR         "STFC: Community Mod"
 #define VER_PRODUCT_VERSION         VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION
