@@ -7,6 +7,7 @@
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 
+#include <ranges>
 #include <vector>
 
 namespace unity
@@ -51,13 +52,11 @@ template <typename T> void Track(std::string_view created = ".ctor", std::string
 template <typename T> T* Newest()
 { return static_cast<T*>(detail::Newest(T::Class::Raw())); }
 
-// Every live instance of T, oldest first. A copy, so the caller may call into the game while the GC's finalizer
-// thread keeps updating the tracker.
-template <typename T> std::vector<T*> Instances()
+// Every live instance of T, oldest first. The range owns a snapshot of borrowed pointers, so the caller may call
+// into the game while the GC's finalizer thread keeps updating the tracker.
+template <typename T> auto Instances()
 {
-  std::vector<T*> result;
-  for (auto* object : detail::Instances(T::Class::Raw()))
-    result.push_back(static_cast<T*>(object));
-  return result;
+  return detail::Instances(T::Class::Raw())
+         | std::views::transform([](Il2CppObject* object) { return static_cast<T*>(object); });
 }
 } // namespace unity

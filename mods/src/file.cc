@@ -18,16 +18,15 @@ std::filesystem::path MacLibraryDirectory(); // file_macos.mm
 
 namespace
 {
-constexpr std::string_view kDefaultConfig  = "community_patch_settings.toml";
-constexpr std::string_view kDefaultVars    = "community_patch_runtime.vars";
-constexpr std::string_view kDefaultLog     = "community_patch.log";
-constexpr std::string_view kDefaultBattles = "patch_battlelogs_sent.json";
+constexpr std::string_view kDefaultConfig = "community_patch_settings.toml";
+constexpr std::string_view kDefaultVars   = "community_patch_runtime.vars";
+constexpr std::string_view kDefaultLog    = "community_patch.log";
 
 // Names used by older releases.
 constexpr std::string_view kLegacyVars   = "community_path_runtime.vars";
 constexpr std::string_view kLegacyParsed = "community_patch_settings_parsed.toml";
 
-std::string           config_name, vars_name, log_name, battles_name, profile;
+std::string           config_name, vars_name, log_name, profile;
 const std::string     default_config{kDefaultConfig};
 std::filesystem::path profile_path;
 #ifdef _MODDBG
@@ -131,10 +130,9 @@ void Init()
   }
 
   if (profile_path.empty()) {
-    config_name  = kDefaultConfig;
-    vars_name    = kDefaultVars;
-    log_name     = kDefaultLog;
-    battles_name = kDefaultBattles;
+    config_name = kDefaultConfig;
+    vars_name   = kDefaultVars;
+    log_name    = kDefaultLog;
     return;
   }
 
@@ -142,10 +140,9 @@ void Init()
   auto with_extension = [](const char* extension) {
     return ToUtf8(std::filesystem::path(profile_path).replace_extension(extension));
   };
-  config_name  = with_extension(".toml");
-  vars_name    = with_extension(".vars");
-  log_name     = with_extension(".log");
-  battles_name = with_extension(".json");
+  config_name = with_extension(".toml");
+  vars_name   = with_extension(".vars");
+  log_name    = with_extension(".log");
 }
 
 const std::string& Config()
@@ -156,9 +153,6 @@ const std::string& Vars()
 
 const std::string& Log()
 { return log_name; }
-
-const std::string& Battles()
-{ return battles_name; }
 
 const std::string& DefaultConfig()
 { return default_config; }

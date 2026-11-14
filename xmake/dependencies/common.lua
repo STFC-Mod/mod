@@ -14,7 +14,6 @@ package("libil2cpp")
     end)
 package_end()
 
-add_requires("eastl")
 add_requires("spdlog")
 add_requires("toml++")
 add_requires("nlohmann_json")

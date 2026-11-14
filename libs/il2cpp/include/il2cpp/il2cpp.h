@@ -551,22 +551,6 @@ inline Il2CppString* ToString(Object* object)
   return object->Call<"ToString", Il2CppString*>();
 }
 
-// Instance fields of the object's class and its bases, most derived first. For reading game data whose field
-// names drift between builds; bindings should name their fields.
-template <typename Visit> void ForEachInstanceField(Il2CppObject* object, Visit visit)
-{
-  for (auto* klass = object ? object->klass : nullptr; klass; klass = il2cpp_class_get_parent(klass)) {
-    void* iter = nullptr;
-    while (auto* field = il2cpp_class_get_fields(klass, &iter))
-      if (!(field->type->attrs & FIELD_ATTRIBUTE_STATIC))
-        visit(field);
-  }
-}
-
-// A field found by ForEachInstanceField. T must match the field's layout; nothing checks it here.
-template <typename T> T ReadField(Il2CppObject* object, FieldInfo* field)
-{ return detail::ReadField<T>(field, object); }
-
 // Runs the method a delegate is bound to on its target directly, skipping the delegate's invoke stub. Unlike
 // Call, a managed exception is not caught here, so the caller can fall back: catch Il2CppExceptionWrapper.
 template <typename R = void, typename... A> R InvokeBound(Il2CppDelegate* delegate, A... args)
@@ -627,6 +611,8 @@ template <typename T> struct List : Object {
   { return Call<"get_Count", int32_t>(); }
   T operator[](int32_t index)
   { return Call<"get_Item", T>(index); }
+  void Set(int32_t index, T value)
+  { Call<"set_Item">(index, value); }
   void Add(T value)
   { Call<"Add">(value); }
   void RemoveAt(int32_t index)

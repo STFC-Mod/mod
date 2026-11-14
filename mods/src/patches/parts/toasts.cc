@@ -246,40 +246,13 @@ std::vector<std::string> ParameterValues(il2cpp::Array<Il2CppObject*>* parameter
   return values;
 }
 
-// Fills placeholders from whichever array field of `object` resolves the most of them. The parameter array has
-// moved and been renamed between game builds, including generated backing fields, so this scans the runtime
-// fields rather than naming one.
-std::string FormatFromArrayFields(const std::string& text, Il2CppObject* object, std::string& fields_seen)
-{
-  auto best = text;
-  il2cpp::ForEachInstanceField(object, [&](FieldInfo* field) {
-    if (field->type->type != IL2CPP_TYPE_SZARRAY && field->type->type != IL2CPP_TYPE_ARRAY)
-      return;
-    auto* array = il2cpp::ReadField<il2cpp::Array<Il2CppObject*>*>(object, field);
-    fields_seen += fmt::format("{}{}[{}]", fields_seen.empty() ? "" : ", ", field->name,
-                               array ? std::to_string(array->size()) : "null");
-    if (!array || array->size() == 0)
-      return;
-    auto candidate = FormatPlaceholders(text, ParameterValues(array));
-    if (toast_text::CountPlaceholders(candidate) < toast_text::CountPlaceholders(best))
-      best = std::move(candidate);
-  });
-  return best;
-}
-
-// Fills placeholders from Toast.TextParameters, or failing that from any array on the toast or its text context.
-std::string FormatToastText(const std::string& text, Toast* toast, LocaleTextContext* context)
+// Use the named object[] binding. Other array fields may contain unboxed values, not object pointers.
+std::string FormatToastText(const std::string& text, Toast* toast)
 {
   if (auto* parameters = toast->TextParameters(); parameters && parameters->size() > 0)
     return FormatPlaceholders(text, ParameterValues(parameters));
-
-  std::string fields_seen;
-  for (auto* source : {static_cast<Il2CppObject*>(toast), static_cast<Il2CppObject*>(context)})
-    if (auto result = FormatFromArrayFields(text, source, fields_seen); result != text)
-      return result;
   if (text.find('{') != std::string::npos)
-    spdlog::warn("[Notify] Placeholders unresolved; array fields seen: {}. Template: \"{}\"",
-                 fields_seen.empty() ? "none" : fields_seen, text);
+    spdlog::warn("[Notify] TextParameters unavailable; placeholders unresolved in template: \"{}\"", text);
   return text;
 }
 
@@ -295,7 +268,7 @@ std::string ToastText(Toast* toast)
   // LocaleUtilities.Localize fills the context's own parameters; the toast may carry them instead.
   if (auto* text = LocaleUtilities::Localize(context, true, false)) {
     auto result = il2cpp::ToUtf8(text);
-    return result.find('{') == std::string::npos ? result : FormatToastText(result, toast, context);
+    return result.find('{') == std::string::npos ? result : FormatToastText(result, toast);
   }
 
   Il2CppString* text    = nullptr;
@@ -304,7 +277,7 @@ std::string ToastText(Toast* toast)
     spdlog::debug("[Notify] toast state {} could not be localized", static_cast<int>(toast->State()));
     return {};
   }
-  return FormatToastText(il2cpp::ToUtf8(text), toast, context);
+  return FormatToastText(il2cpp::ToUtf8(text), toast);
 }
 
 std::string EventCategory(Toast* toast)
@@ -390,11 +363,30 @@ void Notify(Toast* toast)
 // Notifies, then reports whether the in-game banner should be shown.
 bool ShowBanner(Toast* toast)
 {
-  if (toast)
-    notification_audio_play(Config::Get().NotificationSoundForToast(static_cast<int>(toast->State())));
-  const auto& ui = Config::Get().ui;
-  if (!toast || (ui.disabled_banner_types.empty() && ui.notify_banner_types.empty()))
+  if (!toast)
     return true;
+  const auto&       audio = Config::Get().audio;
+  NotificationSound sound = NotificationSound::kNone;
+  switch (toast->State()) {
+    case ToastState::Victory:
+      sound = audio.alert_victory;
+      break;
+    case ToastState::Defeat:
+      sound = audio.alert_defeat;
+      break;
+    case ToastState::ArmadaCreated:
+      sound = audio.alert_armada_created;
+      break;
+    case ToastState::ArmadaBattleWon:
+      sound = audio.alert_armada_battle_won;
+      break;
+    case ToastState::ArmadaBattleLost:
+      sound = audio.alert_armada_battle_lost;
+      break;
+    default:
+      break;
+  }
+  PlayNotificationSound(sound);
   Notify(toast);
   const auto& disabled = Config::Get().ui.disabled_banner_types;
   return std::ranges::find(disabled, static_cast<int>(toast->State())) == disabled.end();

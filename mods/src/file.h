@@ -16,7 +16,6 @@ void Init();
 const std::string& Config();
 const std::string& Vars();
 const std::string& Log();
-const std::string& Battles();
 // The settings file name used without -ccm, for messages that point users at it.
 const std::string& DefaultConfig();
 

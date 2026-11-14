@@ -418,8 +418,7 @@ struct InputActionCallbackContext {
 };
 static_assert(sizeof(InputActionCallbackContext) == 16);
 
-// This frame's keyboard. Unity answers each key from its own per-frame state; the snapshot only skips asking on
-// idle frames and caches the derived checks.
+// This frame's keyboard. Idle frames skip key queries; otherwise each key/state is read from Unity at most once.
 namespace Key
 {
   // Starts a frame's reads. Every hook that reads keys calls it first, since hooks run in no fixed order within a

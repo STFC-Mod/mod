@@ -10,6 +10,10 @@
 #include <cstdint>
 #include <optional>
 
+struct InterstitialViewController : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController">;
+};
+
 // The context of a use, purchase or donation popup.
 struct InventoryForPopup : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Inventories", "InventoryForPopup">;
@@ -317,12 +321,6 @@ inline bool AllianceGamesStoreFieldsPresent()
 }
 
 using ShopSceneManager = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Shop", "ShopSceneManager">;
-
-struct InterstitialViewController : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Interstitial", "InterstitialViewController">;
-  void CloseWhenReady()
-  { Call<"CloseWhenReady">(); }
-};
 
 // The forbidden tech inventory tiles and the large selected-item panel.
 struct ForbiddenTechInventoryItemWidget : Widget<InventoryItem> {

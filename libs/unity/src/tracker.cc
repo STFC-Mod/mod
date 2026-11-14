@@ -113,15 +113,10 @@ namespace
   {
     original(state);
 
-    std::scoped_lock           lock(registry.mutex);
-    std::vector<Il2CppObject*> released;
-    // Every object sits in its own class's list, so checking those lists alone visits each object once.
+    std::scoped_lock lock(registry.mutex);
+    // Filter each class list once, including inherited entries; untracking one object at a time rescans them.
     for (auto& [klass, instances] : registry.objects)
-      for (auto* object : instances)
-        if (ClassOf(object) == klass && IsMarked(object))
-          released.push_back(object);
-    for (auto* object : released)
-      Untrack(object);
+      std::erase_if(instances, IsMarked);
   }
 
   RegisterFinalizer FindRegisterFinalizer()

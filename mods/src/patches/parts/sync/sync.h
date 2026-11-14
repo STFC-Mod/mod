@@ -1,11 +1,7 @@
 #pragma once
 
-// Internal to data sync. Game data is diffed against what was last sent on one processing thread, queued, and
-// uploaded per target on worker threads. Battle logs are fetched from the game server on their own thread,
-// because each needs extra requests to resolve player and alliance names.
-//
-// The threads are detached and run until the process ends, so everything they share is allocated once and never
-// destroyed: static destructors at exit must not free state another thread is still using.
+// Internal sync records, delivery cursors and game-session jobs. Network workers share one process-lifetime
+// owner; each upload captures its session and target configuration before leaving the owner's lock.
 
 #include "config.h"
 
@@ -14,25 +10,18 @@
 #include <nlohmann/json.hpp>
 #include <spdlog/spdlog.h>
 
+#include <array>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <map>
+#include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
-
-NLOHMANN_JSON_NAMESPACE_BEGIN
-template <> struct adl_serializer<SyncConfig::Type> {
-  static void to_json(json& j, const SyncConfig::Type t)
-  {
-    j = nullptr;
-    for (const auto& opt : SyncOptions)
-      if (opt.type == t)
-        j = opt.type_str;
-  }
-};
-NLOHMANN_JSON_NAMESPACE_END
 
 namespace data_sync
 {
@@ -40,24 +29,32 @@ namespace data_sync
 // only formatted when it will be logged.
 namespace logging
 {
+  inline bool Enabled(spdlog::level::level_enum level)
+  {
+    if (!spdlog::should_log(level))
+      return false;
+    const auto config = Config::Sync::Get();
+    return config->logging && (level == spdlog::level::err || config->debug);
+  }
+
   template <typename... Args>
   void error(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging)
+    if (Enabled(spdlog::level::err))
       spdlog::error("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 
   template <typename... Args>
   void debug(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging && Config::Get().sync.debug)
+    if (Enabled(spdlog::level::debug))
       spdlog::debug("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 
   template <typename... Args>
   void trace(std::string_view type, std::string_view target, fmt::format_string<Args...> format, Args&&... args)
   {
-    if (Config::Get().sync.logging && Config::Get().sync.debug)
+    if (Enabled(spdlog::level::trace))
       spdlog::trace("SYNC-{} - {}: {}", type, target, fmt::format(format, std::forward<Args>(args)...));
   }
 } // namespace logging
@@ -73,11 +70,13 @@ public:
   {
   }
 
-  void Push(T item)
+  std::optional<T> Push(T item)
   {
+    std::optional<T> dropped;
     {
       std::scoped_lock lock(mutex_);
       if (items_.size() >= capacity_) {
+        dropped = std::move(items_.front());
         items_.pop_front();
         // Every 100th drop, so a dead target does not flood the log.
         if (dropped_++ % 100 == 0)
@@ -86,6 +85,7 @@ public:
       items_.push_back(std::move(item));
     }
     ready_.notify_one();
+    return dropped;
   }
 
   // Blocks until an item is available.
@@ -107,52 +107,152 @@ private:
   std::deque<T>           items_;
 };
 
-// upload.cc
+// Separate streams preserve the wire protocol's player/alliance resources and active/completed missions.
+enum class Stream {
+  kAway,
+  kBattles,
+  kBuffs,
+  kBuildings,
+  kEmerald,
+  // Client fleet changes, a journal like battles: one entry per transition, re-read or snapshot.
+  kFleets,
+  // The server's view of deployed fleets, one record per fleet.
+  kDeployedFleets,
+  kHaven,
+  kHavenPieces,
+  kHavenProsperity,
+  kInventory,
+  kJobs,
+  kActiveMissions,
+  kCompletedMissions,
+  kOfficers,
+  kProfile,
+  kResearch,
+  kResources,
+  kAllianceResources,
+  kShips,
+  kSlots,
+  kStoreOffers,
+  kTech,
+  kTraits,
+  kCount
+};
+using RecordSet = std::map<nlohmann::json, nlohmann::json>;
+// Records are immutable and shared by current state and target cursors, so targets do not copy whole JSON trees.
+using Snapshot                         = std::map<nlohmann::json, std::shared_ptr<const nlohmann::json>>;
+using Clock                            = std::chrono::steady_clock;
+inline constexpr size_t kRecentBattles = 300;
+// Fleet changes are a journal too, bounded like battles.
+inline constexpr size_t kRecentFleetChanges = 300;
 
-// Queues changed records of one category for every target that wants it. `first_sync` marks the first full
-// upload of a category in this session (sent as X-PRIME-SYNC: 2).
-void Queue(SyncConfig::Type type, const nlohmann::json& records, bool first_sync = false);
+// Full lists establish the initial-sync marker; Replace also prunes entities absent from the list.
+enum class Update { kMerge, kFull, kReplace };
 
-// records.cc. Processing thread only.
+class RecordStore
+{
+public:
+  void     Reset();
+  bool     Apply(Stream stream, RecordSet records, Update mode = Update::kMerge);
+  bool     Contains(Stream stream, const nlohmann::json& key) const;
+  uint64_t generation = 0;
 
-// Turns one server response into records. Its bytes are an entity group's payload.
-using Processor = void (*)(const std::string& bytes);
-// The processor for an entity group kind, or null when the mod does not sync it or no target wants it.
+private:
+  friend class Delivery;
+  struct Collection {
+    Snapshot records;
+    uint64_t version = 0;
+    bool     full    = false;
+    // Journal keys in arrival order, oldest first.
+    std::deque<nlohmann::json> order;
+  };
+  std::array<std::optional<Collection>, static_cast<size_t>(Stream::kCount)> streams_;
+};
+
+struct Upload {
+  Stream                                             stream;
+  uint64_t                                           generation, revision, version;
+  Snapshot                                           snapshot;
+  std::vector<std::shared_ptr<const nlohmann::json>> records;
+  bool                                               first_sync = false;
+  nlohmann::json                                     Records() const;
+  const char*                                        Type() const;
+};
+
+class Delivery
+{
+public:
+  void Reset(uint64_t generation)
+  {
+    generation_ = generation;
+    cursors_    = {};
+  }
+  void                  Configure(const SyncTargetConfig& config);
+  std::optional<Upload> Next(const RecordStore& store, Clock::time_point now);
+  // Only a successful response for the captured session and configuration advances the cursor.
+  void                    Complete(Upload upload, bool success, uint64_t generation, Clock::time_point now);
+  const SyncTargetConfig& Config() const
+  { return config_; }
+  uint64_t Revision() const
+  { return revision_; }
+
+private:
+  struct Cursor {
+    Snapshot             accepted, attempted;
+    uint64_t             version = 0;
+    bool                 full    = false;
+    Clock::time_point    retry_at{};
+    std::chrono::seconds backoff{1};
+  };
+  SyncTargetConfig                                        config_;
+  uint64_t                                                revision_ = 0, generation_ = 0;
+  size_t                                                  next_ = 0;
+  std::array<Cursor, static_cast<size_t>(Stream::kCount)> cursors_;
+};
+
+struct GameSession {
+  uint64_t    generation = 0;
+  std::string server_url, session_id;
+  std::string version     = "1.000.51336";
+  int32_t     instance_id = 0;
+};
+struct Input {
+  uint64_t    generation;
+  std::string bytes;
+  // Captured on the game thread for owner-qualified Haven map responses and the own profile.
+  std::string user_id;
+  // The local player's level, captured with user_id for the own profile: its server record carries level 0.
+  int32_t level = 0;
+};
+using Processor = void (*)(const Input&);
 Processor ProcessorFor(EntityGroup::Kind kind);
-void      ProcessRealtimeSlot(const std::string& bytes);
-// Platform responses only, so not routed by EntityGroup::Kind.
-void ProcessStoreOffers(const std::string& bytes);
-// The local player's own record from a UserProfiles response. `self` and `level` are read on the game thread when
-// the response arrives, since only the game thread may call into the game.
-void ProcessOwnProfile(const std::string& bytes, const std::string& self, int32_t level);
-// A new login (or a switch of account or server): forgets what was sent, so the new account gets its first full
-// upload and nothing of the old one is reported gone.
-void StartNewSession(const std::string& bytes);
-// The game's record of the local player, or nullptr. Calls into the game.
-UserProfile* LocalUserProfile();
+void      ProcessRealtimeSlot(const Input& input);
+void      ProcessStoreOffers(const Input& input);
+void      Publish(Stream stream, RecordSet records, uint64_t generation, Update mode = Update::kMerge);
+void      FollowSettings();
+// The local player's own record from a UserProfiles response; needs user_id and level.
+void ProcessOwnProfile(const Input& input);
+// Jobs only need the generation; Session() also copies the request headers.
+uint64_t    SessionGeneration();
+GameSession Session();
+void        SetGameServer(std::string url, std::string session_id);
+void        SetGameVersion(std::string version);
+void        SetInstanceId(int32_t instance_id);
+// Journals are cached per session, so every target can receive them without a global sent-ID filter.
+void StartBattleLogs();
+void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation);
+bool HasBattle(uint64_t id, uint64_t generation);
+void CachePlayerNames(const Input& input);
+void CacheAllianceNames(const Input& input);
 
 // fleets.cc. Client fleet records are read on the game thread, from fleet_watch and the frame tick.
 
 // Subscribes to fleet_watch when a target wants fleets.
 void InstallFleetSync();
-// Sync's frame work: polls fleet_watch, then re-reads and snapshots what was asked for. Returns at once when fleet
-// sync is off.
+// Sync's frame work for fleets: polls fleet_watch, then re-reads and snapshots what was asked for. Returns at once
+// when fleet sync is off.
 void UpdateFleetSync();
 // Asks the game thread for a full fleet snapshot, sent as a first sync. Any thread.
 void RequestFleetSnapshot();
 // Asks the game thread to re-read a fleet a second from now and resend it if its late values changed. Any thread.
 void RereadFleet(uint64_t fleet_id);
-
-// battlelogs.cc
-
-void StartBattleLogs();
-// Queues the battles that were not sent before. Processing thread only.
-void QueueNewBattles(const std::vector<uint64_t>& battle_ids);
-// Fills the name caches from profile responses the game requested itself.
-void CachePlayerNames(const std::string& bytes);
-void CacheAllianceNames(const std::string& bytes);
-// The game session, captured from the game's own server setup, for the battle-log requests.
-void SetGameServer(std::string url, std::string session_id);
-void SetGameVersion(std::string version);
-void SetInstanceId(int32_t instance_id);
 } // namespace data_sync

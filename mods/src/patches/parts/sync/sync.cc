@@ -13,7 +13,6 @@
 #include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
 
-#include <functional>
 #include <thread>
 
 namespace data_sync
@@ -25,9 +24,8 @@ namespace
   constexpr size_t kJobQueueCapacity = 256;
 
   struct Job {
-    // A plain processor, or one bound to what the game thread knew when the response arrived.
-    std::function<void(const std::string& bytes)> process;
-    std::string                                   bytes;
+    Processor process;
+    Input     input;
   };
 
   auto& pending = *new BoundedQueue<Job>{"processing", kJobQueueCapacity};
@@ -39,7 +37,8 @@ namespace
     for (;;) {
       auto job = pending.Pop();
       try {
-        job.process(job.bytes);
+        if (job.input.generation == SessionGeneration())
+          job.process(job.input);
       } catch (const std::exception& e) {
         spdlog::error("Exception while processing sync data: {}", e.what());
       } catch (...) {
@@ -48,57 +47,76 @@ namespace
     }
   }
 
+  // The game's record of the local player, or nullptr.
+  UserProfile* LocalUserProfile()
+  {
+    auto* manager = UserProfileManager::Instance();
+    return manager ? manager->GetLocalUserProfile() : nullptr;
+  }
+
   // Runs on the game thread: copies the bytes out and leaves the work to the processing thread.
   void HandleEntityGroup(EntityGroup* entity_group)
   {
     auto* group = entity_group ? entity_group->Group() : nullptr;
-    if (!group || !group->bytes() || group->Length() <= 0)
+    if (!group)
       return;
-    const auto type  = entity_group->Type();
-    const auto bytes = [group] {
-      return std::string(reinterpret_cast<const char*>(group->bytes()->data()), static_cast<size_t>(group->Length()));
-    };
-    if (auto process = ProcessorFor(type))
-      pending.Push({process, bytes()});
-
-    // The own profile needs the local player's id and level, which only the game thread can read. Skipped if the
-    // local profile is not ready; a later response retries.
-    if (type == EntityGroup::Kind::UserProfiles && Config::Get().sync.options.profile) {
-      auto* local   = LocalUserProfile();
-      auto* user_id = local ? local->UserId() : nullptr;
-      if (auto self = user_id ? il2cpp::ToUtf8(user_id) : std::string{}; !self.empty())
-        pending.Push({[self = std::move(self), level = local->Level()](const std::string& bytes) {
-                        ProcessOwnProfile(bytes, self, level);
-                      },
-                      bytes()});
+    const auto length = group->Length();
+    auto*      bytes  = group->bytes();
+    if (length < 0 || (length > 0 && (!bytes || static_cast<size_t>(length) > bytes->size())))
+      return;
+    const auto type    = entity_group->Type();
+    auto       process = ProcessorFor(type);
+    // UserProfiles also carries the local player's own record, read only while a target syncs the profile.
+    const bool own_profile = type == EntityGroup::Kind::UserProfiles && Config::Sync::Get()->options.profile;
+    if (!process && !own_profile)
+      return;
+    Input input{SessionGeneration(),
+                length ? std::string(reinterpret_cast<const char*>(bytes->data()), static_cast<size_t>(length))
+                       : std::string{}};
+    if (type == EntityGroup::Kind::PlanetaryMapResponse || own_profile) {
+      if (auto* profile = LocalUserProfile()) {
+        input.user_id = il2cpp::ToUtf8(profile->UserId());
+        input.level   = profile->Level();
+      }
     }
+    if (process)
+      pending.Push({process, input});
+    // Skipped if the local profile is not ready; a later response retries.
+    if (own_profile && !input.user_id.empty())
+      pending.Push({ProcessOwnProfile, std::move(input)});
   }
 
   // Platform responses (store offers among them) pass through the same registry code as game server responses. Only
-  // store offers are read from them, and only while a target wants them.
+  // store offers are read from them, and only while a target wants them, so a target that turns them on later
+  // waits for the next store refresh.
   void HandlePlatformResponse(PlatformServiceResponse* response)
   {
-    if (auto* groups = response->EntityGroups())
-      for (auto* entity_group : *groups) {
-        auto* group = entity_group && entity_group->Type() == PlatformEntityGroup::Kind::StoreOffers
-                          ? entity_group->Group()
-                          : nullptr;
-        if (group && group->bytes() && group->Length() > 0)
-          pending.Push({ProcessStoreOffers, std::string(reinterpret_cast<const char*>(group->bytes()->data()),
-                                                        static_cast<size_t>(group->Length()))});
-      }
+    auto* groups = response->EntityGroups();
+    if (!groups)
+      return;
+    for (auto* entity_group : *groups) {
+      auto*      group  = entity_group && entity_group->Type() == PlatformEntityGroup::Kind::StoreOffers
+                              ? entity_group->Group()
+                              : nullptr;
+      const auto length = group ? group->Length() : 0;
+      auto*      bytes  = group ? group->bytes() : nullptr;
+      if (length > 0 && bytes && static_cast<size_t>(length) <= bytes->size())
+        pending.Push({ProcessStoreOffers,
+                      {SessionGeneration(),
+                       std::string(reinterpret_cast<const char*>(bytes->data()), static_cast<size_t>(length))}});
+    }
   }
 
   void* RtcParser_ParseFinalPayload_Hook(auto original, void* _this, CentrifugoInfo centrifugoInfo,
                                          RealtimeDataPayload* realtimeDataPayload, void* finalPayload)
   {
-    if (Config::Get().sync.options.slots && realtimeDataPayload && realtimeDataPayload->Target()
-        && realtimeDataPayload->DataType() && realtimeDataPayload->Data()) {
+    if (realtimeDataPayload && realtimeDataPayload->Target() && realtimeDataPayload->DataType()
+        && realtimeDataPayload->Data()) {
       // DataType arrives as a number in a string; JSON is "0". This runs inside the game's parser, so nothing here
       // may throw.
       const auto* type = realtimeDataPayload->DataType();
       if (type->length == 1 && type->chars[0] == u'0')
-        pending.Push({ProcessRealtimeSlot, il2cpp::ToUtf8(realtimeDataPayload->Data())});
+        pending.Push({ProcessRealtimeSlot, {SessionGeneration(), il2cpp::ToUtf8(realtimeDataPayload->Data())}});
     }
     return original(_this, centrifugoInfo, realtimeDataPayload, finalPayload);
   }
@@ -111,7 +129,7 @@ namespace
             service_response && service_response->Is<ServiceResponse>() ? service_response->EntityGroups() : nullptr)
       for (auto* group : *groups)
         HandleEntityGroup(group);
-    else if (auto* platform = service_response && Config::Get().sync.options.store_offers
+    else if (auto* platform = service_response && Config::Sync::Get()->options.store_offers
                                   ? service_response->As<PlatformServiceResponse>()
                                   : nullptr)
       HandlePlatformResponse(platform);
@@ -122,11 +140,9 @@ namespace
                                      Il2CppString* gatewayServerUrl, Il2CppString* sessionId,
                                      Il2CppString* serverRegion)
   {
-    original(_this, gameServerUrl, gatewayServerUrl, sessionId, serverRegion);
+    // Establish the generation before original can deliver responses from the new session.
     SetGameServer(il2cpp::ToUtf8(gameServerUrl), il2cpp::ToUtf8(sessionId));
-    // A new login (or a switch of account or server) must not be diffed against the last one's data: the new
-    // account gets its first full upload and haven data again, and nothing of the old one is reported gone.
-    pending.Push({StartNewSession, {}});
+    original(_this, gameServerUrl, gatewayServerUrl, sessionId, serverRegion);
   }
 
   void GameServer_Initialise_Hook(auto original, void* _this, Il2CppString* sessionId, Il2CppString* gameVersion,
@@ -162,12 +178,19 @@ namespace
     IL2CPP_HOOK(SlotAssignRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
     IL2CPP_HOOK(SlotClearRtcParser::Method("ParseFinalPayload"), RtcParser_ParseFinalPayload_Hook);
 
+    FollowSettings();
     InstallFleetSync();
-
     StartBattleLogs();
     std::thread(RunJobs).detach();
+  }
+
+  // Frame work: settings changes reach the targets, then fleet state is polled.
+  void Frame()
+  {
+    FollowSettings();
+    UpdateFleetSync();
   }
 } // namespace
 } // namespace data_sync
 
-const Feature kSync{"Sync", &Config::Patches::syncpatches, data_sync::Install, data_sync::UpdateFleetSync};
+const Feature kSync{"Sync", &Config::Patches::syncpatches, data_sync::Install, data_sync::Frame};

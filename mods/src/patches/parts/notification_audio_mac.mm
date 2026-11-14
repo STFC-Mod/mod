@@ -1,17 +1,19 @@
 #ifdef __APPLE__
 
-#include "patches/notification_audio_platform.h"
+#include <cstddef>
+#include <cstdint>
 
 #import <AppKit/AppKit.h>
 
-bool notification_audio_platform_play(const uint8_t* data, size_t size)
+bool PlayNotificationBuffer(const uint8_t* data, size_t size)
 {
   @autoreleasepool {
     static NSSound* current_sound = nil;
 
     NSData* sound_data = [NSData dataWithBytesNoCopy:const_cast<uint8_t*>(data) length:size freeWhenDone:NO];
     NSSound* sound      = [[NSSound alloc] initWithData:sound_data];
-    if (!sound) return false;
+    if (!sound)
+      return false;
 
     [current_sound stop];
 #if __has_feature(objc_arc)

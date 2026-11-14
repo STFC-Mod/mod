@@ -1,47 +1,28 @@
 #pragma once
 
-#include "patches/notification_audio.h"
-
 // User settings from the settings TOML. Each struct is a TOML section and each member is named after its key,
 // with its default as the initializer: Config::Get().graphics.ui_scale is [graphics] ui_scale. They are read at
 // startup and again whenever the file changes; a few are also toggled at runtime by hotkeys. Everything runs on
-// the game thread except sync, which only reads.
+// the game thread except sync, whose workers retain immutable snapshots.
+
+#include "patches/parts/notification_audio.h"
+#include "patches/shortcuts.h"
+
+#include <toml++/toml.h>
 
 #include <array>
 #include <map>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <vector>
 
 // Which categories of game data are uploaded, globally ([sync]) or for one target ([sync.targets.<name>]).
 struct SyncConfig {
-  enum class Type {
-    kAwayAssignments,
-    kBattles,
-    kBuffs,
-    kBuildings,
-    kEmeraldChain,
-    kFleets,
-    kHaven,
-    kInventory,
-    kJobs,
-    kMissions,
-    kOfficer,
-    kProfile,
-    kResearch,
-    kResources,
-    kShips,
-    kSlots,
-    kStoreOffers,
-    kTech,
-    kTraits
-  };
-
   struct Option {
-    Type             type;
-    std::string_view type_str;   // used in JSON body
     std::string_view option_str; // used in TOML file
     bool SyncConfig::* option;
+    std::string_view   old_name = {};
   };
 
   std::string proxy;
@@ -65,49 +46,34 @@ struct SyncConfig {
   bool        tech             = false;
   bool        traits           = false;
 
-  [[nodiscard]] bool enabled(Type type) const;
+  bool operator==(const SyncConfig&) const = default;
 };
 
 constexpr std::array SyncOptions{
-    SyncConfig::Option{SyncConfig::Type::kAwayAssignments, "away_assignment", "away_assignments",
-                       &SyncConfig::away_assignments},
-    SyncConfig::Option{SyncConfig::Type::kBattles, "battlelog", "battlelogs", &SyncConfig::battlelogs},
-    SyncConfig::Option{SyncConfig::Type::kBuffs, "buff", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kBuildings, "module", "buildings", &SyncConfig::buildings},
-    SyncConfig::Option{SyncConfig::Type::kEmeraldChain, "emerald_chain", "buffs", &SyncConfig::buffs},
-    SyncConfig::Option{SyncConfig::Type::kFleets, "fleet", "fleets", &SyncConfig::fleets},
-    SyncConfig::Option{SyncConfig::Type::kHaven, "haven", "haven", &SyncConfig::haven},
-    SyncConfig::Option{SyncConfig::Type::kInventory, "inventory", "inventory", &SyncConfig::inventory},
-    SyncConfig::Option{SyncConfig::Type::kJobs, "job", "jobs", &SyncConfig::jobs},
-    SyncConfig::Option{SyncConfig::Type::kMissions, "mission", "missions", &SyncConfig::missions},
-    SyncConfig::Option{SyncConfig::Type::kOfficer, "officer", "officers", &SyncConfig::officers},
-    SyncConfig::Option{SyncConfig::Type::kProfile, "profile", "profile", &SyncConfig::profile},
-    SyncConfig::Option{SyncConfig::Type::kResearch, "research", "research", &SyncConfig::research},
-    SyncConfig::Option{SyncConfig::Type::kResources, "resource", "resources", &SyncConfig::resources},
-    SyncConfig::Option{SyncConfig::Type::kShips, "ship", "ships", &SyncConfig::ships},
-    SyncConfig::Option{SyncConfig::Type::kSlots, "slot", "slots", &SyncConfig::slots},
-    SyncConfig::Option{SyncConfig::Type::kStoreOffers, "store_offer", "store_offers", &SyncConfig::store_offers},
-    SyncConfig::Option{SyncConfig::Type::kTech, "ft", "tech", &SyncConfig::tech},
-    SyncConfig::Option{SyncConfig::Type::kTraits, "trait", "traits", &SyncConfig::traits},
+    SyncConfig::Option{"away_assignments", &SyncConfig::away_assignments},
+    SyncConfig::Option{"battlelogs", &SyncConfig::battlelogs},
+    SyncConfig::Option{"buffs", &SyncConfig::buffs},
+    SyncConfig::Option{"buildings", &SyncConfig::buildings},
+    SyncConfig::Option{"fleets", &SyncConfig::fleets},
+    SyncConfig::Option{"haven", &SyncConfig::haven},
+    SyncConfig::Option{"inventory", &SyncConfig::inventory},
+    SyncConfig::Option{"jobs", &SyncConfig::jobs},
+    SyncConfig::Option{"missions", &SyncConfig::missions},
+    SyncConfig::Option{"officers", &SyncConfig::officers, "officer"},
+    SyncConfig::Option{"profile", &SyncConfig::profile},
+    SyncConfig::Option{"research", &SyncConfig::research},
+    SyncConfig::Option{"resources", &SyncConfig::resources},
+    SyncConfig::Option{"ships", &SyncConfig::ships},
+    SyncConfig::Option{"slots", &SyncConfig::slots},
+    SyncConfig::Option{"store_offers", &SyncConfig::store_offers},
+    SyncConfig::Option{"tech", &SyncConfig::tech},
+    SyncConfig::Option{"traits", &SyncConfig::traits},
 };
-
-constexpr std::string to_string(const SyncConfig::Type type)
-{
-  for (const auto& opt : SyncOptions)
-    if (opt.type == type)
-      return std::string(opt.type_str);
-  return {};
-}
-
-constexpr std::string operator+(const std::string& prefix, const SyncConfig::Type type)
-{ return prefix + to_string(type); }
-
-constexpr std::string operator+(const SyncConfig::Type type, const std::string& suffix)
-{ return to_string(type) + suffix; }
 
 struct SyncTargetConfig : SyncConfig {
   std::string url;
   std::string token;
+  bool        operator==(const SyncTargetConfig&) const = default;
 };
 
 enum class MissionHudVisibility {
@@ -140,13 +106,10 @@ struct ShipFilter {
   bool                                  all = false;
 };
 
-struct SettingsFile;
-
 class Config final
 {
 public:
-  [[nodiscard]] NotificationSound NotificationSoundForToast(int toast_state) const;
-  // The current settings. Call it again rather than keeping the reference: a reload replaces them.
+  // Game thread only. Call it again rather than keeping the reference: a reload replaces the settings.
   [[nodiscard]] static Config& Get();
   // Re-reads the settings file and makes it current, rebinding shortcuts. A file that does not parse keeps the
   // current settings. [patches] decides which hooks are installed, so its changes wait for a restart. Game thread.
@@ -263,34 +226,31 @@ public:
   } buffs;
 
   struct Audio {
-    bool              disable_all_events       = false;
-    NotificationSound alert_victory            = NotificationSound::None;
-    NotificationSound alert_defeat             = NotificationSound::None;
-    NotificationSound alert_armada_created     = NotificationSound::None;
-    NotificationSound alert_armada_battle_won  = NotificationSound::None;
-    NotificationSound alert_armada_battle_lost = NotificationSound::None;
-
     bool                     trace_events = false;
     std::vector<std::string> disabled_events;
+    bool                     disable_all_events       = false;
+    NotificationSound        alert_victory            = NotificationSound::kNone;
+    NotificationSound        alert_defeat             = NotificationSound::kNone;
+    NotificationSound        alert_armada_created     = NotificationSound::kNone;
+    NotificationSound        alert_armada_battle_won  = NotificationSound::kNone;
+    NotificationSound        alert_armada_battle_lost = NotificationSound::kNone;
   } audio;
 
   struct Ui {
     bool dock_syncmanagement         = true;
     bool auto_confirm_reveal_ability = false;
     bool show_player_title           = true;
-    bool only_show_first_popup       = false;
-    bool reverse_haven_history       = true;
     bool disable_escape_exit         = true;
     // Maximum gap in milliseconds between two Escape presses that opens the exit prompt; 0 never opens it.
     int  disable_escape_exit_timer = 0;
     bool disable_preview_locate    = false;
     bool disable_preview_recall    = false;
-    // TODO: both are read but have no effect; disable_first_popup was switched off in misc.cc.
-    bool disable_first_popup   = false;
-    bool disable_toast_banners = false;
-    bool disable_move_keys     = false;
-    bool disable_galaxy_chat   = false;
-    bool disable_veil_chat     = false;
+    bool only_show_first_popup     = false;
+    bool reverse_haven_history     = true;
+    bool disable_toast_banners     = false;
+    bool disable_move_keys         = false;
+    bool disable_galaxy_chat       = false;
+    bool disable_veil_chat         = false;
 
     // Side chat: its initial width in canvas units (0 keeps the game's), and opening it once per login.
     float default_chat_width = 0.0f;
@@ -333,18 +293,21 @@ public:
 
     bool always_skip_reveal_sequence = true;
     // Hides the artifact shards popup's Exchange All button; single exchanges stay. Takes effect on the next popup.
-    bool disable_exchange_all = false;
-    // Mission HUD buttons by name (q_trials, field_training, outposts, daily_goals, missions).
-    std::map<std::string, MissionHudVisibility, std::less<>> mission_hud_buttons;
+    bool                 disable_exchange_all = false;
+    MissionHudVisibility hud_q_trials         = MissionHudVisibility::kAuto;
+    MissionHudVisibility hud_field_training   = MissionHudVisibility::kAuto;
+    MissionHudVisibility hud_outposts         = MissionHudVisibility::kAuto;
+    MissionHudVisibility hud_missions         = MissionHudVisibility::kAuto;
 
     // ToastState values.
     std::vector<int> disabled_banner_types;
     std::vector<int> notify_banner_types;
-
-    [[nodiscard]] MissionHudVisibility MissionHudButtonVisibility(std::string_view button) const;
   } ui;
 
   struct Sync {
+    // Workers keep this snapshot alive while reading; reloads publish a separate immutable copy.
+    [[nodiscard]] static std::shared_ptr<const Sync> Get();
+
     bool debug   = false;
     bool logging = false;
     // Seconds that resolved player and alliance names stay cached.
@@ -352,7 +315,7 @@ public:
     // The categories any target wants, so the game hooks can skip the rest.
     SyncConfig                              options;
     std::map<std::string, SyncTargetConfig> targets;
-  } sync;
+  };
 
   // [config]: overrides for the game's own server settings.
   struct Game {
@@ -360,8 +323,14 @@ public:
     std::string assets_url_override;
   } game;
 
+  // Settings from a parsed settings file; an empty table gives the defaults. `effective` receives every value
+  // used, which becomes the runtime vars file. Logs what it rejects, and each value at debug level when
+  // `log_values`. Does not change the live settings or shortcuts.
+  static std::unique_ptr<Config> Parse(const toml::table& file, toml::table& effective, bool log_values);
+
 private:
+  Shortcut::Bindings          shortcuts_;
+  std::shared_ptr<const Sync> sync_;
   Config() = default;
-  // Applies `file`. The first load also creates the settings file if it is missing.
-  void Load(const SettingsFile& file, bool first);
+  void Read(const toml::table& file, toml::table& effective, bool log_values);
 };

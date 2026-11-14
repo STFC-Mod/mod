@@ -186,17 +186,6 @@ private:
   bool               log_;
 };
 
-// Sync options renamed since; their old names are still read, per target as well.
-constexpr std::pair<SyncConfig::Type, std::string_view> kRenamedSyncOptions[] = {
-    {SyncConfig::Type::kOfficer, "officer"}};
-
-std::string_view OldName(const SyncConfig::Option& option)
-{
-  const auto it =
-      std::ranges::find(kRenamedSyncOptions, option.type, &std::pair<SyncConfig::Type, std::string_view>::first);
-  return it == std::end(kRenamedSyncOptions) ? std::string_view{} : it->second;
-}
-
 // "*" matches every ship; otherwise a comma list of ship names, each split into words by ShipNameWords.
 ShipFilter ReadShipFilter(Reader& reader, std::string_view key)
 {
@@ -310,7 +299,7 @@ void ReadSyncTargets(Reader& reader, std::map<std::string, SyncTargetConfig>& sy
         {"url", target.url}, {"token", target.token}, {"proxy", target.proxy}, {"verify_ssl", target.verify_ssl}};
     for (const auto& option : SyncOptions) {
       const auto key =
-          !values->contains(option.option_str) && !OldName(option).empty() ? OldName(option) : option.option_str;
+          !values->contains(option.option_str) && !option.old_name.empty() ? option.old_name : option.option_str;
       target.*option.option = (*values)[key].value<bool>().value_or(defaults.*option.option);
       parsed.insert(option.option_str, target.*option.option);
     }
@@ -345,63 +334,80 @@ void Save(const toml::table& table, const std::string& name, bool warning_header
 }
 } // namespace
 
-bool SyncConfig::enabled(SyncConfig::Type type) const
-{
-  for (const auto& opt : SyncOptions)
-    if (opt.type == type)
-      return this->*opt.option;
-  return false;
-}
-
-// The settings file as parsed. `loaded` is false when it was missing or did not parse and defaults are used.
-struct SettingsFile {
-  toml::table table;
-  bool        loaded = false;
-};
-
 namespace
 {
-// The current settings. Replaced settings are never freed: a sync thread may still be reading them, and they only
-// pile up as fast as someone edits the file.
-std::atomic<Config*> current_config{nullptr};
+std::unique_ptr<Config> current_config;
+// Detached sync workers can still read during static teardown, so the publication slot lives until process exit.
+auto& sync_config = *new std::shared_ptr<const Config::Sync>{std::make_shared<const Config::Sync>()};
 
 toml::table ParseSettingsFile()
 {
   const auto path = File::Path(File::Config()).u8string();
   return toml::parse_file(std::string_view(reinterpret_cast<const char*>(path.data()), path.size()));
 }
+
+// Writes `effective` as the runtime vars file, and on first use creates the settings file from it when missing.
+void SaveEffective(const toml::table& effective, bool first)
+{
+  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
+    spdlog::warn("Creating {} (default config file)", File::Config());
+    Save(effective, File::Config(), false);
+  }
+  spdlog::info("Creating {} (final config file)", File::Vars());
+  Save(effective, File::Vars(), true);
+}
 } // namespace
+
+std::unique_ptr<Config> Config::Parse(const toml::table& file, toml::table& effective, bool log_values)
+{
+  std::unique_ptr<Config> config(new Config);
+  config->Read(file, effective, log_values);
+  return config;
+}
+
+std::shared_ptr<const Config::Sync> Config::Sync::Get()
+{ return std::atomic_load_explicit(&sync_config, std::memory_order_acquire); }
 
 Config& Config::Get()
 {
-  if (auto* config = current_config.load(std::memory_order_acquire))
-    return *config;
   // First use, inside il2cpp_init on the game thread. A broken file falls back to the defaults here.
-  static Config* const first = [] {
-    File::MigrateLegacyFiles();
-    SettingsFile file;
-    try {
-      file.table  = ParseSettingsFile();
-      file.loaded = true;
-    } catch (const toml::parse_error& e) {
-      spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
-    } catch (...) {
-      spdlog::warn("Failed to load config file, falling back to default settings");
-    }
-    auto* config = new Config;
-    config->Load(file, true);
-    current_config.store(config, std::memory_order_release);
-    return config;
-  }();
-  return *first;
+  if (!current_config)
+    current_config = [] {
+      File::MigrateLegacyFiles();
+      toml::table file;
+      bool        loaded = false;
+      try {
+        file   = ParseSettingsFile();
+        loaded = true;
+      } catch (const toml::parse_error& e) {
+        spdlog::warn("Failed to load config file, falling back to default settings: {}", e.description());
+      } catch (...) {
+        spdlog::warn("Failed to load config file, falling back to default settings");
+      }
+      toml::table effective;
+      auto        config = Parse(file, effective, loaded);
+      SaveEffective(effective, true);
+      std::cout << "\n\n-----------------------------\n\n"
+                << effective << "\n\n-----------------------------\n"
+#if VERSION_PATCH
+                << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
+                << " (Patch " << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
+#else
+                << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION
+                << "\n\n";
+#endif
+      Shortcut::Set(std::move(config->shortcuts_));
+      std::atomic_store_explicit(&sync_config, config->sync_, std::memory_order_release);
+      return config;
+    }();
+  return *current_config;
 }
 
 bool Config::Reload()
 {
-  SettingsFile file;
+  toml::table file;
   try {
-    file.table  = ParseSettingsFile();
-    file.loaded = true;
+    file = ParseSettingsFile();
   } catch (const toml::parse_error& e) {
     spdlog::warn("Settings not reloaded, {} does not parse: {}", File::Config(), e.description());
     return false;
@@ -411,20 +417,22 @@ bool Config::Reload()
   }
 
   spdlog::info("Reloading settings from {}", File::Config());
-  auto* next = new Config;
+  std::unique_ptr<Config> next;
+  toml::table             effective;
   try {
-    next->Load(file, false);
+    next = Parse(file, effective, true);
+    SaveEffective(effective, false);
   } catch (const std::exception& e) {
-    // Shortcuts may already be rebound from the new file; everything else keeps the current settings.
     spdlog::error("Settings not reloaded: {}", e.what());
-    delete next;
     return false;
   }
   // Hooks are installed once, so the startup hook groups stay in force.
   if (!(next->patches == Get().patches))
     spdlog::warn("Changes to [patches] take effect after a restart");
   next->patches = Get().patches;
-  current_config.store(next, std::memory_order_release);
+  Shortcut::Set(std::move(next->shortcuts_));
+  std::atomic_store_explicit(&sync_config, next->sync_, std::memory_order_release);
+  current_config = std::move(next);
   return true;
 }
 
@@ -459,17 +467,9 @@ void Config::ReloadIfChanged()
   Reload();
 }
 
-MissionHudVisibility Config::Ui::MissionHudButtonVisibility(std::string_view button) const
+void Config::Read(const toml::table& config, toml::table& parsed, bool log_values)
 {
-  const auto it = mission_hud_buttons.find(button);
-  return it == mission_hud_buttons.end() ? MissionHudVisibility::kAuto : it->second;
-}
-
-void Config::Load(const SettingsFile& file, bool first)
-{
-  const auto& config = file.table;
-  toml::table parsed;
-  Reader      r(config, parsed, file.loaded);
+  Reader r(config, parsed, log_values);
   r.Read("graphics", "interior_zoom_scale", graphics.interior_zoom_scale);
   if (!std::isfinite(graphics.interior_zoom_scale) || graphics.interior_zoom_scale < 1.0f) {
     spdlog::warn("invalid graphics.interior_zoom_scale {}; using 2", graphics.interior_zoom_scale);
@@ -546,11 +546,12 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("graphics", "ui_scale_ship", g.ui_scale_ship);
   r.Read("graphics", "ui_scale_viewer", g.ui_scale_viewer);
   r.Read("graphics", "zoom", g.zoom);
+  const auto haven_default = g.haven_zoom;
   r.Read("graphics", "haven_zoom", g.haven_zoom);
   if (!std::isfinite(g.haven_zoom) || g.haven_zoom < 0.0f) {
-    spdlog::warn("invalid g.haven_zoom {}; using 4000", g.haven_zoom);
-    g.haven_zoom = 4000.0f;
-    r.Record("graphics", "haven_zoom", g.haven_zoom);
+    spdlog::warn("invalid graphics.haven_zoom {}; using {}", g.haven_zoom, haven_default);
+    g.haven_zoom = haven_default;
+    r.Record("graphics", "haven_zoom", haven_default);
   }
   r.Read("graphics", "fr_scale", g.fr_scale);
   for (auto [profile, prefix] : {std::pair{&g.zoom_label_player, std::string("zoom_label_player")},
@@ -603,8 +604,6 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("buffs", "use_out_of_dock_power", buffs.use_out_of_dock_power);
 
   r.Read("audio", "trace_events", audio.trace_events);
-  audio.disable_all_events = false;
-  audio.disabled_events.clear();
   for (const auto& event : StrSplit(r.Get<std::string>("audio", "disabled_events", ""), ',')) {
     if (AsciiStrToLower(event) == "all")
       audio.disable_all_events = true;
@@ -619,12 +618,12 @@ void Config::Load(const SettingsFile& file, bool first)
            {"alert_armada_battle_won", &audio.alert_armada_battle_won},
            {"alert_armada_battle_lost", &audio.alert_armada_battle_lost}}) {
     const auto name  = r.Get<std::string>("audio", key, "none");
-    const auto sound = notification_sound_from_name(StripAsciiWhitespace(name));
+    const auto sound = ParseNotificationSound(StripAsciiWhitespace(name));
     if (!sound)
       spdlog::warn("invalid config value audio.{}: '{}'; using none", key, name);
-    *value = sound.value_or(NotificationSound::None);
-    r.Record("audio", key, notification_sound_name(*value));
-    has_audio_alert |= *value != NotificationSound::None;
+    *value = sound.value_or(NotificationSound::kNone);
+    r.Record("audio", key, NotificationSoundName(*value));
+    has_audio_alert |= *value != NotificationSound::kNone;
   }
   if (has_audio_alert && !patches.toastbannerhooks)
     spdlog::warn("audio alerts require patches.toastbannerhooks = true");
@@ -634,8 +633,8 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "disable_escape_exit_timer", u.disable_escape_exit_timer);
   r.Read("ui", "disable_preview_locate", u.disable_preview_locate);
   r.Read("ui", "disable_preview_recall", u.disable_preview_recall);
-  r.Read("ui", "disable_first_popup", u.disable_first_popup);
   r.Read("ui", "only_show_first_popup", u.only_show_first_popup);
+  r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "disable_move_keys", u.disable_move_keys);
   r.Read("ui", "disable_toast_banners", u.disable_toast_banners);
   r.Read("ui", "default_chat_width", u.default_chat_width);
@@ -655,7 +654,6 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "focus_search", u.focus_search);
   r.ReadRenamed("ui", "format_cargo_values", "cargo_format", u.format_cargo_values);
   r.Read("ui", "officer_sort", u.officer_sort);
-  r.Read("ui", "reverse_haven_history", u.reverse_haven_history);
   r.Read("ui", "arrow_keys_to_select_ship", u.arrow_keys_to_select_ship);
   r.Read("ui", "auto_confirm_ft_upgrade", u.auto_confirm_ft_upgrade);
   r.Read("ui", "forbidden_tech_ship_name", u.forbidden_tech_ship_name);
@@ -672,23 +670,26 @@ void Config::Load(const SettingsFile& file, bool first)
   r.Read("ui", "cargo_significant_decimals", u.cargo_significant_decimals);
   r.Read("ui", "always_skip_reveal_sequence", u.always_skip_reveal_sequence);
   r.ReadRenamed("ui", "disable_exchange_all", "hide_artifact_exchange_all", u.disable_exchange_all);
-  for (const char* button : {"q_trials", "field_training", "outposts", "daily_goals", "missions"})
-    r.Choose("ui", std::string("hud_") + button, u.mission_hud_buttons[button], kHudVisibility);
+  r.Choose("ui", "hud_q_trials", u.hud_q_trials, kHudVisibility);
+  r.Choose("ui", "hud_field_training", u.hud_field_training, kHudVisibility);
+  r.Choose("ui", "hud_outposts", u.hud_outposts, kHudVisibility);
+  r.Choose("ui", "hud_missions", u.hud_missions, kHudVisibility);
   u.disabled_banner_types = ReadBannerTypes(r, "disabled_banner_types");
   u.notify_banner_types   = ReadBannerTypes(r, "notify_banner_types");
 
-  r.Read("sync", "debug", sync.debug);
-  r.Read("sync", "logging", sync.logging);
-  r.Read("sync", "resolver_cache_ttl", sync.resolver_cache_ttl);
+  auto sync = std::make_shared<Sync>();
+  r.Read("sync", "debug", sync->debug);
+  r.Read("sync", "logging", sync->logging);
+  r.Read("sync", "resolver_cache_ttl", sync->resolver_cache_ttl);
   SyncConfig sync_defaults;
   r.Read("sync", "proxy", sync_defaults.proxy);
   r.Read("sync", "verify_ssl", sync_defaults.verify_ssl);
   for (const auto& option : SyncOptions)
-    if (OldName(option).empty())
+    if (option.old_name.empty())
       r.Read("sync", option.option_str, sync_defaults.*option.option);
     else
-      r.ReadRenamed("sync", option.option_str, OldName(option), sync_defaults.*option.option);
-  ReadSyncTargets(r, sync.targets, sync_defaults);
+      r.ReadRenamed("sync", option.option_str, option.old_name, sync_defaults.*option.option);
+  ReadSyncTargets(r, sync->targets, sync_defaults);
 
   if (auto sync_file = config["sync"]["file"].value<std::string>(); sync_file && !sync_file->empty()) {
     spdlog::error("Deprecation Notice: The 'sync_file' config option has been deprecated and removed. "
@@ -696,51 +697,16 @@ void Config::Load(const SettingsFile& file, bool first)
   }
 
   // The global options say whether any target wants a category, so the game hooks can skip the rest.
-  sync.options.proxy      = sync_defaults.proxy;
-  sync.options.verify_ssl = sync_defaults.verify_ssl;
+  sync->options.proxy      = sync_defaults.proxy;
+  sync->options.verify_ssl = sync_defaults.verify_ssl;
   for (const auto& option : SyncOptions) {
-    sync.options.*option.option = std::ranges::any_of(sync.targets | std::views::values,
-                                                      [&](const auto& target) { return target.*option.option; });
+    sync->options.*option.option = std::ranges::any_of(sync->targets | std::views::values,
+                                                       [&](const auto& target) { return target.*option.option; });
   }
 
   r.Read("config", "settings_url", game.settings_url);
   r.Read("config", "assets_url_override", game.assets_url_override);
 
-  Shortcut::Load(config, parsed, control.hotkeys_extended, control.enable_experimental);
-
-  if (first && !std::filesystem::exists(File::Path(File::Config()))) {
-    spdlog::warn("Creating {} (default config file)", File::Config());
-    Save(parsed, File::Config(), false);
-  }
-  spdlog::info("Creating {} (final config file)", File::Vars());
-  Save(parsed, File::Vars(), true);
-
-  if (!first)
-    return;
-  std::cout << "\n\n-----------------------------\n\n"
-            << parsed << "\n\n-----------------------------\n"
-#if VERSION_PATCH
-            << "Loaded beta version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << " (Patch "
-            << VERSION_PATCH << ")\n\nNOTE: Beta versions may have unexpected bugs and issues.\n\n";
-#else
-            << "Loaded release version " << VERSION_MAJOR << "." << VERSION_MINOR << "." << VERSION_REVISION << "\n\n";
-#endif
-}
-
-NotificationSound Config::NotificationSoundForToast(int toast_state) const
-{
-  switch (toast_state) {
-    case static_cast<int>(ToastState::Victory):
-      return audio.alert_victory;
-    case static_cast<int>(ToastState::Defeat):
-      return audio.alert_defeat;
-    case static_cast<int>(ToastState::ArmadaCreated):
-      return audio.alert_armada_created;
-    case static_cast<int>(ToastState::ArmadaBattleWon):
-      return audio.alert_armada_battle_won;
-    case static_cast<int>(ToastState::ArmadaBattleLost):
-      return audio.alert_armada_battle_lost;
-    default:
-      return NotificationSound::None;
-  }
+  shortcuts_ = Shortcut::Parse(config, parsed, control.hotkeys_extended, control.enable_experimental);
+  sync_      = std::move(sync);
 }

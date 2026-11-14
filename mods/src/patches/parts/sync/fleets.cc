@@ -1,6 +1,6 @@
 // Live fleet state for the `fleets` category: one record per FleetState transition from fleet_watch, a full snapshot
 // as a first sync, and late re-reads after server updates. Everything that reads the game runs on the game thread
-// and only queues; uploads stay on the upload thread.
+// and only publishes; uploads stay on the target workers.
 
 #include "patches/parts/sync/sync.h"
 
@@ -34,8 +34,9 @@ namespace
   std::mutex                                                          reread_mutex;
   std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> reread_at;
 
-  // Set once fleet_watch accepted the subscription. Sync's frame work then drives fleet_watch.
-  bool fleet_sync_installed = false;
+  // Set once fleet_watch accepted the subscription. Sync's frame work then drives fleet_watch, and the processing
+  // thread's re-read requests are kept.
+  std::atomic_bool fleet_sync_installed{false};
 
   const char* StateName(FleetState state)
   {
@@ -161,8 +162,7 @@ namespace
     // those never come out negative in the record.
     const int64_t hull_id = hull ? static_cast<int64_t>(static_cast<uint32_t>(hull->Id())) : 0;
 
-    json out = {{"type", SyncConfig::Type::kFleets},
-                {"fid", fleet->Id()},
+    json out = {{"fid", fleet->Id()},
                 {"slot", slot},
                 {"hull_id", hull_id},
                 {"level", fleet->Level()},
@@ -175,6 +175,14 @@ namespace
     AddLiveState(out, fleet, state);
     sent_late[fleet->Id()] = LateFields(out);
     return out;
+  }
+
+  // Every batch is its own journal entry, delivered in order and never merged with a later one: Mining -> Docked ->
+  // Repairing between two uploads still sends all three. Game thread only.
+  void Append(json records, bool snapshot)
+  {
+    static uint64_t sequence = 0;
+    Publish(Stream::kFleets, {{json::array({++sequence, snapshot}), std::move(records)}}, SessionGeneration());
   }
 
   // A snapshot is the complete list of occupied slots, so it is sent as a first sync.
@@ -191,18 +199,17 @@ namespace
 
     if (!records.empty()) {
       logging::debug("PROCESS", "fleets", "Fleet snapshot ({}): {} fleets", reason, records.size());
-      Queue(SyncConfig::Type::kFleets, records, true);
+      Append(std::move(records), true);
     }
   }
 
-  // Each transition is its own upload, so Mining -> Docked -> Repairing between two uploads still sends all three.
   void OnTransition(const fleet_watch::Transition& transition)
   {
     if (!transition.fleet)
       return;
     auto records = json::array();
     records.push_back(Record(transition.after.slot, transition.fleet, transition.after.state, transition.before.state));
-    Queue(SyncConfig::Type::kFleets, records);
+    Append(std::move(records), false);
   }
 
   void OnBaseline()
@@ -244,13 +251,13 @@ namespace
         records.push_back(std::move(record));
     }
     if (!records.empty())
-      Queue(SyncConfig::Type::kFleets, records);
+      Append(std::move(records), false);
   }
 } // namespace
 
 void InstallFleetSync()
 {
-  if (!Config::Get().sync.options.fleets)
+  if (!Config::Sync::Get()->options.fleets)
     return;
   if (!fleet_watch::Subscribe({.on_transition = OnTransition, .on_baseline = OnBaseline})) {
     spdlog::warn("Sync: fleet state subscriber could not be installed; fleet sync disabled");
@@ -265,6 +272,9 @@ void RequestFleetSnapshot()
 
 void RereadFleet(uint64_t fleet_id)
 {
+  // Deployed fleets are processed whether or not a target wants them; nothing would drain these.
+  if (!fleet_sync_installed)
+    return;
   std::scoped_lock lock(reread_mutex);
   reread_at.try_emplace(fleet_id, std::chrono::steady_clock::now() + std::chrono::seconds(1));
 }
