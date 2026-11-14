@@ -56,7 +56,7 @@ do
         end
 
         local assets = path.join(target:scriptdir(), "../assets")
-        local outdir  = path.join(target:scriptdir(), "src/patches/parts")
+        local outdir  = path.join(target:scriptdir(), "src/features")
 
         local loading = get_config("bg_image")
         if not loading or loading == "" then
@@ -89,12 +89,13 @@ do
         add_rules("stfc.cxx.sccache", {override = true})
     end
     add_files("src/**.cc")
+    add_deps("unity", {public = true})
     add_deps("il2cpp", {public = true})
     add_headerfiles("src/**.h")
     add_includedirs("src", { public = true })
 
     -- Packages
-    add_packages("spud", "nlohmann_json", "protobuf", "libil2cpp", "eastl", "toml++", "spdlog", "simdutf", "libcurl", "capstone", "cpr")
+    add_packages("spud", "nlohmann_json", "protobuf", "libil2cpp", "eastl", "toml++", "spdlog", "libcurl", "capstone", "cpr")
     if os.getenv("STFC_PROTOBUF_SCCACHE") == "1" then
         add_rules("stfc.protobuf.cpp.sccache")
     else

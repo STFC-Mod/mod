@@ -1,3 +1,4 @@
+#include <il2cpp/il2cpp.h>
 #include <il2cpp/method_contract.h>
 #include <il2cpp/runtime.h>
 #include <patches/haven_road_cache.h>
@@ -152,7 +153,7 @@ std::string Name(const StrongObject& object)
 {
   StrongObject value(object ? Invoke(Api().name, object.Get()) : nullptr);
   const auto*  string = reinterpret_cast<Il2CppString*>(value.Get());
-  return string && string->length >= 0 && string->length <= 256 ? to_string(string) : std::string{};
+  return string && string->length >= 0 && string->length <= 256 ? il2cpp::ToUtf8(string) : std::string{};
 }
 
 bool IsRoad(const std::string& name)

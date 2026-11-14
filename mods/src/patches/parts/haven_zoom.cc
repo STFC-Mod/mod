@@ -2,8 +2,7 @@
 
 #include <il2cpp/il2cpp_helper.h>
 #include <il2cpp/method_contract.h>
-#include <prime/Camera.h>
-#include <prime/Vector3.h>
+#include <unity/core.h>
 #include <spdlog/spdlog.h>
 #include <spud/detour.h>
 
@@ -54,12 +53,12 @@ bool ReadHavenRadius(Il2CppObject *provider, float &radius)
          && std::abs(radius - maximum) < 0.01f;
 }
 
-void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, Camera *camera)
+void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, unity::Camera *camera)
 {
   // Native input, constraints and endpoint updates run first. Only this blend's
   // newly generated output is extended; endpoint assets and normalized LOD stay native.
   original(provider, camera);
-  const auto max_zoom = Config::Get().haven_zoom;
+  const auto max_zoom = Config::Get().graphics.haven_zoom;
   if (provider == nullptr || !std::isfinite(max_zoom) || max_zoom <= 0.0f)
     return;
 
@@ -92,7 +91,7 @@ void HavenCamera_UpdateCameraFrame_Hook(auto original, Il2CppObject *provider, C
       || !std::isfinite(maximum) || !std::isfinite(ratio) || minimum < 0.0f || maximum > 1.0f || maximum <= minimum)
     return;
 
-  Vector3       position{};
+  unity::Vector3 position{};
   HavenRotation ar{}, br{};
   float         af = 0.0f, bf = 0.0f;
   bool          source_orthographic = false, target_orthographic = false, result_orthographic = false;
@@ -289,7 +288,7 @@ void InstallHavenZoomHooks()
   }
   // [patches].havenzoomhooks controls installation independently of haven_zoom.
   if (SPUD_STATIC_DETOUR(update->methodPointer, HavenCamera_UpdateCameraFrame_Hook)) {
-    spdlog::info("[HavenZoom] installed planetary blend camera hook (maximum distance {})", Config::Get().haven_zoom);
+    spdlog::info("[HavenZoom] installed planetary blend camera hook (maximum distance {})", Config::Get().graphics.haven_zoom);
   } else {
     spdlog::warn("[HavenZoom] camera hook was not installed; keeping native zoom range");
   }

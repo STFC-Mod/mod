@@ -1,290 +1,197 @@
+// Missions: the hud_* settings, which force mission HUD buttons always shown or never shown, and
+// daily_bulk_claim_factions and daily_bulk_claim_toggle_default_on, which limit the missions screen's Claim All to
+// the chosen factions' dailies, show only their icons next to the toggle, and can switch the toggle on.
+
 #include "config.h"
+#include "patches/patches.h"
 #include "str_utils.h"
 
-#include <prime/Component.h>
-#include <prime/EventSystem.h>
-#include <prime/GameObject.h>
-#include <prime/Transform.h>
+#include "prime/hud.h"
+#include "prime/missions.h"
 
+#include <il2cpp/hook.h>
 #include <il2cpp/il2cpp.h>
-#include <spud/detour.h>
-
-#include <spdlog/fmt/ranges.h>
 #include <spdlog/spdlog.h>
+#include <unity/ui.h>
 
 #include <algorithm>
 #include <string>
 
 namespace
 {
-constexpr std::string_view kFactionPointResourcePrefix = "Resource_FactionPoint_";
+// --- Mission HUD buttons ---
 
-struct ResourceSpec : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "ResourceSpec">;
+using ButtonGetter = unity::Component* (*)(MissionsHudViewController*);
 
-  Il2CppString* resourceId()
-  { return Field<"resourceId_", Il2CppString*>(); }
+template <il2cpp::Name Field> unity::Component* HudButton(MissionsHudViewController* controller)
+{ return controller->ButtonField<Field>(); }
+
+struct ButtonSetting {
+  const char*  name; // the hud_<name> setting
+  ButtonGetter button;
 };
 
-struct InventoryItem : il2cpp::Object {
-  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "InventoryItem">;
-
-  ResourceSpec* resourceSpec()
-  { return Field<"_resourceSpec", ResourceSpec*>(); }
+constexpr ButtonSetting kButtons[] = {
+    {"q_trials", HudButton<"_challengesButton">}, {"field_training", HudButton<"_achievementsButton">},
+    {"outposts", HudButton<"_outpostsButton">},   {"daily_goals", HudButton<"_dailyGoalsButton">},
+    {"missions", HudButton<"_missionsButton">},
 };
 
-struct PointerEventData : il2cpp::Object {
-  using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.EventSystems", "PointerEventData">;
-};
-
-struct Toggle : Component {
-  using Class = il2cpp::Class<"UnityEngine.UI", "UnityEngine.UI", "Toggle">;
-
-  bool isOn()
-  { return Get<"isOn", bool>(); }
-  void OnPointerClick(PointerEventData* event)
-  { Call<"OnPointerClick">(event); }
-
-  // Goes through the pointer handler instead of the isOn setter, so interactable checks and
-  // listeners behave as for a real click.
-  void SimulateClick()
-  {
-    if (auto* event = il2cpp::New<PointerEventData>(EventSystem::current()))
-      OnPointerClick(event);
-  }
-};
-
-struct MissionViewController : il2cpp::Object {
-  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Missions", "MissionViewController">;
-
-  Toggle* ClaimAllToggle()
-  { return Field<"_claimAllToggle", Toggle*>(); }
-};
-
-// GetClaimableDailiesList returns List<ITournament>; the items are EventModel today.
-using TournamentList = il2cpp::List<il2cpp::Object*>;
-
-Transform* GetTransformOf(Component* component)
-{ return component ? component->transform() : nullptr; }
-
-Transform* FindChildByName(Transform* root, const char* name)
+// The game decides visibility here; the hud_* settings are applied on top every time it does.
+int32_t MissionsHudViewController_UpdateButtons_Hook(auto original, MissionsHudViewController* _this)
 {
-  if (root == nullptr) {
-    return nullptr;
+  const auto  result = original(_this);
+  const auto& ui     = Config::Get().ui;
+  for (const auto& button : kButtons) {
+    const auto visibility = ui.MissionHudButtonVisibility(button.name);
+    if (visibility == MissionHudVisibility::kAuto)
+      continue;
+    auto* component = button.button(_this);
+    if (auto* object = component ? component->gameObject() : nullptr)
+      object->SetActive(visibility == MissionHudVisibility::kAlways);
   }
-
-  auto* go = root->gameObject();
-  if (go != nullptr && go->Name() == name) {
-    return root;
-  }
-
-  for (int32_t i = 0; i < root->childCount(); ++i) {
-    if (auto* found = FindChildByName(root->GetChild(i), name)) {
-      return found;
-    }
-  }
-
-  return nullptr;
+  return result;
 }
 
-struct FactionIconName {
-  const char* faction;
-  const char* game_object_name;
+// --- Daily faction claims ---
+
+using DailyGoalList = il2cpp::List<DailyGoal*>;
+
+struct Faction {
+  const char* name; // as in daily_bulk_claim_factions
+  const char* icon; // the GameObject next to the Claim All toggle
 };
 
-constexpr FactionIconName kFactionIconNames[] = {
+constexpr Faction kFactions[] = {
     {"federation", "Fed_Icon"},
     {"romulan", "Rom_Icon"},
     {"klingon", "Klg_Icon"},
 };
 
-void ApplyFactionIconVisibility(Transform* toggle_tf)
+bool Claimed(std::string_view faction)
 {
-  if (toggle_tf == nullptr) {
+  const auto& factions = Config::Get().ui.daily_bulk_claim_factions;
+  return factions.empty() || std::ranges::find(factions, faction) != factions.end();
+}
+
+unity::Transform* FindChild(unity::Transform* root, std::string_view name)
+{
+  if (!root)
+    return nullptr;
+  if (auto* object = root->gameObject(); object && object->Name() == name)
+    return root;
+  for (int32_t i = 0; i < root->childCount(); ++i)
+    if (auto* found = FindChild(root->GetChild(i), name))
+      return found;
+  return nullptr;
+}
+
+void ShowClaimedFactionIcons(MissionViewController* controller)
+{
+  auto* toggle = controller->claimAllToggle();
+  auto* parent = toggle && toggle->transform() ? toggle->transform()->parent() : nullptr;
+  if (!parent)
     return;
-  }
-
-  auto* parent = toggle_tf->parent();
-  if (parent == nullptr) {
-    spdlog::debug("[DailyFactionBulkClaim] ApplyFactionIconVisibility: toggle has no parent Transform");
-    return;
-  }
-
-  const auto& configured = Config::Get().daily_bulk_claim_factions;
-
-  for (const auto& entry : kFactionIconNames) {
-    auto* icon_transform = FindChildByName(parent, entry.game_object_name);
-    if (icon_transform == nullptr) {
-      spdlog::debug("[DailyFactionBulkClaim] ApplyFactionIconVisibility: '{}' not found", entry.game_object_name);
-      continue;
-    }
-
-    auto* go = icon_transform->gameObject();
-    if (go == nullptr) {
-      continue;
-    }
-
-    const bool should_show =
-        configured.empty() || std::ranges::find(configured, std::string(entry.faction)) != configured.end();
-    go->SetActive(should_show);
+  for (const auto& faction : kFactions) {
+    auto* icon   = FindChild(parent, faction.icon);
+    auto* object = icon ? icon->gameObject() : nullptr;
+    if (object)
+      object->SetActive(Claimed(faction.name));
+    else
+      spdlog::debug("[DailyFactionBulkClaim] icon '{}' not found", faction.icon);
   }
 }
 
-bool                   g_applied_default_toggle_on      = false;
-int                    g_default_toggle_attempts        = 0;
-MissionViewController* g_active_mission_view_controller = nullptr;
-
-constexpr int kMaxDefaultToggleAttempts = 300;
-
-void ApplyDefaultToggleOnOnce(MissionViewController* controller)
+// The faction whose points a daily rewards, lower-cased ("federation"), or empty for other dailies.
+std::string FactionOf(DailyGoal* daily)
 {
-  auto* toggle = controller != nullptr ? controller->ClaimAllToggle() : nullptr;
-  if (g_applied_default_toggle_on || !Config::Get().daily_bulk_claim_toggle_default_on || toggle == nullptr) {
-    return;
-  }
-
-  if (toggle->isOn()) {
-    g_applied_default_toggle_on = true;
-    return;
-  }
-
-  if (++g_default_toggle_attempts > kMaxDefaultToggleAttempts) {
-    spdlog::warn("[DailyFactionBulkClaim] daily_bulk_claim_toggle_default_on: giving up, toggle never became "
-                "interactable");
-    g_applied_default_toggle_on = true;
-    return;
-  }
-
-  toggle->SimulateClick();
-
-  if (toggle->isOn()) {
-    spdlog::debug("[DailyFactionBulkClaim] daily_bulk_claim_toggle_default_on: forced Claim All toggle on "
-                 "(attempt {})",
-                 g_default_toggle_attempts);
-    g_applied_default_toggle_on = true;
-  }
-}
-
-bool FactionMatches(const std::string& faction_name, const std::vector<std::string>& configured)
-{
-  if (faction_name.empty() || configured.empty()) {
-    return false;
-  }
-  return std::ranges::find(configured, AsciiStrToLower(faction_name)) != configured.end();
-}
-
-bool IsMainFactionDaily(const std::string& faction_name)
-{
-  if (faction_name.empty()) {
-    return false;
-  }
-  const auto lowered = AsciiStrToLower(faction_name);
-  return std::ranges::any_of(kFactionIconNames, [&](const auto& entry) { return lowered == entry.faction; });
-}
-
-std::string FactionNameOfTournament(il2cpp::Object* tournament)
-{
-  auto* rewards = tournament ? tournament->Field<"_factionPointRewards", il2cpp::List<InventoryItem*>*>() : nullptr;
+  constexpr std::string_view kPrefix = "Resource_FactionPoint_";
+  auto*                      rewards = daily ? daily->factionPointRewards() : nullptr;
   if (!rewards)
     return {};
-
   for (auto* item : *rewards) {
-    auto* spec   = item ? item->resourceSpec() : nullptr;
-    auto* id_str = spec ? spec->resourceId() : nullptr;
-    if (id_str == nullptr) {
-      continue;
-    }
-
-    auto resource_id = to_string(id_str);
-    if (resource_id.starts_with(kFactionPointResourcePrefix)) {
-      return resource_id.substr(kFactionPointResourcePrefix.size());
-    }
+    auto* spec = item ? item->resourceSpec() : nullptr;
+    auto* id   = spec ? spec->resourceId() : nullptr;
+    if (auto resource = id ? il2cpp::ToUtf8(id) : std::string(); resource.starts_with(kPrefix))
+      return AsciiStrToLower(resource.substr(kPrefix.size()));
   }
-
   return {};
 }
 
-void FilterClaimableDailiesByFaction(TournamentList* list, const std::vector<std::string>& configured)
-{
-  if (list == nullptr) {
-    spdlog::debug("[DailyFactionBulkClaim] GetClaimableDailiesList returned null; nothing to filter");
-    return;
-  }
-
-  const auto total = list->Count();
-  spdlog::debug("[DailyFactionBulkClaim] filtering {} claimable daily(ies) against configured factions [{}]", total,
-               fmt::join(configured, ", "));
-
-  int kept = 0;
-  for (int32_t i = total - 1; i >= 0; --i) {
-    auto* tournament    = (*list)[i];
-    auto  faction_name  = FactionNameOfTournament(tournament);
-    const bool is_main_faction_daily = IsMainFactionDaily(faction_name);
-    auto  matches       = FactionMatches(faction_name, configured);
-
-    spdlog::debug("[DailyFactionBulkClaim]   [{}] faction: '{}' -> {}", i,
-                 faction_name.empty() ? "<none>" : faction_name,
-                 !is_main_faction_daily ? "keep (not a main faction daily)"
-                                        : (matches ? "keep (claim)" : "remove (skip)"));
-
-    if (is_main_faction_daily && !matches) {
-      list->RemoveAt(i);
-    } else {
-      ++kept;
-    }
-  }
-
-  spdlog::debug("[DailyFactionBulkClaim] kept {}/{} daily(ies) for claiming", kept, total);
-}
-
-TournamentList* MissionViewController_GetClaimableDailiesList(auto original, MissionViewController* _this)
+DailyGoalList* MissionViewController_GetClaimableDailiesList_Hook(auto original, MissionViewController* _this)
 {
   auto* list = original(_this);
-
-  ApplyFactionIconVisibility(GetTransformOf(_this->ClaimAllToggle()));
-
-  const auto& configured = Config::Get().daily_bulk_claim_factions;
-  if (configured.empty()) {
+  ShowClaimedFactionIcons(_this);
+  if (!list || Config::Get().ui.daily_bulk_claim_factions.empty())
     return list;
-  }
 
-  FilterClaimableDailiesByFaction(list, configured);
+  // Only the three main factions' dailies are filtered; anything else is always claimed.
+  const auto total = list->Count();
+  for (int32_t i = total - 1; i >= 0; --i) {
+    const auto faction = FactionOf((*list)[i]);
+    const bool main    = std::ranges::any_of(kFactions, [&](const Faction& f) { return faction == f.name; });
+    if (main && !Claimed(faction))
+      list->RemoveAt(i);
+  }
+  spdlog::debug("[DailyFactionBulkClaim] claiming {} of {} dailies", list->Count(), total);
   return list;
 }
 
-void MissionViewController_AboutToShow(auto original, MissionViewController* _this)
+// daily_bulk_claim_toggle_default_on flips the toggle once per session. The toggle is not interactable straight
+// away, so the frame tick keeps trying while the missions screen is open, for at most kMaxToggleAttempts frames.
+constexpr int kMaxToggleAttempts = 300;
+
+MissionViewController* shown_controller = nullptr;
+bool                   toggle_done      = false;
+int                    toggle_attempts  = 0;
+
+void MissionViewController_AboutToShow_Hook(auto original, MissionViewController* _this)
 {
   original(_this);
-
-  ApplyFactionIconVisibility(GetTransformOf(_this->ClaimAllToggle()));
-
-  g_active_mission_view_controller = _this;
+  ShowClaimedFactionIcons(_this);
+  shown_controller = _this;
 }
 
-void MissionViewController_AboutToHide(auto original, MissionViewController* _this)
+void MissionViewController_AboutToHide_Hook(auto original, MissionViewController* _this)
 {
-  if (g_active_mission_view_controller == _this) {
-    g_active_mission_view_controller = nullptr;
-  }
-
+  if (shown_controller == _this)
+    shown_controller = nullptr;
   original(_this);
+}
+
+void MissionsUpdate()
+{
+  if (!shown_controller || toggle_done || !Config::Get().ui.daily_bulk_claim_toggle_default_on)
+    return;
+  auto* toggle = shown_controller->claimAllToggle();
+  if (!toggle)
+    return;
+  if (!toggle->isOn()) {
+    if (++toggle_attempts > kMaxToggleAttempts) {
+      spdlog::warn("[DailyFactionBulkClaim] Claim All toggle never became interactable; not switching it on");
+      toggle_done = true;
+      return;
+    }
+    toggle->SimulateClick();
+  }
+  toggle_done = toggle->isOn();
+}
+
+void InstallMissionHud()
+{
+  IL2CPP_HOOK(MissionsHudViewController::Class::Method("UpdateButtons", 0),
+              MissionsHudViewController_UpdateButtons_Hook);
+}
+
+void InstallDailyClaimFilter()
+{
+  using Controller = MissionViewController::Class;
+  IL2CPP_HOOK(Controller::Method("GetClaimableDailiesList", 0), MissionViewController_GetClaimableDailiesList_Hook);
+  IL2CPP_HOOK(Controller::Method("AboutToShow", 0), MissionViewController_AboutToShow_Hook);
+  IL2CPP_HOOK(Controller::Method("AboutToHide", 0), MissionViewController_AboutToHide_Hook);
 }
 } // namespace
 
-void DailyFactionBulkClaimUpdate()
-{
-  if (g_active_mission_view_controller != nullptr) {
-    ApplyDefaultToggleOnOnce(g_active_mission_view_controller);
-  }
-}
-
-void InstallDailyFactionBulkClaimHooks()
-{
-  using Controller = MissionViewController::Class;
-  if (auto m = Controller::Method("GetClaimableDailiesList", 0))
-    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_GetClaimableDailiesList);
-  if (auto m = Controller::Method("AboutToShow", 0))
-    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToShow);
-  if (auto m = Controller::Method("AboutToHide", 0))
-    SPUD_STATIC_DETOUR(m.Pointer(), MissionViewController_AboutToHide);
-}
+const Feature kMissionHud{"MissionHud", &Config::Patches::missionhudtweakshooks, InstallMissionHud};
+const Feature kDailyClaimFilter{"DailyClaimFilter", &Config::Patches::dailyfactionbulkclaimhooks,
+                                InstallDailyClaimFilter, MissionsUpdate};

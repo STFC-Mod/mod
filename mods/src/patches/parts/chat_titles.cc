@@ -1,28 +1,16 @@
-#include "prime/ChatMessageWidget.h"
-#include "prime/GameObject.h"
-#include "prime/UserProfileWidget.h"
+#include "patches/patches.h"
+#include "prime/chat.h"
+#include <unity/core.h>
 
 #include "config.h"
-#include "errormsg.h"
 #include "patches/native_hook_extent.h"
 
-#include <il2cpp/il2cpp-functions.h>
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/hook.h>
 
 #include <spdlog/spdlog.h>
-#include <spud/detour.h>
 
 namespace
 {
-Il2CppObject* InvokeSelf(Il2CppObject* object, const char* method_name)
-{
-  auto* method = il2cpp_class_get_method_from_name(object ? il2cpp_object_get_class(object) : nullptr, method_name, 0);
-  if (!method) {
-    return nullptr;
-  }
-  Il2CppException* exception = nullptr;
-  return (Il2CppObject*)il2cpp_runtime_invoke(method, object, nullptr, &exception);
-}
 bool IsChatRow(void* profile_widget)
 {
   auto* mb = (Il2CppObject*)profile_widget;
@@ -30,26 +18,27 @@ bool IsChatRow(void* profile_widget)
     return false;
   }
 
-  auto* transform = InvokeSelf(mb, "get_transform");
+  auto* transform = reinterpret_cast<il2cpp::Object*>(mb)->As<unity::Component>()->transform();
   if (!transform) {
     return false;
   }
 
   for (int hops = 0; hops < 32 && transform; ++hops) {
-    auto* gameObject = InvokeSelf(transform, "get_gameObject");
+    auto* gameObject = transform->gameObject();
     if (!gameObject) {
       return false;
     }
-    if (reinterpret_cast<GameObject*>(gameObject)->GetComponent<ChatMessageWidget>()) {
+    if (reinterpret_cast<unity::GameObject*>(gameObject)->GetComponent<ChatMessageWidget>()) {
       return true;
     }
-    transform = InvokeSelf(transform, "get_parent");
+    transform = transform->parent();
   }
   return false;
 }
 void HideTitleRow(void* title)
 {
-  auto* game_object = reinterpret_cast<GameObject*>(InvokeSelf(static_cast<Il2CppObject*>(title), "get_gameObject"));
+  auto* game_object = reinterpret_cast<unity::GameObject*>(
+      reinterpret_cast<il2cpp::Object*>(title)->As<unity::Component>()->gameObject());
   if (!game_object) {
     return;
   }
@@ -63,7 +52,7 @@ void ApplyTitleDisplay(void* profile_widget)
     return;
   }
 
-  const auto show  = Config::Get().show_player_title;
+  const auto show  = Config::Get().ui.show_player_title;
   auto*      title = widget->playerTitleWidget();
   if (show || title == nullptr) {
     return;
@@ -89,17 +78,17 @@ void PlayerTitleWidget_BindPath_Hook(auto original, void* _this)
 {
   original(_this);
   try {
-    if (Config::Get().show_player_title) {
+    if (Config::Get().ui.show_player_title) {
       return;
     }
     UserProfileWidget* owner     = nullptr;
-    auto*              transform = InvokeSelf((Il2CppObject*)_this, "get_transform");
+    auto*              transform = reinterpret_cast<il2cpp::Object*>(_this)->As<unity::Component>()->transform();
     for (int hops = 0; hops < 32 && transform && !owner; ++hops) {
-      auto* gameObject = reinterpret_cast<GameObject*>(InvokeSelf(transform, "get_gameObject"));
+      auto* gameObject = reinterpret_cast<unity::GameObject*>(transform->gameObject());
       if (gameObject) {
         owner = gameObject->GetComponent<UserProfileWidget>();
       }
-      transform = InvokeSelf(transform, "get_parent");
+      transform = transform->parent();
     }
     if (owner) {
       ApplyTitleDisplay(owner);
@@ -135,30 +124,16 @@ void* ValidateDetourTarget(void* entry, const char* name)
 #endif
 } // namespace
 
+namespace
+{
 void InstallChatTitleDisplayHooks()
 {
-  void* update_player_title = nullptr;
-  if (auto profile_widget =
-          il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.PlayerProfile", "UserProfileWidget");
-      !profile_widget.isValidHelper()) {
-    spdlog::warn("Missing class {}.{}", "Digit.Prime.PlayerProfile", "UserProfileWidget");
-  } else if ((update_player_title = profile_widget.GetMethod("UpdatePlayerTitle", 0)) == nullptr) {
-    spdlog::warn("Missing method {}.{}", "UserProfileWidget", "UpdatePlayerTitle");
-  }
-
-  void* set_widget_data     = nullptr;
-  void* on_did_bind_context = nullptr;
-  if (auto title_widget = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget");
-      !title_widget.isValidHelper()) {
-    spdlog::warn("Missing class {}.{}", "Digit.Prime.PlayerAvatars", "PlayerTitleWidget");
-  } else {
-    set_widget_data     = title_widget.GetMethod("SetWidgetData", 0);
-    on_did_bind_context = title_widget.GetMethod("OnDidBindContext", 0);
-    if (!set_widget_data || !on_did_bind_context) {
-      spdlog::warn("Missing method {}.{}", "PlayerTitleWidget", set_widget_data ? "OnDidBindContext" : "SetWidgetData");
-      set_widget_data     = nullptr;
-      on_did_bind_context = nullptr;
-    }
+  void* update_player_title = UserProfileWidget::Class::Method("UpdatePlayerTitle", 0).Pointer();
+  void* set_widget_data     = PlayerTitleWidget::Class::Method("SetWidgetData", 0).Pointer();
+  void* on_did_bind_context = PlayerTitleWidget::Class::Method("OnDidBindContext", 0).Pointer();
+  if (!set_widget_data || !on_did_bind_context) {
+    set_widget_data     = nullptr;
+    on_did_bind_context = nullptr;
   }
 
   if (!update_player_title && !set_widget_data && !on_did_bind_context) {
@@ -189,22 +164,26 @@ void InstallChatTitleDisplayHooks()
                  "keeping one detour");
     set_widget_data = nullptr;
   }
-  if (on_did_bind_context
-      && (on_did_bind_context == update_player_title || on_did_bind_context == set_widget_data)) {
+  if (on_did_bind_context && (on_did_bind_context == update_player_title || on_did_bind_context == set_widget_data)) {
     spdlog::info("[ChatTitleDisplay] OnDidBindContext shares its native implementation with another target; "
                  "keeping one detour");
     on_did_bind_context = nullptr;
   }
 
   if (update_player_title) {
-    SPUD_STATIC_DETOUR(update_player_title, UserProfileWidget_UpdatePlayerTitle_Hook);
+    IL2CPP_DETOUR(update_player_title, UserProfileWidget_UpdatePlayerTitle_Hook,
+                  "UserProfileWidget_UpdatePlayerTitle_Hook");
   }
   if (set_widget_data) {
-    SPUD_STATIC_DETOUR(set_widget_data, PlayerTitleWidget_BindPath_Hook);
+    IL2CPP_DETOUR(set_widget_data, PlayerTitleWidget_BindPath_Hook, "PlayerTitleWidget_BindPath_Hook");
   }
   if (on_did_bind_context) {
-    SPUD_STATIC_DETOUR(on_did_bind_context, PlayerTitleWidget_BindPath_Hook);
+    IL2CPP_DETOUR(on_did_bind_context, PlayerTitleWidget_BindPath_Hook, "PlayerTitleWidget_BindPath_Hook");
   }
 
-  spdlog::info("Chat title display: chat player title rows {}", Config::Get().show_player_title ? "shown" : "hidden");
+  spdlog::info("Chat title display: chat player title rows {}",
+               Config::Get().ui.show_player_title ? "shown" : "hidden");
 }
+} // namespace
+
+const Feature kChatTitles{"ChatTitles", &Config::Patches::chattitledisplayhooks, InstallChatTitleDisplayHooks};

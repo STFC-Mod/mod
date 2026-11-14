@@ -1,5 +1,4 @@
 #include "config.h"
-#include "errormsg.h"
 
 #include <il2cpp/il2cpp-functions.h>
 #include <il2cpp/il2cpp_helper.h>
@@ -65,7 +64,7 @@ void ReverseRecords(void* records)
 
 void PlanetaryHelpHistoryContext_ApplyRecords_Hook(auto original, void* _this, void* records)
 {
-  if (Config::Get().reverse_haven_history)
+  if (Config::Get().ui.reverse_haven_history)
     ReverseRecords(records);
   original(_this, records);
 }

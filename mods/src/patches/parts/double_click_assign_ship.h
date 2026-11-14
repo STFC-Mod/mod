@@ -1,6 +1,6 @@
 #pragma once
 
-#include "prime/FleetPlayerData.h"
+#include "prime/fleet.h"
 
 void AssignShipEnterKeyUpdate();
 void DoubleClickOnShipTileClicked(FleetPlayerData* ship);

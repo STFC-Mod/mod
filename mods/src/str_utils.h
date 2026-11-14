@@ -1,177 +1,144 @@
 #pragma once
 
+// Text helpers that never touch the game, so the tests can use them: ASCII case and trimming for settings, server
+// timestamps, and ship name matching.
+
 #include <algorithm>
-#include <cctype>
+#include <array>
+#include <charconv>
 #include <chrono>
-#include <sstream>
+#include <cstdint>
+#include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
 
-#include <il2cpp/il2cpp.h>
-#include <simdutf.h>
+constexpr bool IsAsciiSpace(char c)
+{ return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
 
-#if _WIN32
-#include <winrt/base.h>
-#else
-#include <time.h>
-#endif
-
-inline bool ascii_isspace(unsigned char c)
+constexpr std::string_view StripTrailingAsciiWhitespace(std::string_view str)
 {
-  return std::isspace(c);
-}
-
-constexpr std::string_view StripTrailingAsciiWhitespace(const std::string_view str)
-{
-  const auto it = std::find_if_not(str.rbegin(), str.rend(), ascii_isspace);
-  return str.substr(0, static_cast<size_t>(str.rend() - it));
-}
-
-constexpr std::string_view StripLeadingAsciiWhitespace(const std::string_view str)
-{
-  const auto it = std::ranges::find_if_not(str, ascii_isspace);
-  return str.substr(static_cast<size_t>(it - str.begin()));
-}
-
-constexpr std::string_view StripAsciiWhitespace(const std::string_view str)
-{
-  return StripTrailingAsciiWhitespace(StripLeadingAsciiWhitespace(str));
-}
-
-constexpr std::string_view StripSuffix(std::string_view str, const std::string_view suffix)
-{
-  if (str.size() >= suffix.size() && str.substr(str.size() - suffix.size()) == suffix) {
-    return str.substr(0, str.size() - suffix.size());
-  }
+  while (!str.empty() && IsAsciiSpace(str.back()))
+    str.remove_suffix(1);
   return str;
 }
 
-constexpr std::string_view StripPrefix(std::string_view str, const std::string_view prefix)
+constexpr std::string_view StripLeadingAsciiWhitespace(std::string_view str)
 {
-  if (str.size() >= prefix.size() && str.substr(0, prefix.size()) == prefix) {
-    return str.substr(prefix.size());
-  }
+  while (!str.empty() && IsAsciiSpace(str.front()))
+    str.remove_prefix(1);
   return str;
 }
 
-constexpr std::string AsciiStrToUpper(const std::string_view s)
+constexpr std::string_view StripAsciiWhitespace(std::string_view str)
+{ return StripTrailingAsciiWhitespace(StripLeadingAsciiWhitespace(str)); }
+
+constexpr std::string_view StripPrefix(std::string_view str, std::string_view prefix)
+{ return str.starts_with(prefix) ? str.substr(prefix.size()) : str; }
+
+constexpr std::string AsciiStrToUpper(std::string_view s)
 {
-  std::string str = s.data();
-  std::ranges::transform(str, str.begin(), ::toupper);
+  std::string str(s);
+  for (auto& c : str)
+    if (c >= 'a' && c <= 'z')
+      c = static_cast<char>(c - 'a' + 'A');
   return str;
 }
 
-constexpr std::string AsciiStrToLower(const std::string_view s)
+constexpr std::string AsciiStrToLower(std::string_view s)
 {
-  std::string str = s.data();
-  std::ranges::transform(str, str.begin(), ::tolower);
+  std::string str(s);
+  for (auto& c : str)
+    if (c >= 'A' && c <= 'Z')
+      c = static_cast<char>(c - 'A' + 'a');
   return str;
 }
 
-constexpr std::vector<std::string> StrSplit(const std::string& input, const char delimiter)
+// Splits on `delimiter`, trims each piece, and drops the empty ones: "a, ,b" -> {"a", "b"}.
+constexpr std::vector<std::string> StrSplit(std::string_view input, char delimiter)
 {
   std::vector<std::string> result;
-  int                      last_pos = 0;
-  for (int i = 0; i < input.length(); i++) {
-    if (input[i] != delimiter) {
+  while (true) {
+    const auto end   = input.find(delimiter);
+    const auto token = StripAsciiWhitespace(input.substr(0, end));
+    if (!token.empty())
+      result.emplace_back(token);
+    if (end == std::string_view::npos)
+      return result;
+    input.remove_prefix(end + 1);
+  }
+}
+
+// Seconds since the Unix epoch for a "YYYY-MM-DDTHH:MM:SS" server timestamp, which is UTC. A fraction or
+// zone suffix after the seconds is ignored.
+inline std::optional<int64_t> ParseUtcTimestamp(std::string_view timestamp)
+{
+  using namespace std::chrono;
+  // Field widths and the separator that follows each one.
+  constexpr std::array<std::pair<size_t, char>, 6> kFields{{{4, '-'}, {2, '-'}, {2, 'T'}, {2, ':'}, {2, ':'}, {2, 0}}};
+  std::array<int, 6>                               values{};
+  for (size_t i = 0; i < kFields.size(); ++i) {
+    const auto [width, separator] = kFields[i];
+    if (timestamp.size() < width)
+      return std::nullopt;
+    const auto [end, error] = std::from_chars(timestamp.data(), timestamp.data() + width, values[i]);
+    if (error != std::errc{} || end != timestamp.data() + width)
+      return std::nullopt;
+    timestamp.remove_prefix(width);
+    if (separator) {
+      if (timestamp.empty() || timestamp.front() != separator)
+        return std::nullopt;
+      timestamp.remove_prefix(1);
+    }
+  }
+  const auto [year_, month_, day_, hour, minute, second] = values;
+  const year_month_day date{std::chrono::year{year_}, std::chrono::month(static_cast<unsigned>(month_)),
+                            std::chrono::day(static_cast<unsigned>(day_))};
+  if (!date.ok() || hour > 23 || minute > 59 || second > 60)
+    return std::nullopt;
+  const auto time = sys_days{date} + hours{hour} + minutes{minute} + seconds{second};
+  return time.time_since_epoch() / seconds{1};
+}
+
+// Ship names for pinned_ships and the instant_warp_* filters are compared as words, so a setting can name a ship
+// by its last words: "Athena" matches "Academy Athena".
+
+// Upper case, '_' and '-' as spaces, '.' and '\'' dropped, single spaces, no leading "USS":
+// "U.S.S. Enterprise-D" -> "ENTERPRISE D".
+inline std::string NormalizeShipName(std::string_view name)
+{
+  std::string normalized;
+  normalized.reserve(name.size());
+  for (char c : AsciiStrToUpper(name)) {
+    if (c == '.' || c == '\'')
       continue;
-    }
-
-    if (i - last_pos > 0) {
-      result.emplace_back(input.substr(last_pos, i - last_pos));
-    }
-    last_pos = i + 1;
+    if (c == '_' || c == '-')
+      c = ' ';
+    if (c == ' ' && (normalized.empty() || normalized.back() == ' '))
+      continue;
+    normalized.push_back(c);
   }
+  if (!normalized.empty() && normalized.back() == ' ')
+    normalized.pop_back();
+  return std::string(StripPrefix(normalized, "USS "));
+}
 
-  if (last_pos != input.length()) {
-    auto sp = input.substr(last_pos, input.length() - last_pos);
-    sp      = StripAsciiWhitespace(sp);
-    if (!sp.empty()) {
-      result.emplace_back(sp);
-    }
+inline std::vector<std::string> ShipNameWords(std::string_view name)
+{
+  std::vector<std::string> words;
+  const auto               normalized = NormalizeShipName(name);
+  for (size_t start = 0; start < normalized.size();) {
+    const auto end = std::min(normalized.find(' ', start), normalized.size());
+    words.emplace_back(normalized.substr(start, end - start));
+    start = end + 1;
   }
-
-  return result;
+  return words;
 }
 
-inline std::wstring to_wstring(const std::string& str)
+// Whether `pattern` is the last words of `name`; both from ShipNameWords.
+inline bool ShipNameMatches(std::span<const std::string> name, std::span<const std::string> pattern)
 {
-#if _WIN32
-  return winrt::to_hstring(str).c_str();
-#else
-  size_t                      expected_utf32words = simdutf::utf32_length_from_utf8(str.data(), str.length());
-  std::unique_ptr<char32_t[]> utf32_output{new char32_t[expected_utf32words]};
-  size_t                      utf16words = simdutf::convert_utf8_to_utf32(str.data(), str.length(), utf32_output.get());
-  return std::wstring(utf32_output.get(), utf32_output.get() + utf16words);
-#endif
-}
-
-inline std::wstring to_wstring(Il2CppString* str)
-{
-#if _WIN32
-  return str->chars;
-#else
-  size_t                      expected_utf32words = simdutf::utf32_length_from_utf16(str->chars, str->length);
-  std::unique_ptr<char32_t[]> utf32_output{new char32_t[expected_utf32words]};
-  size_t                      utf16words = simdutf::convert_utf16_to_utf32(str->chars, str->length, utf32_output.get());
-  return std::wstring(utf32_output.get(), utf32_output.get() + utf16words);
-#endif
-}
-
-inline std::string to_string(const std::wstring& str)
-{
-#if _WIN32
-  size_t                     expected_utf16words = simdutf::utf8_length_from_utf16((char16_t*)str.data(), str.length());
-  std::unique_ptr<char8_t[]> utf8_output{new char8_t[expected_utf16words]};
-  size_t utf16words = simdutf::convert_utf16_to_utf8((char16_t*)str.data(), str.length(), (char*)utf8_output.get());
-  return {utf8_output.get(), utf8_output.get() + utf16words};
-#else
-  size_t                     expected_utf32words = simdutf::utf8_length_from_utf32((char32_t*)str.data(), str.length());
-  std::unique_ptr<char8_t[]> utf32_output{new char8_t[expected_utf32words]};
-  size_t utf16words = simdutf::convert_utf32_to_utf8((char32_t*)str.data(), str.length(), (char*)utf32_output.get());
-  return std::string(utf32_output.get(), utf32_output.get() + utf16words);
-#endif
-}
-
-inline std::string to_string(const Il2CppString* str)
-{
-  size_t expected_utf8_bytes = simdutf::utf8_length_from_utf16(
-    reinterpret_cast<const char16_t*>(str->chars), str->length);
-  std::string result(expected_utf8_bytes, '\0');
-  size_t actual_utf8_bytes = simdutf::convert_utf16_to_utf8(
-    reinterpret_cast<const char16_t*>(str->chars), str->length, result.data());
-  result.resize(actual_utf8_bytes);
-  return result;
-}
-
-inline bool operator==(const Il2CppString* lhs, const std::string& rhs)
-{
-  return to_string(lhs) == rhs;
-}
-
-inline bool operator==(const std::string& lhs, const Il2CppString* rhs)
-{
-  return lhs == to_string(rhs);
-}
-
-inline std::optional<std::chrono::time_point<std::chrono::system_clock>> parse_timestamp(const std::string& timestamp)
-{
-#ifdef _WIN32
-  std::istringstream ss(timestamp);
-  std::chrono::system_clock::time_point time_point;
-
-  if (!std::chrono::from_stream(ss, "%Y-%m-%dT%H:%M:%S", time_point)) {
-    return std::nullopt;
-  }
-
-  return time_point;
-#else
-  std::tm tm = {};
-  if (strptime(timestamp.c_str(), "%Y-%m-%dT%H:%M:%S", &tm) == nullptr) {
-    return std::nullopt;
-  }
-
-  return std::chrono::system_clock::from_time_t(std::mktime(&tm));
-#endif
+  return !pattern.empty() && name.size() >= pattern.size()
+         && std::ranges::equal(name.subspan(name.size() - pattern.size()), pattern);
 }

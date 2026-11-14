@@ -14,6 +14,7 @@
 #include <initializer_list>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <unordered_map>
@@ -25,6 +26,10 @@ namespace il2cpp
 // Missing classes and members, and signatures that no longer match the binding, are reported
 // once per lookup. Without a handler, reports go to stderr.
 void SetErrorHandler(void (*handler)(std::string_view message));
+// Sends a message through the same handler; for libraries built on this one.
+void Report(std::string_view message);
+// "Namespace.Outer/Inner", for diagnostics.
+std::string ClassName(Il2CppClass* klass);
 
 // Compile-time member name, used as a template argument: Call<"Show">().
 template <size_t N> struct Name {
@@ -51,6 +56,8 @@ public:
   // Generated code takes `this` first (for instance methods) and a trailing const MethodInfo*.
   void* Pointer() const
   { return info_ ? reinterpret_cast<void*>(info_->methodPointer) : nullptr; }
+  // "Namespace.Class.Method", for diagnostics.
+  std::string Name() const;
 
 private:
   const MethodInfo* info_ = nullptr;
@@ -76,6 +83,9 @@ namespace detail
 
   Il2CppClass* StringClass();
   Il2CppClass* TypeClass();
+  // System.Int32 and friends from corlib, by element type; null for anything else.
+  Il2CppClass* PrimitiveClass(Il2CppTypeEnum type);
+  void         ReportFault(const char* what);
 
   template <typename T>
   concept Bound = requires { T::Class::Raw(); };
@@ -119,11 +129,11 @@ namespace detail
   }
 
   template <typename T> struct Unref {
-    using Type                  = T;
+    using Type                   = T;
     static constexpr bool kByRef = false;
   };
   template <typename T> struct Unref<std::reference_wrapper<T>> {
-    using Type                  = T;
+    using Type                   = T;
     static constexpr bool kByRef = true;
   };
 
@@ -150,13 +160,14 @@ namespace detail
   }
 
   template <typename... A> inline constexpr std::array<Slot, sizeof...(A)> kParams{SlotOf<A>()...};
-  template <typename R, typename... A> constexpr Signature SignatureOf()
+  template <typename R, typename... A> constexpr Signature                 SignatureOf()
   { return {SlotOf<R>(), kParams<A...>}; }
 
-  Il2CppClass*      FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name);
-  Method            FindMethod(Il2CppClass* klass, std::string_view name, int count);
-  Method            FindMethod(Il2CppClass* klass, std::string_view name, std::initializer_list<std::string_view> params);
-  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature, bool is_static);
+  Il2CppClass* FindClass(std::string_view assembly, std::string_view namespaze, std::string_view name);
+  Method       FindMethod(Il2CppClass* klass, std::string_view name, int count);
+  Method       FindMethod(Il2CppClass* klass, std::string_view name, std::initializer_list<std::string_view> params);
+  const MethodInfo* ResolveMethod(Il2CppClass* klass, std::string_view name, const Signature& signature,
+                                  bool is_static);
   const MethodInfo* ResolveProperty(Il2CppClass* klass, std::string_view name, const Slot& value, bool setter,
                                     bool is_static);
   FieldInfo*        ResolveField(Il2CppClass* klass, std::string_view name, const Slot& value, bool is_static);
@@ -184,9 +195,9 @@ namespace detail
     }
   }
 
-  template <typename T> using Native = std::conditional_t<
-      Unref<T>::kByRef, typename Unref<T>::Type*,
-      std::conditional_t<std::is_same_v<T, std::nullptr_t>, void*, T>>;
+  template <typename T>
+  using Native = std::conditional_t<Unref<T>::kByRef, typename Unref<T>::Type*,
+                                    std::conditional_t<std::is_same_v<T, std::nullptr_t>, void*, T>>;
   template <typename T> Native<T> ToNative(T& value)
   {
     if constexpr (Unref<T>::kByRef)
@@ -357,11 +368,13 @@ template <Name Assembly, Name Namespace, Name TypeName> struct Class {
     static Il2CppClass* const klass = detail::FindClass(Assembly.View(), Namespace.View(), TypeName.View());
     return klass;
   }
+  // The System.Type for this class. Cached: the runtime keeps type objects in a rooted, append-only cache, and
+  // looking one up takes its reflection lock.
   static Il2CppReflectionType* TypeObject()
   {
-    auto* klass = Raw();
-    return klass ? reinterpret_cast<Il2CppReflectionType*>(il2cpp_type_get_object(il2cpp_class_get_type(klass)))
-                 : nullptr;
+    static Il2CppReflectionType* const type =
+        Raw() ? reinterpret_cast<Il2CppReflectionType*>(il2cpp_type_get_object(il2cpp_class_get_type(Raw()))) : nullptr;
+    return type;
   }
 
   // Lookups for detours. A count of -1 accepts any arity; parameter names are "Namespace.Type".
@@ -369,6 +382,21 @@ template <Name Assembly, Name Namespace, Name TypeName> struct Class {
   { return detail::FindMethod(Raw(), name, count); }
   static il2cpp::Method Method(std::string_view name, std::initializer_list<std::string_view> params)
   { return detail::FindMethod(Raw(), name, params); }
+
+  // An instance method with its complete C++ signature, for hooks that must reject client ABI drift.
+  template <typename F> static il2cpp::Method Method(std::string_view name)
+  {
+    const auto* method = detail::MethodCall<F>::Resolve(Raw(), name, false);
+    if (method && (method->has_full_generic_sharing_signature || (method->flags & METHOD_ATTRIBUTE_ABSTRACT))) {
+      Report("[IL2CPP] cannot hook shared or abstract method " + ClassName(Raw()) + "." + std::string(name));
+      return {};
+    }
+    return il2cpp::Method(method);
+  }
+
+  // Checks an instance field's schema without reading an object, for hooks that write several related fields.
+  template <Name N, typename T> static bool HasField()
+  { return detail::ResolveField(Raw(), N.View(), detail::SlotOf<T>(), false) != nullptr; }
 
   template <Name N, typename F = void, typename... A> static auto Call(A&&... args)
   {
@@ -401,6 +429,10 @@ template <Name Assembly, Name Namespace, Name TypeName> struct Class {
 // Base for reference-type bindings. A binding pointer is the managed object itself; bindings add
 // no data members. Receivers must not be null. Missing members return a value-initialized result.
 struct Object : Il2CppObject {
+  // Checks a method on the receiver's runtime class, including inflated collection types.
+  template <typename F, typename Self> il2cpp::Method Method(this Self& self, std::string_view name)
+  { return il2cpp::Method(detail::MethodCall<F>::Resolve(self.klass, name, false)); }
+
   template <Name N, typename T, typename Self> T Get(this Self& self)
   {
     auto* getter = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
@@ -417,16 +449,14 @@ struct Object : Il2CppObject {
   }
   template <Name N, typename T, typename Self> T Field(this Self& self)
   {
-    auto* field = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
-      return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false);
-    });
+    auto* field = detail::Lookup<Self>(
+        self, [](Il2CppClass* klass) { return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false); });
     return detail::ReadField<T>(field, &self);
   }
   template <Name N, typename Self, typename T> void SetField(this Self& self, T value)
   {
-    auto* field = detail::Lookup<Self>(self, [](Il2CppClass* klass) {
-      return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false);
-    });
+    auto* field = detail::Lookup<Self>(
+        self, [](Il2CppClass* klass) { return detail::ResolveField(klass, N.View(), detail::SlotOf<T>(), false); });
     detail::WriteField(field, &self, value);
   }
   // Call<"Name", R>(args) selects the overload by the C++ argument types; std::ref marks ref/out
@@ -466,6 +496,98 @@ template <typename T, typename... A> T* New(A... args)
   auto* object = static_cast<T*>(il2cpp_object_new(T::Class::Raw()));
   detail::Invoke<void>(ctor, object, args...);
   return object;
+}
+
+// Allocate T without running any constructor, for classes whose parameterless constructor has no generated code.
+// Every field the game will read has to be set by the caller. Null when the class is missing.
+template <typename T> T* Allocate()
+{
+  auto* klass = T::Class::Raw();
+  return klass ? static_cast<T*>(il2cpp_object_new(klass)) : nullptr;
+}
+
+// System.Object, the element class of object[].
+Il2CppClass* ObjectClass();
+
+// The corlib class of a primitive C++ type: System.Byte for uint8_t, System.Int64 for int64_t.
+template <typename T> Il2CppClass* PrimitiveClass()
+{
+  static_assert(std::is_arithmetic_v<T>, "only primitives have a corlib class here");
+  return detail::PrimitiveClass(detail::Primitive<T>());
+}
+
+// A boxed primitive, for object parameters and object[] arguments.
+template <typename T> Il2CppObject* Box(T value)
+{
+  auto* klass = PrimitiveClass<T>();
+  return klass ? il2cpp_value_box(klass, &value) : nullptr;
+}
+
+// A new managed string. Like any managed object it lives while something managed or the native stack holds it.
+inline Il2CppString* NewString(std::string_view utf8)
+{ return il2cpp_string_new_len(utf8.data(), static_cast<uint32_t>(utf8.size())); }
+
+// The string as UTF-8; empty for null.
+std::string ToUtf8(const Il2CppString* str);
+
+// Compares a managed string with ASCII text without converting it, for checks on hot paths.
+inline bool Equals(const Il2CppString* str, std::string_view ascii)
+{
+  if (!str || static_cast<size_t>(str->length) != ascii.size())
+    return false;
+  for (size_t i = 0; i < ascii.size(); ++i)
+    if (str->chars[i] != static_cast<Il2CppChar>(ascii[i]))
+      return false;
+  return true;
+}
+
+// The text of any object: a string as itself, anything else through its ToString override.
+inline Il2CppString* ToString(Object* object)
+{
+  if (!object)
+    return nullptr;
+  if (object->klass == detail::StringClass())
+    return reinterpret_cast<Il2CppString*>(object);
+  return object->Call<"ToString", Il2CppString*>();
+}
+
+// Instance fields of the object's class and its bases, most derived first. For reading game data whose field
+// names drift between builds; bindings should name their fields.
+template <typename Visit> void ForEachInstanceField(Il2CppObject* object, Visit visit)
+{
+  for (auto* klass = object ? object->klass : nullptr; klass; klass = il2cpp_class_get_parent(klass)) {
+    void* iter = nullptr;
+    while (auto* field = il2cpp_class_get_fields(klass, &iter))
+      if (!(field->type->attrs & FIELD_ATTRIBUTE_STATIC))
+        visit(field);
+  }
+}
+
+// A field found by ForEachInstanceField. T must match the field's layout; nothing checks it here.
+template <typename T> T ReadField(Il2CppObject* object, FieldInfo* field)
+{ return detail::ReadField<T>(field, object); }
+
+// Runs the method a delegate is bound to on its target directly, skipping the delegate's invoke stub. Unlike
+// Call, a managed exception is not caught here, so the caller can fall back: catch Il2CppExceptionWrapper.
+template <typename R = void, typename... A> R InvokeBound(Il2CppDelegate* delegate, A... args)
+{ return detail::InvokeNative<R, A...>(delegate->method, delegate->target, args...); }
+
+// Runs `read` and, on Windows, survives an access violation inside it: reading game objects whose layout drifted
+// between client builds should cost a log line, not the game. False, after reporting `what`, when one was caught.
+template <typename Fn> bool Guarded(const char* what, Fn&& read)
+{
+#if _WIN32
+  __try {
+    read();
+  } __except (1 /* EXCEPTION_EXECUTE_HANDLER */) {
+    detail::ReportFault(what);
+    return false;
+  }
+#else
+  (void)what;
+  read();
+#endif
+  return true;
 }
 
 // Managed T[]. Element references are borrowed; use Set to store references with a GC barrier.
@@ -509,6 +631,8 @@ template <typename T> struct List : Object {
   { Call<"Add">(value); }
   void RemoveAt(int32_t index)
   { Call<"RemoveAt">(index); }
+  void Clear()
+  { Call<"Clear">(); }
 
   struct Iterator {
     List*   list;
@@ -608,7 +732,43 @@ private:
   bool                  healthy_ = true;
 };
 
-// Unity engine internal calls, e.g. "UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)".
-template <typename Signature> Signature* ResolveICall(const char* name)
-{ return reinterpret_cast<Signature*>(il2cpp_resolve_icall(name)); }
+namespace detail
+{
+  void ReportMissingICall(const char* name);
+} // namespace detail
+
+// A Unity engine internal call. One that a Unity upgrade renamed is reported once, when resolved, and then returns
+// the default value instead of calling through null; test it with operator bool to choose another default.
+template <typename Signature> class ICall;
+template <typename R, typename... A> class ICall<R(A...)>
+{
+public:
+  explicit ICall(const char* name)
+      : fn_(reinterpret_cast<R (*)(A...)>(il2cpp_resolve_icall(name)))
+  {
+    if (!fn_)
+      detail::ReportMissingICall(name);
+  }
+
+  explicit operator bool() const
+  { return fn_ != nullptr; }
+
+  R operator()(A... args) const
+  {
+    if constexpr (std::is_void_v<R>) {
+      if (fn_)
+        fn_(args...);
+    } else {
+      return fn_ ? fn_(args...) : R{};
+    }
+  }
+
+private:
+  R (*fn_)(A...);
+};
+
+// Resolves e.g. "UnityEngine.Input::GetKeyInt(UnityEngine.KeyCode)". Keep the result in a static: resolving is a
+// lookup by name.
+template <typename Signature> ICall<Signature> ResolveICall(const char* name)
+{ return ICall<Signature>(name); }
 } // namespace il2cpp

@@ -8,7 +8,6 @@ VerInstallFileW
 GetFileVersionInfoSizeA
 GetFileVersionInfoSizeW
 GetFileVersionInfoA
-GetFileInformationByHandle
 GetFileVersionInfoW
 GetFileVersionInfoSizeExA
 GetFileVersionInfoSizeExW
