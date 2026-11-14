@@ -176,6 +176,9 @@ private:
   Camera                                                     camera_;
 } fleet_labels;
 
+void ResetFleetLabels()
+{ fleet_labels = {}; }
+
 // --- Hooks ---
 
 void NavigationLOD_UpdateLOD_Hook(auto original, NavigationLOD* _this, ZoomLevels level)
@@ -236,4 +239,4 @@ void FleetLabelsFollowDepth(NavigationZoom* zoom, NodeDepth depth)
 void FleetLabelsAfterZoom(NavigationZoom* zoom)
 { fleet_labels.OnZoomed(zoom); }
 
-const Feature kFleetLabels{"FleetLabels", &Config::Patches::zoomhooks, InstallFleetLabels};
+const Feature kFleetLabels{"FleetLabels", &Config::Patches::zoomhooks, InstallFleetLabels, nullptr, ResetFleetLabels};

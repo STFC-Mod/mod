@@ -32,6 +32,13 @@ il2cpp::GcHandle  chat_preview; // Weak: the preview the hooks last saw.
 ChatStartup::Gate chat_startup;
 bool              chat_width_applied = false;
 
+void ResetChat()
+{
+  chat_preview.Reset();
+  chat_startup       = {};
+  chat_width_applied = false;
+}
+
 void ObserveChatPreview(ChatPreviewController* preview)
 {
   if (!Config::Get().ui.auto_open_chat || chat_preview.Get() == preview)
@@ -59,13 +66,13 @@ void ChatFrame()
   }
   if ((!ui.auto_open_chat || chat_startup.completed) && (!custom_width || chat_width_applied))
     return;
-  auto* chat = ChatManager::Instance();
+  auto* chat = ChatManager::Existing();
   if (!chat)
     return;
   const bool side_open = chat->IsSideChatOpen();
   // Once per login; after that, resizing is left to the player.
   if (side_open && custom_width && !chat_width_applied) {
-    auto* screens = ScreenManager::Instance();
+    auto* screens = ScreenManager::Existing();
     if (auto* frames = screens ? screens->frameManager() : nullptr) {
       frames->ResizeSideFrame(ui.default_chat_width);
       chat_width_applied = true;
@@ -297,5 +304,5 @@ bool ChatChannelShortcuts()
   return false;
 }
 
-const Feature kChat{"Chat", &Config::Patches::chatpatches, InstallChat, ChatFrame};
+const Feature kChat{"Chat", &Config::Patches::chatpatches, InstallChat, ChatFrame, ResetChat};
 const Feature kChatTitles{"ChatTitles", &Config::Patches::chattitledisplayhooks, InstallChatTitles};

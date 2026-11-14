@@ -11,6 +11,7 @@
 #include "config.h"
 #include "features/features.h"
 #include "file.h"
+#include "mod.h"
 #include "text.h"
 
 #include "game/app.h"
@@ -263,6 +264,14 @@ bool double_click_installed = false;
 // Compared only, never dereferenced.
 FleetPlayerData*                      last_clicked_ship = nullptr;
 std::chrono::steady_clock::time_point last_click_time{};
+int64_t                               dock_last_fleet_id = 0;
+
+void ResetDock()
+{
+  last_clicked_ship  = nullptr;
+  last_click_time    = {};
+  dock_last_fleet_id = 0;
+}
 
 void PressAssignButton()
 {
@@ -308,6 +317,8 @@ void AssignOnEnterFrame()
 void ShipTileWidget_HandleOnClick_Hook(auto original, ShipTileWidget* _this)
 {
   original(_this);
+  if (ModReloading())
+    return;
   // The click arrives through the UI event system, which can run before the frame tick has polled this frame.
   unity::Key::Poll();
   if (auto* ship = _this->Context()) {
@@ -328,7 +339,7 @@ FleetPlayerData* ManagedDockFleet()
   auto* controller = VisibleShipManagement();
   auto* context    = controller ? controller->Context() : nullptr;
   auto* fleet      = context ? context->CurrentFleet() : nullptr;
-  auto* manager    = FleetsManager::Instance();
+  auto* manager    = FleetsManager::Existing();
   if (!fleet || !fleet->HasShip() || !manager || !manager->HasFleetService())
     return nullptr;
   // Unassigned and synthetic fleets have no dock slot; the management list order is not the dock order.
@@ -341,17 +352,16 @@ void DockSelectionFrame()
 {
   // Ten times a second; selecting a slot is not urgent.
   static Throttle throttle(std::chrono::milliseconds(100));
-  static int64_t  last_fleet_id = 0;
   if (!throttle.Due())
     return;
   auto* fleet = ManagedDockFleet();
   if (!fleet) {
-    last_fleet_id = 0;
+    dock_last_fleet_id = 0;
     return;
   }
   const auto id  = fleet->Id();
   auto*      bar = unity::Newest<FleetBarViewController>();
-  if (id == last_fleet_id || !bar)
+  if (id == dock_last_fleet_id || !bar)
     return;
   if (const auto index = fleet->Index(); !bar->IsIndexSelected(index)) {
     // The bar's own selection flow updates both the highlight and the fleet panel.
@@ -361,7 +371,7 @@ void DockSelectionFrame()
       return;
     spdlog::debug("[DockSelection] selected dock slot {} for fleet {}", index + 1, id);
   }
-  last_fleet_id = id;
+  dock_last_fleet_id = id;
 }
 
 // --- Installation ---
@@ -436,8 +446,8 @@ bool SelectManagedDock(int32_t index)
 const Feature kPinnedShips{"PinnedShips", &Config::Patches::pinnedshiphooks, InstallPinnedShips};
 const Feature kPinnedShipClick{"PinnedShipClick", &Config::Patches::pinnedshipclicktoggle, InstallPinnedShipClick};
 const Feature kDoubleClickAssign{"DoubleClickAssign", &Config::Patches::doubleclickassignshiphooks,
-                                 InstallDoubleClickAssign};
+                                 InstallDoubleClickAssign, nullptr, ResetDock};
 // Frame work only. Enter needs no hook, so it follows the setting alone.
 const Feature kAssignOnEnter{"AssignOnEnter", nullptr, nullptr, AssignOnEnterFrame};
 // Frame work only, installed with the hotkeys it was introduced with.
-const Feature kDockSelection{"DockSelection", &Config::Patches::hotkeyhooks, nullptr, DockSelectionFrame};
+const Feature kDockSelection{"DockSelection", &Config::Patches::hotkeyhooks, nullptr, DockSelectionFrame, ResetDock};

@@ -162,6 +162,8 @@ struct SectionManager : il2cpp::Object {
 
   SectionID CurrentSection()
   { return Get<"CurrentSection", SectionID>(); }
+  bool IsSectionChangeInProgress()
+  { return Get<"IsSectionChangeInProgress", bool>(); }
   SectionStorage* sectionStorage()
   { return Field<"_sectionStorage", SectionStorage*>(); }
 
@@ -189,6 +191,12 @@ using MonoSingletonBase = il2cpp::Class<"Assembly-CSharp", "", "MonoSingleton">;
 struct CustomReloadArgs {
   Il2CppObject* section_args;
   bool          force_fake_reload;
+};
+
+struct AppReloadArgs {
+  bool                               switch_to_login_screen;
+  bool                               quick_reloading;
+  il2cpp::Nullable<CustomReloadArgs> custom_reload_args;
 };
 
 struct PrimeApp : il2cpp::Object {

@@ -23,7 +23,11 @@
 namespace
 {
 // The frame tick dispatches shortcuts whether or not this feature installed; this says whether it did.
-bool hotkeys_installed = false;
+bool                                                 hotkeys_installed = false;
+std::optional<std::chrono::steady_clock::time_point> hotkeys_escape_first_press;
+
+void ResetHotkeys()
+{ hotkeys_escape_first_press.reset(); }
 
 // --- Setting shortcuts ---
 
@@ -94,14 +98,14 @@ bool SwallowEscape()
   if (config.ui.disable_escape_exit_timer <= 0 || !unity::Key::Down(unity::KeyCode::Escape))
     return true;
 
-  static std::optional<std::chrono::steady_clock::time_point> first_press;
-  const auto                                                  now = std::chrono::steady_clock::now();
-  if (!first_press || now - *first_press > std::chrono::milliseconds(config.ui.disable_escape_exit_timer)) {
-    first_press = now;
+  const auto now = std::chrono::steady_clock::now();
+  if (!hotkeys_escape_first_press
+      || now - *hotkeys_escape_first_press > std::chrono::milliseconds(config.ui.disable_escape_exit_timer)) {
+    hotkeys_escape_first_press = now;
     return true;
   }
   // Consume the pair so a quick third press starts a new one.
-  first_press.reset();
+  hotkeys_escape_first_press.reset();
   return false;
 }
 
@@ -204,4 +208,4 @@ bool HandleShortcuts()
   return FleetActionShortcuts() || SwallowEscape();
 }
 
-const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys};
+const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys, nullptr, ResetHotkeys};

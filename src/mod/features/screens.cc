@@ -337,6 +337,9 @@ bool PressAwaitedButton()
   return false;
 }
 
+void ResetScreenShortcuts()
+{ pending_button.reset(); }
+
 bool ScreenShortcuts()
 {
   if (Shortcut::IsDown(Action::kMoveLeft) && StepScreen(-1))

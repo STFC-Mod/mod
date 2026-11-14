@@ -3,6 +3,7 @@
 
 #include "config.h"
 #include "features/features.h"
+#include "mod.h"
 #include "text.h"
 
 #include "game/fleet.h"
@@ -50,6 +51,8 @@ InstantWarpConfirmation ResolveConfirmation(FleetPlayerData* fleet)
 void CoursePromptPopupViewController_AboutToShow_Hook(auto original, CoursePromptPopupViewController* _this)
 {
   original(_this);
+  if (ModReloading())
+    return;
   auto* widget  = _this->coursePromptPopupWidget();
   auto* context = widget ? widget->Context() : nullptr;
   if (!context || !context->HasInstantWarp())
@@ -123,6 +126,13 @@ struct OwnedLabel {
 // Never destroyed: freeing a GC handle in a static destructor can run after the runtime has shut down.
 auto& action_label = *new OwnedLabel;
 
+void ResetInstantWarp()
+{
+  // Forget ownership without touching a label whose hierarchy is being destroyed.
+  action_label.handle.Reset();
+  action_label.text.clear();
+}
+
 void InstantWarpFrame()
 {
   // Ten times a second is quick enough for a label.
@@ -145,8 +155,8 @@ void InstantWarpFrame()
   // The ordinary visit path uses the currently selected fleet. The card's cached popup CourseData is only filled on
   // click, so it cannot preview. Toll and wormhole buttons confirm their own way and keep the game's text.
   if (unity::Alive(button) && button->isActiveAndEnabled() && button->Interactable()) {
-    auto* fleets     = FleetsManager::Instance();
-    auto* deployment = DeploymentManager::Instance();
+    auto* fleets     = FleetsManager::Existing();
+    auto* deployment = DeploymentManager::Existing();
     auto* fleet      = unity::Alive(fleets) ? fleets->GetSelectedFleetData() : nullptr;
     if (fleet && unity::Alive(deployment) && deployment->HasInstantWarpAbility(fleet)) {
       switch (ResolveConfirmation(fleet)) {
@@ -192,4 +202,4 @@ void CycleInstantWarpConfirmation()
 }
 
 // Always installed: its only hook answers a prompt the player asked the mod to answer.
-const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, InstantWarpFrame};
+const Feature kInstantWarp{"InstantWarp", nullptr, InstallInstantWarp, InstantWarpFrame, ResetInstantWarp};

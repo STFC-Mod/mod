@@ -47,7 +47,9 @@ struct FleetPress {
 
 // The target's hull type is only known once the target's data has arrived; until then it reads as Any. A press
 // that lands in that window is replayed, as itself, on the next frame only.
-std::optional<FleetPress> pending_replay;
+std::optional<FleetPress>             pending_replay;
+std::chrono::steady_clock::time_point fleet_last_press{};
+int32_t                               fleet_last_index = -1;
 
 bool ControllerShown(VisibilityController* controller)
 { return controller && controller->IsShown(); }
@@ -408,7 +410,7 @@ void AbilityButtonsFrame()
   auto* fleet      = controller ? controller->fleet() : nullptr;
   if (!fleet || (std::to_underlying(fleet->CurrentState()) & std::to_underlying(FleetState::CanActivateAbility)) == 0)
     return;
-  auto* manager = ActivatedAbilityManager::Instance();
+  auto* manager = ActivatedAbilityManager::Existing();
   auto* panel   = controller->shipActionPanelLocalViewController();
   if (!manager || !panel || !CanvasController::Shows(panel) || panel->HasShipAnActiveAbilityWithActiveEffect())
     return;
@@ -437,6 +439,13 @@ bool InstallQueueSwitch()
 bool TargetViewerShown()
 { return TargetViewers::AnyShown(); }
 
+void ResetFleetShortcuts()
+{
+  pending_replay.reset();
+  fleet_last_press = {};
+  fleet_last_index = -1;
+}
+
 bool SelectShipShortcuts()
 {
   using Clock = std::chrono::steady_clock;
@@ -444,8 +453,6 @@ bool SelectShipShortcuts()
   // camera to it. With disable_preview_locate, the second press only selects while a target card is open.
   constexpr std::array kShips{Action::kSelectShip1, Action::kSelectShip2, Action::kSelectShip3, Action::kSelectShip4,
                               Action::kSelectShip5, Action::kSelectShip6, Action::kSelectShip7, Action::kSelectShip8};
-  static auto          last_press = Clock::now();
-  static int32_t       last_index = -1;
 
   const auto ship = std::ranges::find_if(kShips, [](Action action) { return Shortcut::IsDown(action); });
   // TODO(tashcan): Shift+ship used to request a tow by the Discovery. Its bindings had drifted, so it never ran on
@@ -465,8 +472,8 @@ bool SelectShipShortcuts()
 
   const auto now        = Clock::now();
   const bool can_locate = !Config::Get().ui.disable_preview_locate || !TargetViewerShown();
-  if (can_locate && index == last_index && fleet_bar->IsIndexSelected(index)
-      && now - last_press < std::chrono::milliseconds(Config::Get().control.select_timer)) {
+  if (can_locate && index == fleet_last_index && fleet_bar->IsIndexSelected(index)
+      && now - fleet_last_press < std::chrono::milliseconds(Config::Get().control.select_timer)) {
     auto* fleet = fleet_bar->SelectedFleet();
     if (!fleet)
       return true;
@@ -474,8 +481,8 @@ bool SelectShipShortcuts()
   } else {
     fleet_bar->RequestSelect(index);
   }
-  last_index = index;
-  last_press = now;
+  fleet_last_index = index;
+  fleet_last_press = now;
   return true;
 }
 
