@@ -96,6 +96,8 @@ extern const Feature kPinnedShipClick;
 extern const Feature kDoubleClickAssign;
 extern const Feature kAssignOnEnter;
 extern const Feature kDockSelection;
+// Select a fleet bar slot in ship management. True when the management screen consumes the shortcut.
+bool SelectManagedDock(int32_t index);
 
 // fleet_actions.cc
 extern const Feature kQueueSwitch;

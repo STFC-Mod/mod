@@ -237,8 +237,8 @@ bool InstallChatTitles()
   il2cpp::HookSet hooks("ChatTitles");
   IL2CPP_STAGE(hooks, update, UserProfileWidget_UpdatePlayerTitle_Hook);
   const bool installed = hooks.Commit();
-  const auto set_data = PlayerTitleWidget::Class::Method("SetWidgetData", 0);
-  const auto bind     = PlayerTitleWidget::Class::Method("OnDidBindContext", 0);
+  const auto set_data  = PlayerTitleWidget::Class::Method("SetWidgetData", 0);
+  const auto bind      = PlayerTitleWidget::Class::Method("OnDidBindContext", 0);
   if (!set_data || !bind)
     return installed;
   // Both, or one of them and the update, often branch to one shared body, which SPUD patches in their place. One

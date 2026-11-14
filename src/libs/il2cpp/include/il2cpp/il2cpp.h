@@ -308,10 +308,8 @@ namespace detail
       return Invoke<R, typename Param<P>::Type...>(method, target, Param<P>::From(std::forward<A>(args))...);
     }
   };
-  template <typename F, typename... A> struct CallOf : MethodCall<F(A...)> {
-  };
-  template <typename R, typename... P, typename... A> struct CallOf<R(P...), A...> : MethodCall<R(P...)> {
-  };
+  template <typename F, typename... A> struct CallOf : MethodCall<F(A...)> {};
+  template <typename R, typename... P, typename... A> struct CallOf<R(P...), A...> : MethodCall<R(P...)> {};
 
   template <typename T> T ReadField(FieldInfo* field, const Il2CppObject* object)
   {
