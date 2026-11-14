@@ -186,10 +186,13 @@ zoom_label_player_threshold = 0.5
 # This controls the zoom speed when using Q/E in System View, defaults to 350
 keyboard_zoom_speed = 350.0
 
-# Controls mouse/touch and keyboard panning speed in System and Galaxy views.
+# Controls mouse/touch and keyboard panning speed in System view only.
 # 1.0 = normal, 0.5 = half speed, 1.5 = 50% faster. Valid range: greater than 0, up to 10.
 # Replaces system_pan_momentum, which was unused. Does not require experimental mode.
 system_pan_speed = 1.0
+
+# Independent mouse/touch and keyboard panning speed in Galaxy view, with the same range.
+galaxy_pan_speed = 1.0
 
 # Controls the system pan momentum speed. Defaults to 0.4. Read with enable_experimental, but not applied yet
 system_pan_momentum = 0.4

@@ -27,8 +27,13 @@ struct NavigationLOD : il2cpp::Object {
   { Call<"UpdateLOD">(level); }
 };
 
+enum class NodeDepth : int32_t;
+
 struct NavigationPan : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationPan">;
+
+  NodeDepth nodeDepth()
+  { return Field<"_nodeDepth", NodeDepth>(); }
 
   unity::Vector2 lastDelta()
   { return Field<"_lastDelta", unity::Vector2>(); }

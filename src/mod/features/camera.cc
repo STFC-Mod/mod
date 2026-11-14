@@ -278,10 +278,24 @@ struct NativePanScalers {
   }
 };
 
+float CameraPanSpeed(NodeDepth depth, float system_speed, float galaxy_speed)
+{
+  switch (depth) {
+    case NodeDepth::SolarSystem:
+      return system_speed;
+    case NodeDepth::Galaxy:
+      return galaxy_speed;
+    default:
+      return 1.0f;
+  }
+}
+
 void NavigationPan_MoveCamera_Hook(auto original, NavigationPan* _this, unity::Vector2 delta, bool momentum)
 {
-  if (!momentum && _this->panningStarted())
-    delta = delta * Config::Get().graphics.system_pan_speed;
+  if (!momentum && _this->panningStarted()) {
+    const auto& graphics = Config::Get().graphics;
+    delta = delta * CameraPanSpeed(_this->nodeDepth(), graphics.system_pan_speed, graphics.galaxy_pan_speed);
+  }
   original(_this, delta, momentum);
 }
 
@@ -300,7 +314,9 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   // until the arrow is released. A modified move binding such as CTRL-LEFT still pans.
   const bool keyboard = config.control.hotkeys_enabled && !config.ui.disable_move_keys;
 
-  const bool native = keyboard && (config.control.use_scopely_hotkeys || !config.patches.hotkeyhooks);
+  const bool  native = keyboard && (config.control.use_scopely_hotkeys || !config.patches.hotkeyhooks);
+  const float pan_speed =
+      CameraPanSpeed(_this->nodeDepth(), config.graphics.system_pan_speed, config.graphics.galaxy_pan_speed);
 
   auto       d       = _this->lastDelta();
   const bool blocked = _this->BlockPan() || (_this->trackingPOI() && !disable_target_camera_lock);
@@ -310,7 +326,7 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   if (native) {
     if (!pointer) {
       _this->SetLastDelta(blocked ? unity::Vector2{} : d * config.graphics.system_pan_momentum_falloff);
-      NativePanScalers scalers(_this, config.graphics.system_pan_speed);
+      NativePanScalers scalers(_this, pan_speed);
       original(_this);
     }
     _this->SetFarMagRadiusRatioSystemExtended(_this->farMagRadiusRatioSystemNormal());
@@ -328,7 +344,7 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
       d                 = {-x / length * speed, -y / length * speed};
       by_keys           = true;
       const float scale = _this->deltaScaler();
-      _this->MoveCamera(d * (scale * config.graphics.system_pan_speed), true);
+      _this->MoveCamera(d * (scale * pan_speed), true);
       d = _this->lastDelta();
     }
   }

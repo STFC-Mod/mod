@@ -216,6 +216,7 @@ public:
     bool              allow_cursor        = true;
     float             keyboard_zoom_speed = 350.0f;
     float             system_pan_speed    = 1.0f;
+    float             galaxy_pan_speed    = 1.0f;
     // Retained compatibility key; use system_pan_speed for panning speed.
     float system_pan_momentum = 0.4f;
     // How much of the pan speed is kept each frame after a drag or key is released.
