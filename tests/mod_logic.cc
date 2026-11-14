@@ -444,6 +444,46 @@ void RenamedSettings()
   Check(both->graphics.ui_scale_step == 0.2f, "the new name wins over the old one");
 }
 
+void PanControls()
+{
+  for (const auto* text : {"", "[graphics]\nsystem_pan_speed=0.5", "[graphics]\ngalaxy_pan_speed=2.5",
+                           "[graphics]\nsystem_pan_speed=0.5\ngalaxy_pan_speed=2.5"}) {
+    toml::table effective;
+    const auto  input  = toml::parse(text);
+    const auto  parsed = Config::Parse(input, effective, false);
+    Check(parsed->graphics.system_pan_speed == (input["graphics"]["system_pan_speed"] ? 0.5f : 1.0f),
+          "System pan speed keeps its own default and saved value");
+    Check(parsed->graphics.galaxy_pan_speed == (input["graphics"]["galaxy_pan_speed"] ? 2.5f : 1.0f),
+          "Galaxy pan speed keeps its own default and saved value");
+  }
+  struct Case {
+    const char* text;
+    float       expected;
+  };
+  for (const auto& item : std::array{Case{"0", 0}, Case{"0.8", 0.8f}, Case{"0.99", 0.99f}, Case{"1", 0.99f},
+                                     Case{"1.5", 0.99f}, Case{"-0.1", 0}, Case{"nan", 0.8f}, Case{"inf", 0.8f},
+                                     Case{"-inf", 0.8f}, Case{"\"bad\"", 0.8f}, Case{"[]", 0.8f}}) {
+    toml::table effective;
+    const auto  parsed = Config::Parse(
+        toml::parse(std::string("[graphics]\nsystem_pan_momentum_falloff = ") + item.text), effective, false);
+    Check(parsed->graphics.system_pan_momentum_falloff == item.expected,
+          "pan glide saturates finite values below one and defaults unreadable or nonfinite values");
+    Check(effective["graphics"]["system_pan_momentum_falloff"].value<double>() == double(item.expected),
+          "runtime vars record the bounded pan glide actually used");
+  }
+  for (const auto* key : {"system_pan_speed", "galaxy_pan_speed"})
+    for (const auto& item : std::array{Case{"0.1", 0.1f}, Case{"0.5", 0.5f}, Case{"1", 1}, Case{"10", 10}, Case{"0", 1},
+                                       Case{"0.05", 1}, Case{"1e-40", 1}, Case{"-1", 1}, Case{"10.1", 1},
+                                       Case{"nan", 1}, Case{"inf", 1}, Case{"\"bad\"", 1}}) {
+      toml::table effective;
+      const auto  parsed =
+          Config::Parse(toml::parse(std::string("[graphics]\n") + key + " = " + item.text), effective, false);
+      const float value = std::string_view(key) == "system_pan_speed" ? parsed->graphics.system_pan_speed
+                                                                      : parsed->graphics.galaxy_pan_speed;
+      Check(value == item.expected, "pan speed accepts only finite values in [0.1, 10]");
+    }
+}
+
 void ParseDoesNotActivateSettings()
 {
   Load("[shortcuts]\nquit = \"F1\"");
@@ -550,6 +590,7 @@ int main()
   DailyFactionSettings();
   UpstreamSettings();
   RenamedSettings();
+  PanControls();
   ParseDoesNotActivateSettings();
   Matching();
   ChatStartupGate();

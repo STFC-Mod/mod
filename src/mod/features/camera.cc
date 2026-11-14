@@ -256,6 +256,49 @@ void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils* _this, Il2Cpp
 bool PointerHeld()
 { return unity::Input::GetMouseButton(0) || unity::Input::touchCount() > 0; }
 
+// Native LateUpdate uses deltaScaler for keyboard movement and coasting. Supply
+// the configured fade once while preserving native keyboard amplitude.
+struct NativePanScalers {
+  NavigationPan* pan;
+  float          delta, keyboard;
+
+  NativePanScalers(NavigationPan* value, float speed)
+      : pan(value)
+      , delta(value->deltaScaler())
+      , keyboard(value->keyboardDeltaScaler())
+  {
+    pan->SetDeltaScaler(1.0f);
+    pan->SetKeyboardDeltaScaler(keyboard * delta * speed);
+  }
+
+  ~NativePanScalers()
+  {
+    pan->SetDeltaScaler(delta);
+    pan->SetKeyboardDeltaScaler(keyboard);
+  }
+};
+
+float CameraPanSpeed(NodeDepth depth, float system_speed, float galaxy_speed)
+{
+  switch (depth) {
+    case NodeDepth::SolarSystem:
+      return system_speed;
+    case NodeDepth::Galaxy:
+      return galaxy_speed;
+    default:
+      return 1.0f;
+  }
+}
+
+void NavigationPan_MoveCamera_Hook(auto original, NavigationPan* _this, unity::Vector2 delta, bool momentum)
+{
+  if (!momentum && _this->panningStarted()) {
+    const auto& graphics = Config::Get().graphics;
+    delta = delta * CameraPanSpeed(_this->nodeDepth(), graphics.system_pan_speed, graphics.galaxy_pan_speed);
+  }
+  original(_this, delta, momentum);
+}
+
 // Replaces the game's LateUpdate: the keyboard source is the mod's shortcuts, and the pan keeps gliding after the
 // drag or key is released. Each frame moves the camera once: by the keys while one is held, otherwise by the
 // glide.
@@ -271,20 +314,27 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
   // until the arrow is released. A modified move binding such as CTRL-LEFT still pans.
   const bool keyboard = config.control.hotkeys_enabled && !config.ui.disable_move_keys;
 
-  // With the game's own hotkeys, its LateUpdate pans and glides by itself. The mod still applies its momentum falloff
-  // to that glide, without moving the camera a second time.
-  const bool native = keyboard && (config.control.use_scopely_hotkeys || !config.patches.hotkeyhooks);
-  if (native)
-    original(_this);
+  const bool  native = keyboard && (config.control.use_scopely_hotkeys || !config.patches.hotkeyhooks);
+  const float pan_speed =
+      CameraPanSpeed(_this->nodeDepth(), config.graphics.system_pan_speed, config.graphics.galaxy_pan_speed);
 
   auto       d       = _this->lastDelta();
   const bool blocked = _this->BlockPan() || (_this->trackingPOI() && !disable_target_camera_lock);
   // The native recognizer owns held-drag movement, including when the legacy Input API does not report the pointer.
   // Never replay its delta as momentum.
   const bool pointer = PointerHeld() || _this->panningStarted();
-  bool       by_keys = false;
+  if (native) {
+    if (!pointer) {
+      _this->SetLastDelta(blocked ? unity::Vector2{} : d * config.graphics.system_pan_momentum_falloff);
+      NativePanScalers scalers(_this, pan_speed);
+      original(_this);
+    }
+    _this->SetFarMagRadiusRatioSystemExtended(_this->farMagRadiusRatioSystemNormal());
+    return true;
+  }
+  bool by_keys = false;
   // The game's own gate for its shortcuts also covers the tutorial's input lock, modals and a focused text field.
-  if (keyboard && !native && !blocked && !pointer && ShortcutsManager::CanUseShortcuts()) {
+  if (keyboard && !blocked && !pointer && ShortcutsManager::CanUseShortcuts()) {
     // Opposite bindings cancel; normalize diagonals like the native 2D composite. MoveCamera takes a drag, and
     // dragging left moves the view right, hence the negation.
     const float x = float(Shortcut::IsPressed(Action::kMoveRight)) - float(Shortcut::IsPressed(Action::kMoveLeft));
@@ -294,7 +344,8 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
       d                 = {-x / length * speed, -y / length * speed};
       by_keys           = true;
       const float scale = _this->deltaScaler();
-      _this->MoveCamera(d * scale, true);
+      _this->MoveCamera(d * (scale * pan_speed), true);
+      d = _this->lastDelta();
     }
   }
 
@@ -304,10 +355,11 @@ bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
     // Glide: the last drag or key delta shrinks by the falloff every frame.
     const auto falloff = config.graphics.system_pan_momentum_falloff;
     d                  = d * falloff;
-    if (!native)
-      _this->MoveCamera(d, true);
+    _this->MoveCamera(d, true);
+    d = _this->lastDelta();
   }
-  _this->SetLastDelta(d);
+  if (!pointer || blocked)
+    _this->SetLastDelta(d);
   _this->SetFarMagRadiusRatioSystemExtended(_this->farMagRadiusRatioSystemNormal());
   return true;
 }
@@ -403,6 +455,8 @@ bool InstallZoom()
 bool InstallPan()
 {
   il2cpp::HookSet hooks("Pan");
+  IL2CPP_STAGE(hooks, NavigationPan::Class::Method<void(unity::Vector2, bool)>("MoveCamera"),
+               NavigationPan_MoveCamera_Hook);
   IL2CPP_STAGE(hooks, OrbitFrameProvider::Class::Method("UpdateInputData"), OrbitFrameProvider_UpdateInputData_Hook);
   IL2CPP_STAGE(hooks, TKTouch::Class::Method("populateWithPosition"), TKTouch_populateWithPosition_Hook);
   IL2CPP_STAGE(hooks, NavigationPan::Class::Method("LateUpdate"), NavigationPan_LateUpdate_Hook);

@@ -215,7 +215,9 @@ public:
     bool              free_resize         = true;
     bool              allow_cursor        = true;
     float             keyboard_zoom_speed = 350.0f;
-    // TODO(tashcan): read (with enable_experimental) but nothing applies it.
+    float             system_pan_speed    = 1.0f;
+    float             galaxy_pan_speed    = 1.0f;
+    // Retained compatibility key; use system_pan_speed for panning speed.
     float system_pan_momentum = 0.4f;
     // How much of the pan speed is kept each frame after a drag or key is released.
     float system_pan_momentum_falloff = 0.8f;
