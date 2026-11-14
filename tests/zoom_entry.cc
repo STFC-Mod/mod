@@ -29,4 +29,20 @@ int main()
   assert(system.Consume(true));
   system.pending = true;
   assert(system.Consume(true));
+
+  // The cached controller can remain at system depth while another screen is visible. A shared-frame sample
+  // records that interruption even if the controller receives no Update until the player comes back.
+  system.Observe(true, false);
+  assert(!system.Consume(true));
+  system.Observe(true, true);
+  assert(system.Consume(true));
+  system.Observe(true, true);
+  assert(!system.Consume(true));
+
+  // Native transitions can still change the camera; do not consume a default until the view has settled.
+  system.Observe(true, false);
+  system.pending = true; // SetViewParameters ran before section completion.
+  assert(!system.Consume(true));
+  system.Observe(true, true);
+  assert(system.Consume(true));
 }

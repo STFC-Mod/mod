@@ -33,13 +33,29 @@ struct ZoomEntryState {
 };
 std::unordered_map<NavigationZoom*, ZoomEntryState> zoom_entries;
 
+bool SystemZoomViewReady()
+{
+  auto* sections = Hub::Sections();
+  return sections && sections->CurrentSection() == SectionID::Navigation_System
+         && !sections->IsSectionChangeInProgress();
+}
+
+void ZoomFrame()
+{
+  // Hidden controllers need not receive Update or change depth. Remember leaving from the shared frame tick,
+  // so returning to their cached system view schedules the default even when their depth stays SolarSystem.
+  if (!SystemZoomViewReady())
+    for (auto& [controller, entry] : zoom_entries)
+      entry.gate.Observe(false);
+}
+
 ZoomEntryState& ObserveZoomDepth(NavigationZoom* zoom)
 {
   std::erase_if(zoom_entries, [](const auto& item) { return !item.second.controller.Get(); });
   auto [entry, inserted] = zoom_entries.try_emplace(zoom);
   if (inserted)
     entry->second.controller = il2cpp::GcHandle::Weak(zoom);
-  entry->second.gate.Observe(zoom->depth() == NodeDepth::SolarSystem);
+  entry->second.gate.Observe(zoom->depth() == NodeDepth::SolarSystem, SystemZoomViewReady());
   return entry->second;
 }
 
@@ -439,6 +455,6 @@ bool InstallInteriorZoom()
 }
 } // namespace
 
-const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom};
+const Feature kZoom{"Zoom", &Config::Patches::zoomhooks, InstallZoom, ZoomFrame};
 const Feature kPan{"Pan", &Config::Patches::panhooks, InstallPan};
 const Feature kInteriorZoom{"InteriorZoom", &Config::Patches::interiorzoomhooks, InstallInteriorZoom};
