@@ -23,7 +23,7 @@ USE_LAUNCHER=false  # Default to using loader for direct mod testing
 
 # Project paths
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${PROJECT_ROOT}/build/macosx/${ARCH}"
+BUILD_DIR="${PROJECT_ROOT}/zig-out/${ARCH}"
 
 # Print colored output
 print_info() {
@@ -135,9 +135,9 @@ case $BUILD_MODE in
 esac
 
 # Update build directory based on architecture
-BUILD_DIR="${PROJECT_ROOT}/build/macosx/${ARCH}/${BUILD_MODE}"
+BUILD_DIR="${PROJECT_ROOT}/zig-out/${ARCH}/${BUILD_MODE}"
 APP_PATH="${BUILD_DIR}/macOSLauncher.app"
-LOADER_PATH="${BUILD_DIR}/stfc-community-mod-loader"
+LOADER_PATH="${BUILD_DIR}/bin/stfc-community-mod-loader"
 PACKAGED_APP_PATH="${BUILD_DIR}/STFC Community Mod.app"
 
 # Configure the project
@@ -146,12 +146,13 @@ configure_project() {
 
     cd "$PROJECT_ROOT"
 
-    local xmake_opts="-y -p macosx -a ${ARCH} -m ${BUILD_MODE} --target_minver=14.6"
-    if [[ "$VERBOSE" == true ]]; then
-        xmake_opts="${xmake_opts} -v"
-    fi
-
-    xmake f ${xmake_opts}
+    local target_arch="$ARCH"
+    [[ "$ARCH" != arm64 ]] || target_arch=aarch64
+    local optimize=ReleaseFast moddbg=false
+    case "$BUILD_MODE" in debug|check) optimize=Debug ;; releasedbg) moddbg=true ;; esac
+    ZIG_FLAGS=("-Dtarget=${target_arch}-macos.14.6" "-Doptimize=$optimize" "-Dmoddbg=$moddbg" --prefix "$BUILD_DIR")
+    if [[ "$VERBOSE" == true ]]; then ZIG_FLAGS+=(--verbose); fi
+    [[ "$(zig version)" == 0.16.0 ]] || { print_error "Zig 0.16.0 is required"; exit 1; }
 
     print_success "Configuration complete"
 }
@@ -161,7 +162,7 @@ clean_build() {
     print_info "Cleaning build artifacts..."
 
     cd "$PROJECT_ROOT"
-    xmake clean -a
+    rm -rf "$PROJECT_ROOT/.zig-cache" "$PROJECT_ROOT/zig-out"
 
     print_success "Clean complete"
 }
@@ -172,11 +173,13 @@ build_project() {
 
     cd "$PROJECT_ROOT"
 
-    if [[ "$VERBOSE" == true ]]; then
-        xmake -v
-    else
-        xmake
+    if [[ "$ARCH" == universal ]]; then
+        scripts/package-mac-app.sh "$BUILD_MODE"
+        print_success "Universal application bundle prepared"
+        return
     fi
+    zig build "${ZIG_FLAGS[@]}"
+    zig build launcher "${ZIG_FLAGS[@]}"
 
     print_success "Build complete"
 
@@ -192,7 +195,7 @@ build_project() {
     package_app_bundle
 }
 
-# Package the launcher bundle the same way CI does, but keep xmake's
+# Package the launcher bundle the same way CI does, but keep Zig's
 # macOSLauncher.app in place so local incremental builds still work.
 package_app_bundle() {
     print_info "Packaging launcher application bundle..."
@@ -209,7 +212,7 @@ package_app_bundle() {
         exit 1
     fi
 
-    local dylib_path="${BUILD_DIR}/libstfc-community-mod.dylib"
+    local dylib_path="${BUILD_DIR}/lib/libstfc-community-mod.dylib"
     if [[ ! -f "$dylib_path" ]]; then
         print_error "Mod library not found at: $dylib_path"
         print_info "Make sure the mod library was built successfully"
@@ -222,10 +225,10 @@ package_app_bundle() {
         exit 1
     fi
 
-    local info_plist_path="${PROJECT_ROOT}/src/launcher/macos/Info.plist"
+    local info_plist_path="${APP_PATH}/Contents/Info.plist"
     if [[ ! -f "$info_plist_path" ]]; then
         print_error "Generated Info.plist not found at: $info_plist_path"
-        print_info "Run the configure/build step so xmake can generate it from Info.plist.template"
+        print_info "Run the configure/build step so Zig can generate it from Info.plist.template"
         exit 1
     fi
 
@@ -274,7 +277,7 @@ prepare_app() {
         fi
 
         # Check if dylib was built
-        local dylib_path="${BUILD_DIR}/libstfc-community-mod.dylib"
+        local dylib_path="${BUILD_DIR}/lib/libstfc-community-mod.dylib"
         if [[ ! -f "$dylib_path" ]]; then
             print_warning "Mod library not found at: $dylib_path"
             print_warning "The loader may not work correctly without the mod library"

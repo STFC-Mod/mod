@@ -1,7 +1,0 @@
-target("unity")
-    set_kind("static")
-    add_files("src/*.cc")
-    add_includedirs("include", {public = true})
-    add_deps("il2cpp", {public = true})
-    add_packages("spud", {public = true})
-    set_exceptions("cxx")

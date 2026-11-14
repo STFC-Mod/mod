@@ -3,7 +3,7 @@
 // Configurable shortcuts: the actions they trigger, parsing [shortcuts] from the settings file, and
 // matching the parsed key chords against this frame's input.
 
-#include <toml++/toml.h>
+#include <toml++/impl/forward_declarations.hpp>
 #include <unity/input.h>
 
 #include <array>

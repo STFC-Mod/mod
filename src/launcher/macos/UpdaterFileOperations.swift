@@ -75,3 +75,18 @@ func writeInstalledGameVersion(_ version: Int, gamePath: String) throws {
   let fileVersion = String(format: "&game=%d", version)
   try fileVersion.write(to: versionPath, atomically: true, encoding: .utf8)
 }
+
+// Apple's bsdtar reads the update service's 7z payloads without a bundled archive runtime.
+func extractUpdateArchive(from archive: String, to directory: String) throws {
+  try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+  let extractor = Process()
+  extractor.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+  extractor.arguments = ["-xf", archive, "-C", directory, "--no-same-owner"]
+  try extractor.run()
+  extractor.waitUntilExit()
+  guard extractor.terminationReason == .exit && extractor.terminationStatus == 0 else {
+    throw NSError(domain: "XsollaUpdater", code: Int(extractor.terminationStatus), userInfo: [
+      NSLocalizedDescriptionKey: "Could not extract update archive \(archive)."
+    ])
+  }
+}

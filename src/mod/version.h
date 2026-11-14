@@ -32,7 +32,7 @@
 #endif
 
 #ifndef STFC_BUILD_INVOCATION_ID
-#define STFC_BUILD_INVOCATION_ID    "xmake-direct"
+#define STFC_BUILD_INVOCATION_ID    "zig-direct"
 #endif
 
 #ifndef STFC_BUILD_MODE

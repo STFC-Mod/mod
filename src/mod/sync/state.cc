@@ -4,6 +4,8 @@
 
 namespace data_sync
 {
+bool RecordKeyLess::operator()(const nlohmann::json& a, const nlohmann::json& b) const
+{ return a < b; }
 namespace
 {
   using json = nlohmann::json;

@@ -1,8 +1,13 @@
-# Launcher version generation
+# Check the macOS launcher version
 
-`src/mod/version.h` defines the four version components.
-The launcher xmake target reads them during configuration and replaces `${VERSION}` in `src/launcher/macos/Info.plist.template`.
-The generated `Info.plist` supplies `CFBundleShortVersionString` and `CFBundleVersion` to the app bundle.
+After `zig build launcher`, run:
 
-Run `python3 scripts/verify_version_substitution.py` to check template substitution against the header.
-Generated plist files are build outputs and must not be committed.
+```sh
+python3 scripts/verify_version_substitution.py zig-out/macOSLauncher.app/Contents/Info.plist
+```
+
+For a custom `--prefix`, pass the plist path under that prefix.
+
+`zig/launcher.zig` reads `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_REVISION`, and `VERSION_PATCH` from `src/mod/version.h`.
+It substitutes the four-part number for `${VERSION}` in `src/launcher/macos/Info.plist.template`.
+Zig generates the plist in its cache and installs it into the app. The source template stays unchanged.
