@@ -7,7 +7,7 @@ private let logger = Logger(subsystem: "com.stfcmod.startrekpatch", category: "l
 
 struct ActionView: View, XSollaUpdaterDelegate {
 
-  @StateObject var gameUpdater = GameUpdaterViewModel()
+  private let gameUpdater = XsollaUpdater("Star Trek Fleet Command")
   @State private var gameVersion: Int = 0
   @State private var gameUpdateAvailable: Bool = false
   @State private var updating: Bool = false
@@ -103,8 +103,8 @@ struct ActionView: View, XSollaUpdaterDelegate {
                         showErrorAlert = true
                       }
                       updating = false
-                      gameVersion = gameUpdater.getInstalledGameVersion()
-                      gameUpdateAvailable = await gameUpdater.checkForGameUpdate()
+                      gameVersion = gameUpdater.installedVersion()
+                      gameUpdateAvailable = await gameUpdater.checkForUpdateAvailable()
                     }
                   }
                 }
@@ -141,10 +141,9 @@ struct ActionView: View, XSollaUpdaterDelegate {
       .offset(x: 85, y: 20)
       .task {
         repeat {
-          gameVersion = gameUpdater.getInstalledGameVersion()
+          gameVersion = gameUpdater.installedVersion()
           gameInstalled = gameVersion > 0
-          gameVersion = gameUpdater.getInstalledGameVersion()
-          gameUpdateAvailable = await gameUpdater.checkForGameUpdate()
+          gameUpdateAvailable = await gameUpdater.checkForUpdateAvailable()
           try? await Task.sleep(for: .seconds(60))
         } while !Task.isCancelled
 

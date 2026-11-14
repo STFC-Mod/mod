@@ -86,9 +86,6 @@ func stagedPatchURL(root: URL, relativePath: String) throws -> URL {
 }
 
 class XsollaUpdateParser: NSObject, XMLParserDelegate {
-
-  var articleNth = 0
-
   var gameVersion = 0
 
   var actions: [XsollaUpdateAction] = []
@@ -219,6 +216,7 @@ struct XsollaUpdater {
     throw NSError(domain: "XsollaUpdater", code: 1, userInfo: nil)
   }
 
+  @MainActor
   func installedVersion() -> Int {
     do {
       var gamePath = URL(fileURLWithPath: try self.gamePath())
@@ -229,22 +227,6 @@ struct XsollaUpdater {
     } catch {
       return 0
     }
-  }
-
-  class UpdateAction {
-    var type: String
-    var version: Int
-    var url: String
-
-    init(type: String, version: Int, url: String) {
-      self.type = type
-      self.version = version
-      self.url = url
-    }
-  }
-
-  func latestGameVersion() async throws -> Int {
-    return try await self.latestGameVersion(installedVersion: self.installedVersion())
   }
 
   private func latestGameVersion(installedVersion: Int) async throws -> Int {
@@ -273,6 +255,7 @@ struct XsollaUpdater {
     throw NSError(domain: "XsollaUpdater", code: 2, userInfo: nil)
   }
 
+  @MainActor
   func checkForUpdateAvailable() async -> Bool {
     do {
       let installedVersion = self.installedVersion()
@@ -287,6 +270,7 @@ struct XsollaUpdater {
     }
   }
 
+  @MainActor
   func updateGame(delegate: XSollaUpdaterDelegate? = nil) async throws {
     let installedVersion = self.installedVersion()
     logger.info("Starting game update from installed version \(installedVersion, privacy: .public)")
@@ -530,8 +514,6 @@ struct XsollaUpdater {
         logger.warning("Failed to remove Xsolla temp path: \(error.localizedDescription, privacy: .public)")
       }
 
-      logger.info("Update complete, setting flag to force entitlement re-application")
-      UserDefaults.standard.set(true, forKey: "forceEntitlementReapplication")
       delegate?.updateProgress(progress: XsollaUpdateProgress.Complete)
       logger.info(
         "Game update completed from \(installedVersion, privacy: .public) to \(pendingGameVersion ?? parser.gameVersion, privacy: .public)")
@@ -541,8 +523,4 @@ struct XsollaUpdater {
       throw error
     }
   }
-}
-
-func run_update() {
-  //
 }

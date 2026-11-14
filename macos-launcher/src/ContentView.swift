@@ -8,9 +8,7 @@
 import Foundation
 import SwiftUI
 
-struct ContentView: View, XSollaUpdaterDelegate {
-  @State private var updateAction: String = ""
-
+struct ContentView: View {
   var body: some View {
     GeometryReader { geo in
       ZStack {
@@ -158,16 +156,6 @@ struct ContentView: View, XSollaUpdaterDelegate {
     }
   }
 
-  private var buttons: some View {
-    Grid {
-      GridRow {
-
-      }
-    }
-    .frame(width: 300, height: 150)
-    .offset(x: 85, y: 300)
-  }
-
   private func commonLabel(prefix: String) -> some View {
     HStack {
       Spacer()
@@ -183,9 +171,6 @@ struct ContentView: View, XSollaUpdaterDelegate {
     (1...count)
       .map { _ in "\(Int.random(in: 0...9))" }
       .joined()
-  }
-
-  func updateProgress(progress: XsollaUpdateProgress) {
   }
 }
 

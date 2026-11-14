@@ -1,6 +1,6 @@
 import Foundation
 
-public final class TemporaryFolderURL: ManagedURL {
+public final class TemporaryFolderURL {
   public let contentURL: URL
   public init() {
     contentURL = URL(fileURLWithPath: NSTemporaryDirectory())

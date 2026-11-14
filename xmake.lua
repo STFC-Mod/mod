@@ -104,3 +104,11 @@ target("config-reload-tests")
     elseif is_plat("windows") then
         add_syslinks("shell32", "winmm")
     end
+
+target("launcher-rsync-tests")
+    set_kind("binary")
+    set_default(false)
+    set_exceptions("cxx")
+    add_files("tests/launcher_rsync.cc", "macos-launcher/src/rsync.cc")
+    add_includedirs("macos-launcher/src")
+    add_packages("librsync")
