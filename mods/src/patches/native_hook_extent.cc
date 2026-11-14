@@ -1,4 +1,4 @@
-#include "native_hook_extent.h"
+#include "patches/native_hook_extent.h"
 
 #if __APPLE__
 #include <algorithm>
@@ -91,7 +91,12 @@ bool native_hooks::MacHookFits(const void* method, std::size_t minimum_extent)
 {
 #if __APPLE__
   const auto extent = FunctionExtent(method);
-  const bool fits   = extent >= std::max(minimum_extent, std::size_t{32}) && spud::has_detour_prologue(method, extent);
+  bool       fits   = false;
+  if (extent >= std::max(minimum_extent, std::size_t{32})) {
+    const auto plan = spud::inspect_detour(method, spud::Arch::kHost, extent);
+    fits = plan.ok() && plan.resolved_target == reinterpret_cast<uintptr_t>(method) && plan.far_jump_size != 0
+           && plan.far_required_patch_bytes >= plan.far_jump_size && plan.far_required_patch_bytes <= extent;
+  }
   spdlog::info("[MacHookExtent] entry={} bytes={} accepted={}", method, extent, fits);
   return fits;
 #else

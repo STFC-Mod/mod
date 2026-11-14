@@ -89,7 +89,8 @@ ShipTechQuery& TechQuery()
 void ResolveShipTechQuery()
 {
   auto& s = TechQuery();
-  if (s.resolved) return;
+  if (s.resolved)
+    return;
   s.resolved = true;
 
   auto manager     = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ForbiddenTechs", "ForbiddenTechManager");
@@ -106,22 +107,19 @@ void ResolveShipTechQuery()
   s.slot_item        = entity_slot.GetMethodInfo("get_SlotItemId", 0);
   s.ship_id          = method_contract::Resolve(base_ship.get_cls(), "get_Id", false, "System.Int64", {});
 
-  const bool manager_instance_valid = s.manager_instance && s.manager_instance->methodPointer
-                                       && (s.manager_instance->flags & METHOD_ATTRIBUTE_STATIC)
-                                       && s.manager_instance->parameters_count == 0
-                                       && method_contract::Type(s.manager_instance->return_type,
-                                                                "Digit.Prime.ForbiddenTechs.ForbiddenTechManager");
-  const bool active_slots_valid = s.active_slots && s.active_slots->methodPointer
-                                  && !(s.active_slots->flags & METHOD_ATTRIBUTE_STATIC)
-                                  && method_contract::Type(s.active_slots->return_type, "System.Boolean")
-                                  && s.active_slots->parameters_count == 2
-                                  && method_contract::Type(s.active_slots->parameters[0], "System.Int64")
-                                  && s.active_slots->parameters[1]->byref;
+  const bool manager_instance_valid =
+      s.manager_instance && s.manager_instance->methodPointer && (s.manager_instance->flags & METHOD_ATTRIBUTE_STATIC)
+      && s.manager_instance->parameters_count == 0
+      && method_contract::Type(s.manager_instance->return_type, "Digit.Prime.ForbiddenTechs.ForbiddenTechManager");
+  const bool active_slots_valid =
+      s.active_slots && s.active_slots->methodPointer && !(s.active_slots->flags & METHOD_ATTRIBUTE_STATIC)
+      && method_contract::Type(s.active_slots->return_type, "System.Boolean") && s.active_slots->parameters_count == 2
+      && method_contract::Type(s.active_slots->parameters[0], "System.Int64") && s.active_slots->parameters[1]->byref;
   const bool slot_spec_valid = s.slot_spec != nullptr;
   const bool slot_item_valid = s.slot_item && s.slot_item->methodPointer
                                && !(s.slot_item->flags & METHOD_ATTRIBUTE_STATIC) && s.slot_item->parameters_count == 0
                                && s.slot_item->return_type->type == IL2CPP_TYPE_GENERICINST;
-  const bool ship_id_valid = s.ship_id != nullptr;
+  const bool ship_id_valid   = s.ship_id != nullptr;
 
   s.valid = manager_instance_valid && active_slots_valid && slot_spec_valid && slot_item_valid && ship_id_valid;
   if (!s.valid) {
@@ -135,52 +133,64 @@ bool HasAppliedTech(FleetPlayerData* ship)
 {
   ResolveShipTechQuery();
   auto& s = TechQuery();
-  if (!ship || !s.valid) return false;
+  if (!ship || !s.valid)
+    return false;
 
   auto* ship_model = ship->__get_Ship();
-  if (!ship_model) return false;
+  if (!ship_model)
+    return false;
 
   Il2CppException* exc      = nullptr;
   auto*            boxed_id = il2cpp_runtime_invoke(s.ship_id, ship_model, nullptr, &exc);
-  if (exc || !boxed_id) return false;
+  if (exc || !boxed_id)
+    return false;
   int64_t ship_id = *static_cast<int64_t*>(il2cpp_object_unbox(boxed_id));
 
   exc           = nullptr;
   auto* manager = il2cpp_runtime_invoke(s.manager_instance, nullptr, nullptr, &exc);
-  if (exc || !manager) return false;
+  if (exc || !manager)
+    return false;
 
   Il2CppObject* slots        = nullptr;
   void*         slot_args[2] = {&ship_id, &slots};
   exc                        = nullptr;
   auto* found                = il2cpp_runtime_invoke(s.active_slots, manager, slot_args, &exc);
-  if (exc || !found || !*static_cast<bool*>(il2cpp_object_unbox(found)) || !slots) return false;
+  if (exc || !found || !*static_cast<bool*>(il2cpp_object_unbox(found)) || !slots)
+    return false;
 
   auto* slots_class = il2cpp_object_get_class(slots);
-  if (!slots_class) return false;
+  if (!slots_class)
+    return false;
   auto* get_count = il2cpp_class_get_method_from_name(slots_class, "get_Count", 0);
   auto* get_item  = il2cpp_class_get_method_from_name(slots_class, "get_Item", 1);
-  if (!get_count || !get_item) return false;
+  if (!get_count || !get_item)
+    return false;
 
-  exc               = nullptr;
-  auto* count_obj   = il2cpp_runtime_invoke(get_count, slots, nullptr, &exc);
-  if (exc || !count_obj) return false;
+  exc             = nullptr;
+  auto* count_obj = il2cpp_runtime_invoke(get_count, slots, nullptr, &exc);
+  if (exc || !count_obj)
+    return false;
   const auto count = *static_cast<int32_t*>(il2cpp_object_unbox(count_obj));
 
   for (int32_t i = 0; i < count; ++i) {
     exc          = nullptr;
     void* idx[1] = {&i};
     auto* slot   = il2cpp_runtime_invoke(get_item, slots, idx, &exc);
-    if (exc || !slot) continue;
+    if (exc || !slot)
+      continue;
 
     exc            = nullptr;
     auto* spec_obj = il2cpp_runtime_invoke(s.slot_spec, slot, nullptr, &exc);
-    if (exc || !spec_obj) continue;
+    if (exc || !spec_obj)
+      continue;
     const auto spec_id = *static_cast<int64_t*>(il2cpp_object_unbox(spec_obj));
-    if (spec_id != kForbiddenTechSlotSpecId && spec_id != kChaosTechSlotSpecId) continue;
+    if (spec_id != kForbiddenTechSlotSpecId && spec_id != kChaosTechSlotSpecId)
+      continue;
 
     exc        = nullptr;
     auto* item = il2cpp_runtime_invoke(s.slot_item, slot, nullptr, &exc);
-    if (!exc && item) return true; // non-null Nullable<Int64>: a tech is equipped
+    if (!exc && item)
+      return true; // non-null Nullable<Int64>: a tech is equipped
   }
   return false;
 }
@@ -205,7 +215,8 @@ struct ShipEntry {
 ShipEntry BuildShipEntry(void* item)
 {
   auto* ship = reinterpret_cast<FleetPlayerData*>(item);
-  if (!ship) return ShipEntry{item, {}, 0, 0, -1};
+  if (!ship)
+    return ShipEntry{item, {}, 0, 0, -1};
 
   return ShipEntry{item, ShipNameMatch::DisplayWords(ship), ship->Level, ship->HullId, -1};
 }

@@ -470,9 +470,13 @@ bool StoreHookFits(const MethodInfo* method)
 #if _WIN32 && defined(_M_X64)
   DWORD64 base     = 0;
   auto*   function = RtlLookupFunctionEntry(reinterpret_cast<DWORD64>(entry), &base, nullptr);
-  return function && base + function->BeginAddress == reinterpret_cast<DWORD64>(entry)
-         && function->EndAddress > function->BeginAddress
-         && spud::has_detour_prologue(entry, function->EndAddress - function->BeginAddress);
+  if (!function || base + function->BeginAddress != reinterpret_cast<DWORD64>(entry)
+      || function->EndAddress <= function->BeginAddress)
+    return false;
+  const size_t extent = function->EndAddress - function->BeginAddress;
+  const auto   plan   = spud::inspect_detour(entry, spud::Arch::kHost, extent);
+  return plan.ok() && plan.resolved_target == reinterpret_cast<uintptr_t>(entry) && plan.far_jump_size != 0
+         && plan.far_required_patch_bytes >= plan.far_jump_size && plan.far_required_patch_bytes <= extent;
 #elif __APPLE__
   return native_hooks::MacHookFits(entry);
 #else

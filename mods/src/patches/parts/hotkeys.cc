@@ -274,7 +274,7 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, void* _this)
     auto* bar     = ObjectFinder<FleetBarViewController>::Get();
     auto* context = bar ? bar->CanvasContext() : nullptr;
     auto* fleets  = context ? context->FleetData() : nullptr;
-    hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->max_length : 0, [fleets](std::size_t position) {
+    hint_action = ShipShortcutHintAction(hint_action, fleets ? fleets->max_length : 0, [fleets](std::size_t position) {
       auto* fleet = reinterpret_cast<FleetPlayerData**>(fleets->vector)[position];
       return fleet ? fleet->Index : -1;
     });

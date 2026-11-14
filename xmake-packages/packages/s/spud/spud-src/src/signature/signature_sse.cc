@@ -1,76 +1,47 @@
-#include <spud/arch.h>
-#include <spud/signature.h>
+#include "scan.h"
 
-#include <bit>
-#include <span>
-#include <string_view>
-#include <vector>
+#include <emmintrin.h>
 
-#include <immintrin.h>
-#include <pmmintrin.h>
-#if SPUD_OS_WIN
-#include <intrin.h>
-#endif
+namespace spud::detail {
 
-namespace spud {
-namespace detail {
+namespace {
 
-void find_matches_sse(std::string_view mask, std::string_view data,
-                      size_t buffer_end, std::span<uint8_t> search_buffer,
-                      std::vector<signature_result> &results) {
-  __m128i first = _mm_set1_epi8(0);
-  __m128i second = _mm_set1_epi8(0);
+// SSE2 is part of x86-64, so this kernel needs no target attribute.
+struct sse2 {
+  using vec = __m128i;
+  static constexpr size_t kWidth = 16;
 
-  const auto signature_size = std::min(mask.size(), size_t(16));
-
-  size_t spread = 0;
-  size_t first_i = 0;
-
-  for (size_t i = 0; i < signature_size; ++i) {
-    if (mask[i] != '?') {
-      first = _mm_set1_epi8(data[i]);
-      first_i = i;
-      break;
-    }
+  static vec splat(uint8_t b) {
+    return _mm_set1_epi8(static_cast<char>(b));
   }
-
-  for (size_t i = signature_size - 1; i >= 0; --i) {
-    if (mask[i] != '?') {
-      second = _mm_set1_epi8(data[i]);
-      spread = i - first_i;
-      break;
-    }
+  static vec load(const uint8_t *p) {
+    return _mm_loadu_si128(reinterpret_cast<const __m128i *>(p));
   }
-
-  const auto end = buffer_end - spread - ((buffer_end - spread) % 16);
-
-  for (size_t offset = 0; offset < end; offset += 16) {
-    const auto first_block = _mm_lddqu_si128(
-        reinterpret_cast<const __m128i *>(search_buffer.data() + offset));
-    const auto second_block = _mm_lddqu_si128(reinterpret_cast<const __m128i *>(
-        search_buffer.data() + offset + spread));
-
-    const __m128i eq_first = _mm_cmpeq_epi8(first, first_block);
-    const __m128i eq_second = _mm_cmpeq_epi8(second, second_block);
-
-    uint32_t mm_mask = _mm_movemask_epi8(_mm_and_si128(eq_first, eq_second));
-
-    while (mm_mask != 0) {
-      const auto bit_pos = std::countr_zero(mm_mask);
-      if (signature_does_match(offset + bit_pos, mask, data, search_buffer)) {
-        results.emplace_back(
-            signature_result{search_buffer, uintptr_t(offset + bit_pos)});
-      }
-      mm_mask = mm_mask & (mm_mask - 1);
-    }
+  static vec match(vec a, vec x, vec b, vec y) {
+    return _mm_and_si128(_mm_cmpeq_epi8(a, x), _mm_cmpeq_epi8(b, y));
   }
-
-  // Scan the remainder
-  for (size_t offset = end; offset < buffer_end; ++offset) {
-    if (signature_does_match(offset, mask, data, search_buffer)) {
-      results.emplace_back(signature_result{search_buffer, offset});
-    }
+  static vec either(vec v, vec w) {
+    return _mm_or_si128(v, w);
   }
+  static bool any(vec v) {
+    return _mm_movemask_epi8(v) != 0;
+  }
+  static uint64_t step_bits(const vec *m) {
+    uint64_t bits = 0;
+    for (int i = 0; i < 4; ++i) {
+      bits |=
+          static_cast<uint64_t>(static_cast<uint32_t>(_mm_movemask_epi8(m[i])))
+          << (16 * i);
+    }
+    return bits;
+  }
+};
+
+} // namespace
+
+size_t scan_anchors_sse2(const pattern_scan &scan, match_fn on_match,
+                         void *ctx) {
+  return scan_anchors<sse2>(scan, on_match, ctx);
 }
-} // namespace detail
-} // namespace spud
+
+} // namespace spud::detail

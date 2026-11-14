@@ -53,8 +53,8 @@ public:
   __declspec(property(get = __get_Address)) void* Address;
   __declspec(property(get = __get_Level)) int64_t Level;
   __declspec(property(get = __get_HasShip)) bool HasShip;
-  __declspec(property(get = __get_HullId)) int64_t HullId;
-  __declspec(property(get = __get_Ship)) ::Ship* Ship;
+  __declspec(property(get = __get_HullId)) int64_t           HullId;
+  __declspec(property(get = __get_Ship)) ::Ship*             Ship;
 
 private:
   static IL2CppClassHelper& get_class_helper()
