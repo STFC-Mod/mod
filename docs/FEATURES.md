@@ -1,179 +1,108 @@
-# STFC Community Mod Features
+# Features
 
-The STFC Community Mod adds configurable quality-of-life improvements to the desktop version of Star Trek Fleet Command. This catalog describes the user-facing features represented by the current source code and English example configuration.
+The mod adds controls and display options to the desktop game.
+Change them in `community_patch_settings.toml`; the
+[English example](configuration/example_community_patch_settings_en.toml) lists the settings and defaults.
+See [installation](INSTALL.md#change-settings) for file locations and [keyboard shortcuts](KEYMAPPING.md) for controls.
 
-Most options are configured in `community_patch_settings.toml`. The mod creates a default settings file when one is missing and also writes a parsed settings file so you can see the values that were applied. Nearly every shortcut can be remapped; see [`KEYMAPPING.md`](docs/KEYMAPPING.md) for valid key names.
+Features depend on the game client. A client update can break a hook until the mod is updated.
 
-## Display and window controls
+## Display and camera
 
-- Set the overall interface scale and the amount changed by each scale adjustment.
-- Scale object viewers independently from the main interface.
-- Scale ship models in System View independently from the interface.
-- Adjust the interface, viewer, and ship scales while playing with configurable shortcuts.
-- Enable freely resizable game windows on Windows.
-- Enable borderless fullscreen mode and switch between fullscreen and windowed mode without restarting the game.
-- Control whether the game replaces the system cursor.
-- Adjust the frame-rate scaling factor used by visual effects.
-- Set the duration of screen transitions.
-
-## System View camera and navigation
-
-- Increase the maximum System View zoom distance.
-- Set the zoom level used when entering a system.
-- Configure five System View zoom presets.
-- Zoom in, zoom out, jump to minimum or maximum zoom, and reset zoom by shortcut.
-- Save the current zoom or a preset as the new default.
-- Configure keyboard zoom speed.
-- Configure System View pan momentum and momentum falloff.
-- Use keyboard movement controls for System View, or disable those movement keys.
-- Configure player and non-player fleet labels to use native, expanded, compact, or zoom-threshold-based detail.
-- Configure separate fleet-label zoom thresholds for player and non-player fleets.
-
-## Hotkeys and screen navigation
-
-- Enable or disable all hotkeys.
-- Choose between the community mod hotkeys and Scopely's native hotkeys.
-- Enable an extended set of mod shortcuts.
-- Remap shortcuts in the settings file, including multiple keys or mouse buttons for one action.
-- Open or focus commonly used screens directly, including:
-  - Alliance, Alliance Armada, and Alliance Help.
-  - Artifact Gallery, Away Teams, Battle Reports, Bookmarks, and Chat.
-  - Command Center, Daily Missions, Events, ExoComp, Factions, and Fleet Commander.
-  - Galaxy View, System View, Station Exterior, and Station Interior.
-  - Gifts, Haven, Inventory, Missions, Officers, Q Trials, Refinery, Research, and Scrap Yard.
-  - Settings, shield selection, ship construction, ship management, and ship swapping.
-- Open Alliance, Galaxy, and Private chat tabs directly.
-- Focus the current screen's search field with a shortcut.
-- Use configurable primary-action, alternate-action, queue, recall, repair, and cancel shortcuts.
-- Select ships 1 through 8 and configure the double-tap timing used to locate a selected ship.
-- Recall a selected ship or perform context-sensitive actions against mines, players, hostiles, and other targets.
-- Clear focused text or close chat with Escape.
-
-## Combat and ship interaction
-
-- Enable the Kir'Shara attack queue by default when the artifact is owned.
-- Add targets to the Kir'Shara queue, clear the queue, or toggle queuing by shortcut.
-- Use a configurable primary action for context-sensitive attacks, warps, and cancellations.
-- Choose the automatic action for the instant-warp confirmation: show the dialog, use regular warp, or use instant jump.
-- Configure ship-name lists that always use regular warp, always use instant jump, or always show the confirmation dialog.
-- Cycle the current instant-warp behavior by shortcut.
-- Keep the warp action label consistent with the selected automatic action.
-- Automatically confirm Forbidden Tech level and tier upgrades when enabled.
-
-## Cargo and target previews
-
-- Show cargo or rewards automatically in the default target preview.
-- Configure cargo visibility independently for player ships, stations, hostiles, and armadas.
-- Toggle each cargo-preview mode while playing.
-- Switch between cargo and the normal target view with a shortcut.
-- Close pre-scan and target viewers with Escape.
-- Allow or block locate and recall actions while previews are open, with runtime toggles for both behaviors.
-- Show cargo totals immediately instead of playing the native count-up animation on supported Windows clients.
-- Configure the number of decimal places used for abbreviated cargo values such as `1.25M`.
-
-## Fleet and officer management
-
-- Select the previous or next ship in the fleet-management dock with the Left and Right arrow keys.
-- Double-click a ship in the fleet-management dock to assign it.
-- Pin configured ship names to the front of the fleet-management dock while preserving the selected sort order.
-- Restore the **Below Deck Ability** sorting option to officer roster and assignment screens.
-- Show a ship's out-of-dock power while it is docked.
-
-## Rewards donations and Daily Goals
-
-- Skip chest-reveal animations and open rewards immediately.
-- Extend the Alliance donation slider to a configurable maximum.
-- Extend supported tagged chest-purchase sliders to a configurable maximum on Windows.
-- Open the bulk gift-claim flyout automatically when entering Gifts.
-- Exit the relevant section after gift collection through the mod's streamlined gift flow.
-- Apply the Daily Goals **Claim All** behavior only to selected Federation, Klingon, or Romulan goals.
-- Force the Daily Goals **Claim All** toggle on the first time the screen is opened in a session.
-
-## Chat interface and HUD
-
-- Hide Galaxy Chat.
-- Hide Veil Chat.
-- Open Chat full-screen or docked on either side by shortcut.
-- Control the visibility of the Daily Goals, Field Training, Missions, Outposts, and Q Trials HUD buttons.
-- Set each supported HUD item to native automatic behavior, always shown, or always hidden.
-- Prevent Escape from opening the game-exit prompt.
-- Optionally require a configurable double press of Escape before showing the exit prompt.
-
-## Banners audio and popups
-
-- Suppress selected toast-banner types.
-- Send desktop notifications for selected banner types.
-- Disable standard toast banners through the experimental global toggle.
-- Suppress selected audio events by event name.
-- Trace audio event names to the log to help build a suppression list.
-- Automatically confirm Discovery prompts.
-
-## Loading and transition screens
-
-- Replace the login loading background with the mod's embedded artwork.
-- Load a custom loading-screen image from a configured path.
-- Scale the loading-screen logo.
-- Show rotating community-mod tips on the loading screen.
-- Reuse the loading artwork during transitions.
-- Use a black transition background instead of artwork.
-
-## Data synchronization
-
-- Sync selected game data to one or more configured community services.
-- Configure independent sync targets, including custom endpoints and access tokens.
-- Sync any combination of:
-  - Battle logs.
-  - Buffs.
-  - Buildings.
-  - Inventory and resources.
-  - Jobs and missions.
-  - Owned officers, ships, and Forbidden Tech.
-  - Research.
-  - Slots.
-  - Traits.
-- Use the built-in target definitions for STFC Data, Spock's Club, and Next Spock's Club.
-- Route sync traffic through a proxy.
-- Enable or disable SSL certificate verification.
-- Configure resolver caching, diagnostic logging, and detailed debug logging.
-
-## Reliability and configuration support
-
-- Apply client-specific crash fixes and compatibility patches.
-- Generate a default TOML settings file if no configuration exists.
-- Generate a parsed TOML file showing the settings actually applied at runtime.
-- Enable or disable patch groups independently in development builds.
-- Log mod initialization, patch installation, and optional sync or audio diagnostics for troubleshooting.
-- Support both Windows and macOS through platform-specific injection and loading components.
-
-## Platform and availability notes
-
-- Windows and macOS do not necessarily expose every feature in exactly the same way.
-- Free window resizing and extended tagged chest-purchase sliders are Windows-specific.
-- The instant cargo counter is guarded for a supported Windows client build; unsupported builds retain the native animation.
-- Some settings are experimental or diagnostic and may be disabled, client-version-specific, or intended for troubleshooting.
-- Patch availability can change when the game client changes because the mod hooks the native IL2CPP runtime.
-
-## Default shortcut overview
-
-The default shortcut map includes the following high-use controls. All of these can be changed in the settings file.
-
-| Action | Default shortcut |
+| Area | Controls |
 | --- | --- |
-| Zoom presets | `F1` to `F5` |
-| Zoom in or out | `Q` or `E` |
-| Minimum maximum or default zoom | `BACKSPACE` `MINUS` or `=` |
-| Main interface scale | `PGUP` or `PGDOWN` |
-| Viewer scale | `SHIFT-PGUP` or `SHIFT-PGDOWN` |
-| Ship model scale | `CTRL-PGUP` or `CTRL-PGDOWN` |
-| Open full-screen chat | `C` |
-| Open side chat | `ALT-C` or `` ` `` |
-| Select or focus ships | `1` to `8` |
-| Primary action or queue action | `SPACE` or `MOUSE1` |
-| Recall or alternate action | `R` |
-| Toggle cargo view | `V` |
-| Toggle Kir'Shara queue | `CTRL-Q` |
-| Clear Kir'Shara queue | `CTRL-C` |
-| Focus search | `CTRL-F` |
-| Toggle borderless fullscreen | `F11` |
+| UI scale | Adjust the main interface, object viewers, and system-view ship models separately. |
+| System zoom | Set the maximum range, entry zoom, keyboard speed, and five presets. Save a preset or the current zoom as the default. |
+| Camera movement | Pan with configurable keys and set momentum falloff. Keyboard panning can be disabled. The camera can also stop following a selected target, so you can pan away from it. |
+| Haven | Extend camera range while keeping road surfaces above the ground. `graphics.haven_zoom = 0.0` uses the native range. |
+| Fleet labels | Choose native, expanded, compact, or zoom-threshold detail separately for player and non-player fleets. |
+| Window and cursor | Resize the game window freely on Windows and control whether the game replaces the system cursor. |
+| Anomaly timer | Show the remaining time in a Galactic Anomaly system. Disabled by default. |
 
-For the complete shortcut list and the names accepted by the configuration parser, see [`README.md`](README.md) and [`KEYMAPPING.md`](docs/KEYMAPPING.md).
+`fr_scale` scales system-view backdrop renderables.
+The code reads `transition_time`, `system_pan_momentum`, and `borderless_fullscreen`, but does not currently apply them.
+F11 does not toggle borderless mode in this build.
+
+## Keyboard controls
+
+- Choose mod hotkeys or the game's native hotkeys. Remap actions, including alternatives for the same action.
+- Open screens, select chat tabs, and focus a search field by shortcut.
+- Select ships 1 through 8. Configure the double-tap interval that locates a selected ship.
+- Use context-sensitive attack, warp, recall, repair, cancel, and cargo actions. The primary action also joins a wave
+  defense from its course or viewer card.
+- Clear text focus with Escape and control whether Escape opens the exit prompt, including an optional double press.
+
+Extended shortcuts add controls such as cargo toggles and zoom-preset saving.
+Experimental shortcuts require both extended and experimental controls to be enabled.
+The [shortcut reference](KEYMAPPING.md) lists the defaults.
+
+## Combat, cargo, and fleets
+
+| Area | Behavior |
+| --- | --- |
+| Kir'Shara queue | Start with queuing enabled, add targets, clear the queue, or toggle it. Requires ownership of the artifact. |
+| Instant warp | Show the confirmation, use regular warp, or jump automatically. Ship-name filters can override the choice. |
+| Target previews | Show cargo by target type, toggle cargo view, and close viewers with Escape. Locate and recall can remain enabled while previews are open. |
+| Cargo numbers | Choose decimal places for abbreviated totals. Supported Windows clients can skip the count-up animation. |
+| Ship assignment | Select adjacent ships with arrow keys, double-click to assign, and pin named ships while preserving sort order. |
+| Officer sorting | Restore **Below Deck Ability** in roster and assignment screens. |
+| Ship power | Show out-of-dock power while a ship is docked. |
+| Forbidden Tech | Automatically confirm level and tier upgrades when enabled. The selected item shows the ship it is equipped on, including ships without a dock. |
+
+## Rewards and interface
+
+- Skip chest reveals, open bulk gift claims, and leave the section after the supported gift-collection flow.
+- Extend Alliance donations and, on Windows, supported tagged chest-purchase sliders.
+- Limit Daily Goals **Claim All** to selected Federation, Klingon, or Romulan goals. Its toggle can start enabled each session.
+- Hide Galaxy or Veil Chat. Set supported HUD buttons to automatic, always shown, or always hidden.
+- Open alliance side chat once per login, once the station and chat have finished loading, and set side chat's
+  starting width. Both are off by default.
+- Hide **Exchange All** in the artifact-shards popup while retaining single exchanges.
+- Restore the native **Research** actions on Alliance Games Store items, and refresh the store's currencies and
+  visible offers after it reloads them.
+
+The supported HUD buttons are Field Training, Missions, Outposts, and Q Trials.
+Other options show the newest Haven help-history entries first, limit ads to the first popup each session, and confirm Discovery prompts.
+
+## Banners and audio
+
+- Hide selected banner types or use the experimental global banner switch.
+- Send desktop notifications for selected banners on Windows.
+- Play optional victory, defeat, and Armada sounds on Windows and macOS.
+- Suppress named audio events, or use `All` to block named events that start or resume audio.
+- Log audio event names to help build a suppression list.
+
+If a notification's text binding is unavailable, unresolved placeholders remain visible and the mod logs a warning.
+The log retains five previous sessions as `.log.1` through `.log.5`.
+
+## Loading screens
+
+Replace the login background with the embedded artwork or a custom image.
+Adjust logo scale and show rotating mod tips.
+Transitions can reuse the artwork or use a black background with logos.
+
+## Data sync
+
+Sync selected data to STFC Data, Spock's Club, Next Spock's Club, or custom endpoints.
+Each target has its own options and access token.
+
+| Category | Data |
+| --- | --- |
+| Progress | Research, buffs, traits, jobs, and missions |
+| Assets | Buildings, inventory, resources, officers, ships, Forbidden Tech, and slots |
+| Haven | Owned building pieces and map buildings, with status and position. Maps identified as another player's are ignored. |
+| Battles | Up to 300 recent battle journals per session |
+| Fleets | Live fleet state: each state change with cargo, mining and timers, and the server's view of deployed fleets. Every change is sent, not just the latest; up to 300 per session. Off unless a target sets `fleets`. |
+| Store | Faction store offers: favor level prices, requirements and remaining purchases. Off unless a target sets `store_offers`. |
+| Profile | Your own level, XP, Power and Haven unlock. Other players' records are never sent. Off unless a target sets `profile`. |
+
+Failed uploads retry with the latest observed values.
+Target changes apply on reload and trigger a fresh snapshot.
+Recent battle journals can replay after a restart or login.
+Proxy, certificate verification, name-cache, and diagnostic options are in the settings example.
+
+## Compatibility switches
+
+`[patches]` keys disable hook groups in every build. Changes require a restart.
+Use them to isolate a broken hook or a conflict with another mod.
+Normal feature settings remain separate and can change during play.

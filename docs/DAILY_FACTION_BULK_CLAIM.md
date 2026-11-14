@@ -8,7 +8,7 @@
 | `"federation,romulan"` | Federation and Romulan |
 | `"none"` | None of the three |
 
-Other dailies remain eligible. Use `none` by itself. Restart after editing TOML.
+Other dailies remain eligible. Use `none` by itself. Settings reload when the TOML file changes.
 
 On upgrade, existing blank configurations keep their all-factions behavior.
 The loader now resolves blank to the explicit default before populating the
