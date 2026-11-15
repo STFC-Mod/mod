@@ -427,6 +427,11 @@ namespace Key
   // frame and reads before it see the previous frame. Cheap after the first call in a frame.
   void Poll();
 
+  // App-local navigation gestures have no held state. Queue a one-frame Mouse3/Mouse4 pulse for the next Poll;
+  // repeated reads in that frame see the same pulse. Other buttons are rejected. Game thread only.
+  void QueueNavigationMouse(int32_t button);
+  void ClearNavigationMouse();
+
   // Held during this frame.
   bool Pressed(KeyCode key);
   // Went down this frame.

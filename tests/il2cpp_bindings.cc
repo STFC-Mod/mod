@@ -64,6 +64,33 @@ void KeyboardSnapshot()
   Key::Poll();
   Require(!Key::Pressed(KeyCode::A) && !Key::Down(KeyCode::A), "return to idle clears held keys");
   Require(held_reads == 3 && down_reads == 3, "idle frame stays query-free");
+
+  // Navigation gestures have no Unity anyKey/anyKeyDown signal. They must survive an event arriving after the
+  // current frame was polled, appear for one complete frame, and never turn the wheel click into a thumb button.
+  Key::QueueNavigationMouse(3);
+  Require(!Key::Down(KeyCode::Mouse3), "queued gesture waits for the next frame");
+  ++input_frame;
+  Key::Poll();
+  Require(Key::Down(KeyCode::Mouse3) && Key::Pressed(KeyCode::Mouse3), "Back pulse bypasses the Unity idle gate");
+  Key::Poll();
+  Require(Key::Down(KeyCode::Mouse3), "polling twice preserves the frame pulse");
+  Require(!Key::Down(KeyCode::Mouse4) && !Key::Down(KeyCode::Mouse2), "Back does not affect Forward or wheel click");
+  ++input_frame;
+  Key::Poll();
+  Require(!Key::Down(KeyCode::Mouse3) && !Key::Pressed(KeyCode::Mouse3), "gesture releases on the next frame");
+  Key::QueueNavigationMouse(4);
+  ++input_frame;
+  Key::Poll();
+  Require(Key::Down(KeyCode::Mouse4) && !Key::Down(KeyCode::Mouse3), "Forward is Mouse4");
+  Key::ClearNavigationMouse();
+  Require(!Key::Down(KeyCode::Mouse4), "disabling or reloading clears an already-polled pulse");
+  Key::QueueNavigationMouse(3);
+  Key::ClearNavigationMouse();
+  Key::QueueNavigationMouse(2);
+  ++input_frame;
+  Key::Poll();
+  Require(!Key::Down(KeyCode::Mouse3) && !Key::Down(KeyCode::Mouse2),
+          "clear drops queued input and rejects wheel click");
 }
 
 struct FakeClass {

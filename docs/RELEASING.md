@@ -1,5 +1,9 @@
 # Create a release
 
+<p align="center">
+  <img src="https://repository-images.githubusercontent.com/693298224/6a87716f-3dbb-48a5-80e0-709e0a1ad133" alt="STFC Community Mod">
+</p>
+
 This checkout has a `reference-transaction` hook installed from `scripts/release-tag-hook.sh`. It rejects creation
 or movement of `v*` tags unless the checked-out branch matches the version policy and contains the target commit. Deleting a
 mistaken tag is still allowed. This also covers GUI tools that use Git and honor its hooks.

@@ -70,28 +70,25 @@ Edit **`community_patch_settings.toml`**. The other files are outputs.
 | `community_patch.log` | Startup, settings errors, and diagnostics. |
 
 By default, these files are beside `prime.exe` on Windows and Wine.
-On macOS, they are in:
 
-```text
+#### MacOS
+```zsh
 ~/Library/Preferences/com.stfcmod.startrekpatch
 ```
 
+#### Windows
+```cmd
+C:\Games\Star Trek Fleet Command\Star Trek Fleet Command\default\game
+```
+
 For commented settings, copy an example to that folder and name it `community_patch_settings.toml`.
-Back up an existing settings file before replacing it.
+Back up an existing settings file before replacing it.  The English example tracks the current code, and translated versions may lag behind but in most cases should be current.
 
-| Language | Example |
-| --- | --- |
-| English | [Current settings reference](configuration/example_community_patch_settings_en.toml) |
-| German | [German example](configuration/example_community_patch_settings_de.toml) |
-| French | [French example](configuration/example_community_patch_settings_fr.toml) |
-| Dutch | [Dutch example](configuration/example_community_patch_settings_nl.toml) |
+See [Example settings](EXAMPLE_SETTINGS.md).
 
-The English example tracks the current code. Translations can lag behind.
+Settings reload after you save the file. To reload manually, press `CTRL-SHIFT-F6`. Changes under `[patches]` require a full game restart.
 
-Settings reload after you save the file. To reload manually, press `CTRL-SHIFT-F6`.
-Changes under `[patches]` require a game restart.
-Shortcuts that adjust settings during play do not save those changes to your TOML file.
-The one exception is Shift+click pinning in the ship dock, which rewrites only the `pinned_ships` line under `[ui]`.
+It should be noted that currently no settings modified in game, save those changes to your TOML file. The one exception is Shift+Click pinning on the ship dock, which rewrites only the `pinned_ships` line under `[ui]`.
 
 ## Fix installation problems
 
@@ -119,9 +116,6 @@ In Finder, press `Command-Shift-G` and enter:
 ~/Library/Preferences/com.stfcmod.startrekpatch
 ```
 
-This works even when Finder hides `Library`.
-If the launcher shows **Game not installed** and game version `00`, it cannot read the game's install path or version.
-Reinstall the game with the Xsolla launcher, then open the Community Mod launcher again.
-You do not need to reinstall the mod launcher.
+This works even when Finder hides `Library`. If the launcher shows **Game not installed** and game version `00`, it cannot read the game's install path or version. Reinstall the game with the official Scopely launcher, then open the Community Mod launcher again. You do not need to reinstall the mod launcher.
 
 For further help, use the [Discord server](https://discord.gg/PrpHgs7Vjs).

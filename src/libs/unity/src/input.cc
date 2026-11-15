@@ -13,6 +13,7 @@ namespace unity
 {
 namespace
 {
+  std::array<bool, 2> pending_navigation_mouse{};
   // On an idle frame anyKey is false and no key is asked about at all; otherwise each key is one internal call.
   // The optional members cache a read for the rest of the frame.
   struct Frame {
@@ -21,11 +22,15 @@ namespace
     bool                any_down = false;
     std::optional<bool> focused;
     std::optional<bool> modified;
+    std::array<bool, 2> navigation_mouse{};
     // Indexed [down][key].
     std::array<std::array<std::optional<bool>, std::to_underlying(KeyCode::Max)>, 2> keys{};
 
     bool Read(KeyCode key, bool down)
     {
+      const auto button = std::to_underlying(key) - std::to_underlying(KeyCode::Mouse3);
+      if (button >= 0 && button < 2 && navigation_mouse[button])
+        return true;
       if (!(down ? any_down : any_held))
         return false;
       auto& value = keys[down][std::to_underlying(key)];
@@ -51,7 +56,20 @@ namespace Key
     const int32_t number = Time::frameCount();
     if (number < 0 || number == frame.number)
       return;
-    frame = {.number = number, .any_held = Input::anyKey(), .any_down = Input::anyKeyDown()};
+    frame                  = {.number = number, .any_held = Input::anyKey(), .any_down = Input::anyKeyDown()};
+    frame.navigation_mouse = std::exchange(pending_navigation_mouse, {});
+  }
+
+  void QueueNavigationMouse(int32_t button)
+  {
+    if (button == 3 || button == 4)
+      pending_navigation_mouse[button - 3] = true;
+  }
+
+  void ClearNavigationMouse()
+  {
+    pending_navigation_mouse = {};
+    frame.navigation_mouse   = {};
   }
 
   bool Pressed(KeyCode key)

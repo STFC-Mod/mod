@@ -118,6 +118,10 @@ queue_enabled = true
 # If you prefer to use Scopely's hotkeys set this to true
 use_scopely_hotkeys = false
 
+# macOS: translate app-local Back/Forward swipe gestures (including mouse-driver gestures) to MOUSE3/MOUSE4.
+# Also applies to horizontal trackpad swipes. Wheel click remains MOUSE2. Requires mod hotkeys to be enabled.
+macos_navigation_mouse = false
+
 # Subgroup: Options
 # -----------------
 

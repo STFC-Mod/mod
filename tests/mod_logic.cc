@@ -1,6 +1,7 @@
 // Settings parsing and shortcut matching, run against production code with Unity input replaced by a fake.
 #include "config.h"
 #include "features/chat_startup.h"
+#include "features/mouse_navigation.h"
 #include "features/notification_audio.h"
 #include "features/ship_shortcut_hint.h"
 #include "features/toast_text.h"
@@ -551,7 +552,24 @@ void ReloadGate()
   Check(!gate.Tick(true, 43) && !gate.Tick(true, 45.9) && gate.Tick(true, 46),
         "nested teardown notifications restart the settling period");
 }
-
+void MouseNavigationGestures()
+{
+  {
+    using namespace MouseNavigation;
+    Check(Button(1, 0) == 3 && Button(-1, 0) == 4, "macOS Back and Forward map to Mouse3 and Mouse4");
+    Check(Button(0, 1) == -1 && Button(0.1, 1) == -1 && Button(0, 0) == -1,
+          "vertical gestures are not mouse navigation");
+    Swipe swipe;
+    Check(swipe.Observe(3, Phase::kDiscrete) == 3, "discrete Back gesture");
+    Check(swipe.Observe(4, Phase::kBegan) == -1 && swipe.Observe(4, Phase::kChanged) == -1,
+          "phased gesture waits for completion");
+    Check(swipe.Observe(-1, Phase::kEnded) == 4 && swipe.Observe(-1, Phase::kEnded) == -1,
+          "completed gesture emits once even when its final delta is zero");
+    swipe.Observe(3, Phase::kBegan);
+    Check(swipe.Observe(-1, Phase::kCancelled) == -1 && swipe.Observe(-1, Phase::kEnded) == -1,
+          "cancelled gesture does not become a command");
+  }
+}
 int main()
 {
   ShipHints();
@@ -572,6 +590,7 @@ int main()
   Matching();
   ChatStartupGate();
   ReloadGate();
+  MouseNavigationGestures();
   if (failures)
     return EXIT_FAILURE;
   std::cout << "mod logic tests passed\n";

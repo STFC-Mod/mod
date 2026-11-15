@@ -105,6 +105,10 @@ void LogBanner()
 // in features.h. No feature depends on another being installed first; the object tracker leads only so that every
 // tracked class is hooked before anything else is.
 constexpr const Feature* kFeatures[] = {
+#if __APPLE__
+    // mouse_navigation_mac.mm
+    &kMacNavigationMouse,
+#endif
     // tracked_objects.cc
     &kObjectTracker,
     // action_queue.cc

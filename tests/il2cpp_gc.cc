@@ -80,7 +80,7 @@ int main()
   }
   Require(frees == 3 && targets.empty());
   {
-    auto root = il2cpp::GcHandle::Strong(&object);
+    auto root      = il2cpp::GcHandle::Strong(&object);
     auto weak_root = il2cpp::GcHandle::Weak(&other);
     il2cpp::GcHandle::StopRuntime();
     targets.clear(); // The runtime destroys its own handle table before native static destructors run.

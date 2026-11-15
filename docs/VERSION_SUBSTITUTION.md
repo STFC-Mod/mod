@@ -1,5 +1,9 @@
 # Check the macOS launcher version
 
+<p align="center">
+  <img src="https://repository-images.githubusercontent.com/693298224/6a87716f-3dbb-48a5-80e0-709e0a1ad133" alt="STFC Community Mod">
+</p>
+
 After `zig build launcher`, run:
 
 ```sh

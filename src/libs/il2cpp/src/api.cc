@@ -1,7 +1,7 @@
 // Binds the IL2CPP exports from the loaded GameAssembly image on macOS. Windows links them through GameAssembly.lib.
 
-#include <il2cpp/il2cpp.h>
 #include <il2cpp/hook.h>
+#include <il2cpp/il2cpp.h>
 
 #include <stdexcept>
 

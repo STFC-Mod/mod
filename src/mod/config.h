@@ -194,6 +194,7 @@ public:
     bool hotkeys_enabled                 = true;
     bool hotkeys_extended                = true;
     bool use_scopely_hotkeys             = false;
+    bool macos_navigation_mouse          = false;
     // Milliseconds within which pressing a ship's number again flies the camera to it.
     int  select_timer        = 500;
     bool enable_experimental = false;

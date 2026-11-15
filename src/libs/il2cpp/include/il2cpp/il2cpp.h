@@ -722,7 +722,7 @@ private:
       : handle_(handle)
   {
   }
-  Il2CppGCHandle handle_ = nullptr;
+  Il2CppGCHandle                 handle_ = nullptr;
   inline static std::atomic_bool shutdown_{false};
 };
 
