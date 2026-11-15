@@ -195,7 +195,7 @@ system_pan_speed = 1.0
 # Independent mouse/touch and keyboard panning speed in Galaxy view, with the same range.
 galaxy_pan_speed = 1.0
 
-# Controls the system pan momentum speed. Defaults to 0.4. Read with enable_experimental, but not applied yet
+# Legacy compatibility setting; read without experimental mode, but does not affect panning. Defaults to 0.4.
 system_pan_momentum = 0.4
 
 # Momentum retained each update after releasing the mouse, touch or movement keys.

@@ -614,8 +614,7 @@ void Config::Read(const toml::table& file, toml::table& effective, bool log_valu
               [](float v) { return std::isfinite(v) && v >= 0.1f && v <= 10.0f; });
   r.ReadValid("graphics", "galaxy_pan_speed", g.galaxy_pan_speed,
               [](float v) { return std::isfinite(v) && v >= 0.1f && v <= 10.0f; });
-  if (control.enable_experimental)
-    r.Read("graphics", "system_pan_momentum", g.system_pan_momentum);
+  r.Read("graphics", "system_pan_momentum", g.system_pan_momentum);
   r.ReadValid("graphics", "system_pan_momentum_falloff", g.system_pan_momentum_falloff,
               [](float v) { return std::isfinite(v); });
   const auto bounded_falloff = std::clamp(g.system_pan_momentum_falloff, 0.0f, 0.99f);

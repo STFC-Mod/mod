@@ -446,6 +446,20 @@ void RenamedSettings()
 
 void PanControls()
 {
+  {
+    toml::table effective;
+    const auto  parsed = Config::Parse(toml::parse(R"(
+      [control]
+      enable_experimental = false
+      [graphics]
+      system_pan_momentum = 0.25
+    )"),
+                                       effective, false);
+    Check(!parsed->control.enable_experimental && parsed->graphics.system_pan_momentum == 0.25f,
+          "legacy pan momentum remains readable without experimental mode");
+    Check(effective["graphics"]["system_pan_momentum"].value<double>() == 0.25,
+          "runtime vars retain the legacy pan momentum value");
+  }
   for (const auto* text : {"", "[graphics]\nsystem_pan_speed=0.5", "[graphics]\ngalaxy_pan_speed=2.5",
                            "[graphics]\nsystem_pan_speed=0.5\ngalaxy_pan_speed=2.5"}) {
     toml::table effective;
