@@ -12,6 +12,12 @@ enum AnimationOnClaimType {
   ANIMATIONONCLAIMTYPE_FLYOUT = 1;
 }
 
+enum ClaimGrantState {
+  CLAIMGRANTSTATE_UNSPECIFIED = 0;
+  CLAIMGRANTSTATE_APPLIED = 1;
+  CLAIMGRANTSTATE_SCHEDULED = 2;
+}
+
 enum BundleBorderShapeType {
   BUNDLEBORDERSHAPETYPE_NONE = 0;
   BUNDLEBORDERSHAPETYPE_DEFAULT = 1;
@@ -70,6 +76,17 @@ message TranslationKey {
 }
 
 message Metadata {
+message Vector3 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message Transform {
+  Metadata.Vector3 translation = 1;
+  Metadata.Vector3 rotation = 2;
+}
+
   string color = 1;
   string assetId = 2;
   string assetFilename = 3;
@@ -81,6 +98,9 @@ message Metadata {
   bool skipOnClaimAll = 9;
   string deeplink = 10;
   string valueLabel = 11;
+  string popupModelAsset = 12;
+  bool popupModelUseCustomTransform = 13;
+  Transform popupModelCustomTransform = 14;
 }
 
 message OfferDetails {
@@ -149,12 +169,74 @@ message Order {
   string orderId = 1;
   google.protobuf.Timestamp created = 2;
   repeated OrderItem orderItems = 3;
+  ClaimGrant grant = 4;
+}
+
+message Orders {
+  repeated Order orders_ = 1;
 }
 
 message OrderItem {
   uint32 bundleId = 1;
   uint32 bundleVersion = 2;
   BundleContent content = 3;
+}
+
+message ClaimGrant {
+  ClaimGrantState state = 1;
+  bool requiresSync = 2;
+  ClaimGrantDelta delta = 3;
+}
+
+message ClaimGrantDelta {
+  map<int64, ClaimGrantResource> resources = 1;
+  map<int32, ClaimGrantInventory> playerInventory = 2;
+  repeated ClaimGrantNotification notifications = 3;
+}
+
+message ClaimGrantResource {
+  int64 currentAmount = 1;
+  int64 upperCapacity = 2;
+  int64 lowerCapacity = 3;
+}
+
+message ClaimGrantInventory {
+  repeated ClaimGrantInventoryItem items = 1;
+  repeated int32 allowedItemTypes = 2;
+  int32 numExtensions = 3;
+}
+
+message ClaimGrantInventoryItem {
+  int32 type = 1;
+  int64 count = 2;
+  google.protobuf.Timestamp expiryTime = 3;
+  ClaimGrantInventoryItemParams params = 4;
+}
+
+message ClaimGrantInventoryItemParams {
+  int64 refId = 1;
+  int64 id = 2;
+  int64 amount = 3;
+  int32 level = 4;
+  int32 rarity = 5;
+  repeated ClaimGrantInventoryItem items = 6;
+}
+
+message ClaimGrantNotification {
+  string uuid = 1;
+  google.protobuf.Timestamp createdTimestamp = 2;
+  google.protobuf.Timestamp expiryTimestamp = 3;
+  int32 producerType = 4;
+  ClaimGrantPlatformChestParams platformChestParams = 5;
+}
+
+message ClaimGrantPlatformChestParams {
+  repeated ClaimGrantChestContent chestsContents = 1;
+  int32 numChests = 2;
+}
+
+message ClaimGrantChestContent {
+  repeated ClaimGrantInventoryItem items = 1;
 }
 
 message Bundles {
@@ -171,7 +253,7 @@ message Cost {
 }
 
 message Resource {
-  uint32 amount = 1;
+  fixed32 amount = 1;
   uint32 amountOld = 2;
   string id = 3;
   string type = 4;

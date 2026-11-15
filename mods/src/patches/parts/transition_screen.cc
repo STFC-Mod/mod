@@ -309,9 +309,6 @@ static void TS_MonoSingleton_PrepareAllForReload_Hook(auto original)
 
 void InstallTransitionScreenHooks()
 {
-  const auto& cfg = Config::Get();
-  if (!cfg.loader_transition) return;
-
   auto tv_h = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.LoadingScreen", "TransitionViewController");
   if (!tv_h.isValidHelper()) {
     ErrorMsg::MissingHelper("Digit.Prime.LoadingScreen", "TransitionViewController");

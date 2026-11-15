@@ -13,8 +13,8 @@
 
 The STFC Community Mod is available on GitHub.
 
-You can download either the [latest official release](https://github.com/netniv/stfc-mod/releases/latest/) or any other
-release, including [alpha/beta](https://github.com/netniv/stfc-mod/releases/) builds.
+You can download either the [latest official release](https://github.com/STFC-Mod/mod/releases/latest/) or any other
+release, including [alpha/beta](https://github.com/STFC-Mod/mod/releases/) builds.
 
 In the event that a game update breaks the latest release, please visit the [STFC Community Mod](https://discord.gg/PrpHgs7Vjs)
 discord server, and check the #INFO channel for the latest hotfixes.
@@ -74,7 +74,7 @@ Choose the example for your preferred language and save a copy in the appropriat
 
 Installation of the Community Mod is a manual process for Windows (or Wine).
 
-1. Download the `stfc-community-mod.zip` file from your chosen [GitHub release](https://github.com/netniv/stfc-mod/releases/) and extract the `version.dll` file.
+1. Download the `stfc-community-mod.zip` file from your chosen [GitHub release](https://github.com/STFC-Mod/mod/releases/) and extract the `version.dll` file.
 
 2. Open the game folder in Explorer. The default folder for the game also holds the settings file.
 
@@ -99,7 +99,7 @@ Installation of the Community Mod is a manual process for Windows (or Wine).
 
 You should only need to access this folder if you need to view the `community_patch.log` file while troubleshooting a problem.
 
-1. Download the `stfc-community-mod-installer.dmg` file from your chosen [GitHub release](https://github.com/netniv/stfc-mod/releases/).
+1. Download the `stfc-community-mod-installer.dmg` file from your chosen [GitHub release](https://github.com/STFC-Mod/mod/releases/).
 
 2. Open the DMG, then drag and drop the `STFC Community Mod` to your `Applications` folder. The
    STFC Community Mod launcher must be used to start the game to have the mod loaded. If

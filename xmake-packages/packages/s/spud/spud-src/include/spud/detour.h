@@ -17,6 +17,12 @@
 #include "utils.h"
 
 namespace spud {
+
+// Read-only, bounded check for enough complete host instructions before a
+// return/tail jump. The caller must supply a readable, independently verified
+// native extent. This does not install a detour or promise relocation success.
+bool has_detour_prologue(const void *address, size_t extent);
+
 namespace detail {
 
 struct detour {

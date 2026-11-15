@@ -12,6 +12,7 @@
 #include <patches/mapkey.h>
 
 #include <spud/detour.h>
+#include <cmath>
 
 TKTouch *TKTouch_populateWithPosition_Hook(auto original, TKTouch *_this, uintptr_t pos, TouchPhase phase)
 {
@@ -22,41 +23,83 @@ TKTouch *TKTouch_populateWithPosition_Hook(auto original, TKTouch *_this, uintpt
   return r;
 }
 
-bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan *_this)
+// Retain the native tutorial and modal/text-input gates while replacing the
+// keyboard source through the existing LateUpdate hook, without new detours.
+bool KeyboardPanAllowed()
+{
+  static auto hub          = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Core", "Hub");
+  static auto tutorial     = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager");
+  static auto shortcuts    = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.GameInput", "ShortcutsManager");
+  static auto getTutorial  = hub.GetMethod<void*()>("get_TutorialManager", 0);
+  static auto sceneAllowed = tutorial.GetMethod<bool(void*)>("IsSceneInputAllowed", 0);
+  static auto shortcutsAllowed = shortcuts.GetMethod<bool()>("get_CanUseShortcuts", 0);
+  if (!getTutorial || !sceneAllowed || !shortcutsAllowed)
+    return false;
+  auto* manager = getTutorial();
+  return manager && sceneAllowed(manager) && shortcutsAllowed() && !Key::IsInputFocused();
+}
+
+bool NavigationPan_LateUpdate_Hook(auto original, NavigationPan* _this)
 {
   auto d = _this->_lastDelta;
+  const auto& config = Config::Get();
+  const bool disable_target_camera_lock = config.disable_target_camera_lock;
 
-  if (!Config::Get().disable_move_keys && !Key::IsDirectionalInputClaimed()) {
-    original(_this);
+  if (disable_target_camera_lock && _this->_trackingPOI) {
+    _this->_trackingPOI = nullptr;
   }
-
   static auto GetMouseButton = il2cpp_resolve_icall_typed<bool(int)>("UnityEngine.Input::GetMouseButton(System.Int32)");
   static auto GetTouchCount  = il2cpp_resolve_icall_typed<int()>("UnityEngine.Input::get_touchCount()");
+  // The native recognizer owns held-drag movement, including when the legacy
+  // Input API does not report the pointer. Never replay its delta as momentum.
+  const bool dragging = GetMouseButton(0) || GetTouchCount() > 0 || _this->_panningStarted;
+  bool by_keys        = false;
+  bool native_handled = false;
 
-  if (_this->BlockPan() || _this->_trackingPOI) {
+  if (!config.disable_move_keys && config.hotkeys_enabled && !Key::IsDirectionalInputClaimed()) {
+    if (config.use_scopely_hotkeys || !config.installHotkeyHooks) {
+      original(_this);
+      native_handled = true;
+    } else if (!_this->BlockPan() && !_this->_trackingPOI && !dragging
+               && KeyboardPanAllowed()) {
+      // Opposite bindings cancel; normalize diagonals like the native 2D composite.
+      float x = float(MapKey::IsPressed(GameFunction::MoveRight)) - float(MapKey::IsPressed(GameFunction::MoveLeft));
+      float y = float(MapKey::IsPressed(GameFunction::MoveUp)) - float(MapKey::IsPressed(GameFunction::MoveDown));
+      const float length = std::sqrt(x * x + y * y);
+      if (length > 0.0f) {
+        d->x = -x / length * _this->_keyboardDeltaScaler;
+        d->y = -y / length * _this->_keyboardDeltaScaler;
+        _this->MoveCamera(vec2{d->x * _this->_deltaScaler, d->y * _this->_deltaScaler}, true);
+        by_keys = true;
+      }
+    }
+  }
+
+  if (_this->BlockPan() || (_this->_trackingPOI && !disable_target_camera_lock)) {
     d->x = 0.0f;
     d->y = 0.0f;
-  } else if (GetMouseButton(0) || GetTouchCount() > 0) {
-    //
-  } else {
+  } else if (!dragging && !by_keys) {
     d->x = d->x * Config::Get().system_pan_momentum_falloff;
     d->y = d->y * Config::Get().system_pan_momentum_falloff;
-    _this->MoveCamera(vec2{d->x, d->y}, true);
+    if (!native_handled) {
+      _this->MoveCamera(vec2{d->x, d->y}, true);
+    }
   }
   _this->_farMagRadiusRatioSystemExtended = _this->_farMagRadiusRatioSystemNormal;
   return true;
 }
 
-void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider *_this, Camera *primary_camera)
+void OrbitFrameProvider_UpdateInputData_Hook(auto original, OrbitFrameProvider* _this, Camera* primary_camera)
 {
   original(_this, primary_camera);
 
   auto section_manager = Hub::get_SectionManager();
-  if (!section_manager || section_manager->CurrentSection != SectionID::Starbase_Exterior || Key::IsInputFocused()) {
+  if (!Config::Get().hotkeys_enabled || Config::Get().use_scopely_hotkeys || Config::Get().disable_move_keys
+      || !section_manager || section_manager->CurrentSection != SectionID::Starbase_Exterior || Key::IsInputFocused()) {
     return;
   }
 
-  static auto GetDeltaTime = il2cpp_resolve_icall_typed<float()>("UnityEngine.Time::get_deltaTime()");
+  static auto     GetDeltaTime            = il2cpp_resolve_icall_typed<float()>("UnityEngine.Time::get_deltaTime()");
   constexpr float keyboard_rotation_speed = 45.0f;
   const auto      frame_delta             = keyboard_rotation_speed * GetDeltaTime();
 

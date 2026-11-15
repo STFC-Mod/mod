@@ -2,9 +2,9 @@
 
 #include <il2cpp/il2cpp_helper.h>
 
-#include "Widget.h"
+#include "ObjectViewerBaseWidget.h"
 
-struct StarNodeObjectViewerWidget : public Widget<void, StarNodeObjectViewerWidget> {
+struct StarNodeObjectViewerWidget : public ObjectViewerBaseWidget<StarNodeObjectViewerWidget> {
 public:
   void OnViewButtonActivation()
   {
@@ -27,5 +27,5 @@ public:
 
 private:
   friend class ObjectFinder<StarNodeObjectViewerWidget>;
-  friend struct Widget<void, StarNodeObjectViewerWidget>;
+  friend class ObjectViewerBaseWidget<StarNodeObjectViewerWidget>;
 };

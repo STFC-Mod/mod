@@ -126,11 +126,11 @@
             },
             version = "v1.17.0"
         },
-        ["spud v0.2.0-3#f56260b5"] = {
+        ["spud v0.2.0-4#f56260b5"] = {
             repo = {
                 url = "xmake-packages"
             },
-            version = "v0.2.0-3"
+            version = "v0.2.0-4"
         },
         ["toml++#f56260b5"] = {
             repo = {
@@ -273,11 +273,11 @@
             },
             version = "v1.17.0"
         },
-        ["spud v0.2.0-3#f56260b5"] = {
+        ["spud v0.2.0-4#f56260b5"] = {
             repo = {
                 url = "xmake-packages"
             },
-            version = "v0.2.0-3"
+            version = "v0.2.0-4"
         },
         ["toml++#f56260b5"] = {
             repo = {
@@ -384,11 +384,11 @@
             },
             version = "v1.17.0"
         },
-        ["spud v0.2.0-3#f56260b5"] = {
+        ["spud v0.2.0-4#f56260b5"] = {
             repo = {
                 url = "xmake-packages"
             },
-            version = "v0.2.0-3"
+            version = "v0.2.0-4"
         },
         ["toml++#f56260b5"] = {
             repo = {

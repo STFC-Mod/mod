@@ -3,7 +3,7 @@
 #include "config.h"
 #include "errormsg.h"
 
-#include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/runtime.h>
 #include <il2cpp/il2cpp-functions.h>
 #include <spdlog/spdlog.h>
 
@@ -28,9 +28,8 @@ struct FakeColor { float r, g, b, a; };
 inline Il2CppObject* InvokeRuntime(const MethodInfo* method, void* target, void** args, const char* name)
 {
   if (!method) return nullptr;
-  Il2CppException* exception = nullptr;
-  Il2CppObject*    result    = il2cpp_runtime_invoke(method, target, args, &exception);
-  if (exception) {
+  Il2CppObject* result = nullptr;
+  if (!Il2CppRuntime::TryInvoke(method, target, args, &result)) {
     spdlog::warn("[LS] {} invocation failed", name);
     return nullptr;
   }
@@ -40,9 +39,7 @@ inline Il2CppObject* InvokeRuntime(const MethodInfo* method, void* target, void*
 inline bool InvokeVoid(const MethodInfo* method, void* target, void** args, const char* name)
 {
   if (!method) return false;
-  Il2CppException* exception = nullptr;
-  il2cpp_runtime_invoke(method, target, args, &exception);
-  if (exception) {
+  if (!Il2CppRuntime::TryInvoke(method, target, args)) {
     spdlog::warn("[LS] {} invocation failed", name);
     return false;
   }
@@ -52,9 +49,8 @@ inline bool InvokeVoid(const MethodInfo* method, void* target, void** args, cons
 inline bool InvokeBool(const MethodInfo* method, void* target, void** args, const char* name)
 {
   Il2CppObject* result = InvokeRuntime(method, target, args, name);
-  if (!result) return false;
-  void* value = il2cpp_object_unbox(result);
-  return value ? *reinterpret_cast<bool*>(value) : false;
+  bool value = false;
+  return Il2CppRuntime::TryBoolean(result, value) && value;
 }
 
 inline int32_t InvokeInt32(const MethodInfo* method, void* target, int32_t fallback, const char* name)

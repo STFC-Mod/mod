@@ -17,11 +17,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  XMAKE_VERSION: "3.1.0"
+  XMAKE_VERSION: "3.1.1"
   # Bump this when a dependency cache must be invalidated manually.
   XMAKE_CACHE_SCHEMA: "v4"
   # Narrow protobuf-only compiler-cache experiment.
-  PROTOBUF_SCCACHE_VERSION: "v0.17.0"
+  PROTOBUF_SCCACHE_VERSION: "v0.18.0"
   PROTOBUF_SCCACHE_SCHEMA: "v1"
   STFC_PROTOBUF_SCCACHE: "1"
   # Keep sccache local; actions/cache owns persistence explicitly.
@@ -189,6 +189,20 @@ jobs:
         shell: pwsh
         run: sccache --zero-stats
 
+      - name: Test IL2CPP runtime helpers
+        run: |
+          xmake build -y il2cpp-runtime-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          xmake run il2cpp-runtime-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Test IL2CPP class lookup
+        run: |
+          xmake build -y il2cpp-class-lookup-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          xmake run il2cpp-class-lookup-tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build
         run: xmake build -y stfc-community-mod
 
@@ -210,6 +224,11 @@ jobs:
           Move-Item `
             "build/windows/x64/release/stfc-community-mod.dll" `
             "version.dll"
+
+      - name: Test checked IL2CPP helpers
+        run: |
+          xmake build -y il2cpp-checked-tests
+          xmake run il2cpp-checked-tests
 
       - name: Verify DLL provenance
         shell: pwsh
@@ -262,7 +281,7 @@ jobs:
     needs: build-win
     if: >-
       github.event_name == 'push' &&
-      github.repository == 'netniV/stfc-mod' &&
+      github.repository == 'STFC-Mod/mod' &&
       github.ref_protected &&
       (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev')
     runs-on: windows-2025-vs2026
@@ -331,8 +350,10 @@ jobs:
 
     runs-on: ${{ matrix.runner }}
     env:
-      MACOSX_DEPLOYMENT_TARGET: "13.5"
-      SWIFT_MODULE_CACHE_SCHEMA: "v1"
+      MACOSX_DEPLOYMENT_TARGET: "14.6"
+      # Swift PCM files embed their absolute module-cache path. Invalidate the
+      # cache when the repository checkout path changes (for example, on rename).
+      SWIFT_MODULE_CACHE_SCHEMA: "v2"
       SCCACHE_DIR: ${{ github.workspace }}/build/.protobuf-sccache
       SCCACHE_CACHE_SIZE: "1G"
 
@@ -477,6 +498,16 @@ jobs:
         shell: bash
         run: sccache --zero-stats
 
+      - name: Test IL2CPP runtime helpers
+        run: |
+          xmake build -y il2cpp-runtime-tests
+          xmake run il2cpp-runtime-tests
+
+      - name: Test IL2CPP class lookup
+        run: |
+          xmake build -y il2cpp-class-lookup-tests
+          xmake run il2cpp-class-lookup-tests
+
       - name: Build
         # -D keeps the existing XMake compiler-cache diagnostics too.
         run: xmake -y -D
@@ -503,6 +534,11 @@ jobs:
           else
             echo "::warning::Swift module cache directory was not created"
           fi
+
+      - name: Test checked IL2CPP helpers
+        run: |
+          xmake build -y il2cpp-checked-tests
+          xmake run il2cpp-checked-tests
 
       - name: Verify portable macOS linkage
         shell: bash
@@ -754,18 +790,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-      
+
           APP="build/macosx/arm64/release/STFC Community Mod.app"
-      
+
           check_linkage() {
             local binary="$1"
             local deps
-      
+
             echo
             echo "==> $binary"
             deps="$(otool -L "$binary")"
             printf '%s\n' "$deps"
-      
+
             if printf '%s\n' "$deps" | grep -E \
               '/opt/homebrew/|/usr/local/(opt|Cellar)/|(^|/)libssl(\.[0-9]+)*\.dylib|(^|/)libcrypto(\.[0-9]+)*\.dylib|(^|/)libcurl(\.[0-9]+)*\.dylib'
             then
@@ -773,7 +809,7 @@ jobs:
               return 1
             fi
           }
-      
+
           check_linkage "$APP/Contents/MacOS/macOSLauncher"
           check_linkage "$APP/Contents/stfc-community-mod-loader"
           check_linkage "$APP/Contents/libstfc-community-mod.dylib"

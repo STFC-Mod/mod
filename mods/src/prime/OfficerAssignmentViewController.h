@@ -3,13 +3,15 @@
 #include <il2cpp/il2cpp_helper.h>
 
 #include "CanvasController.h"
+#include "GenericButtonWidget.h"
 #include "InputFieldWidget.h"
 
 struct OfficerAssignmentViewController {
 public:
-  __declspec(property(get = __get__inputField)) InputFieldWidget* _inputField;
-  __declspec(property(get = __get_isActiveAndEnabled)) bool        isActiveAndEnabled;
-  __declspec(property(get = __get_canvasController)) CanvasController* canvasController;
+  __declspec(property(get = __get__inputField)) InputFieldWidget*                   _inputField;
+  __declspec(property(get = __get__officerPresetsButton)) GenericButtonWidget* _officerPresetsButton;
+  __declspec(property(get = __get_isActiveAndEnabled)) bool                           isActiveAndEnabled;
+  __declspec(property(get = __get_canvasController)) CanvasController*                canvasController;
 
 private:
   friend class ObjectFinder<OfficerAssignmentViewController>;
@@ -26,6 +28,12 @@ public:
   {
     static auto field = get_class_helper().GetField("_inputField").offset();
     return *(InputFieldWidget**)((uintptr_t)this + field);
+  }
+
+  GenericButtonWidget* __get__officerPresetsButton()
+  {
+    static auto field = get_class_helper().GetField("_officerPresetsButton").offset();
+    return *(GenericButtonWidget**)((uintptr_t)this + field);
   }
 
   bool __get_isActiveAndEnabled()

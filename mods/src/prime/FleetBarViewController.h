@@ -16,6 +16,12 @@ public:
   }
 
 public:
+  Il2CppArraySize* FleetData()
+  {
+    static auto property = get_class_helper().GetProperty("FleetData");
+    return property.GetRaw<Il2CppArraySize>(this);
+  }
+
   void* __get_CurrentFleet()
   {
     static auto field = get_class_helper().GetProperty("CurrentFleet");

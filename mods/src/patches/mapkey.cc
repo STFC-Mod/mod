@@ -202,6 +202,14 @@ void MapKey::AddMappedKey(GameFunction gameFunction, MapKey mappedKey)
   MapKey::mappedKeys[gameFunction].emplace_back(std::move(mappedKey));
 }
 
+// Movement reads the direction itself; claiming it would suppress its own pan
+// on the next frame. Other modified actions retain ownership until key release.
+static bool IsMovementAction(GameFunction action)
+{
+  return action == GameFunction::MoveLeft || action == GameFunction::MoveRight
+         || action == GameFunction::MoveUp || action == GameFunction::MoveDown;
+}
+
 bool MapKey::IsPressed(GameFunction gameFunction)
 {
   const auto &mapKeys = MapKey::mappedKeys[(int)gameFunction];
@@ -209,7 +217,7 @@ bool MapKey::IsPressed(GameFunction gameFunction)
     if (mapKey.Key != KeyCode::None) {
       if (Key::Pressed(mapKey.Key)) {
         if (MapKey::HasCorrectModifiers(mapKey)) {
-          if (mapKey.hasModifiers) {
+          if (mapKey.hasModifiers && !IsMovementAction(gameFunction)) {
             Key::ClaimDirectionalInput(mapKey.Key);
           }
           return true;
@@ -228,7 +236,7 @@ bool MapKey::IsDown(GameFunction gameFunction)
     if (mapKey.Key != KeyCode::None) {
       if (Key::Down(mapKey.Key)) {
         if (MapKey::HasCorrectModifiers(mapKey)) {
-          if (mapKey.hasModifiers) {
+          if (mapKey.hasModifiers && !IsMovementAction(gameFunction)) {
             Key::ClaimDirectionalInput(mapKey.Key);
           }
           return true;

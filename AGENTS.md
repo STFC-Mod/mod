@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to AI coding agents working with code in this repository.
 
 ## Project Overview
 
@@ -15,7 +15,7 @@ This project uses **XMake** (not CMake). All build configuration is in `xmake.lu
 ```bash
 # Configure and build (command line)
 xmake                              # Build default target
-xmake f -p macosx -a arm64 -m debug --target_minver=13.5   # Configure for macOS ARM debug
+xmake f -p macosx -a arm64 -m debug --target_minver=14.6   # Configure for macOS ARM debug
 xmake f -p windows -m release         # Configure for Windows release
 
 # Generate Visual Studio solution
@@ -40,7 +40,7 @@ Delete the `build/` folder to reset. Also delete `.vs/` for a full Visual Studio
 
 - Keep changes scoped. Do not stage unrelated dirty files or generated artifacts unless the user explicitly asks.
 - Before finishing C++ or patch work, run `git diff --check` and the narrowest relevant xmake build.
-- For macOS core mod changes, use `xmake f -p macosx -a arm64 -m debug --target_minver=13.5 -y && xmake -y mods`.
+- For macOS core mod changes, use `xmake f -p macosx -a arm64 -m debug --target_minver=14.6 -y && xmake -y mods`.
 - Review the final diff for risky hooks, platform guards, config default mismatches, and missing example config updates.
 - If a subtree such as `macos-launcher/` needs specialized guidance, prefer a nested `AGENTS.md` near that code instead of overloading this root file.
 
@@ -92,9 +92,11 @@ static auto class_helper = il2cpp_get_class_helper("Assembly.Name", "Namespace",
 static auto method = class_helper.GetMethodInfo("MethodName");
 ```
 
-**Adding a new patch** — Create a `.cc` file in `mods/src/patches/parts/`, write an `InstallXxxHooks()` function, declare it in `patches.cc`, add a `bool installXxx` to `Config`, and register in the `patches[]` array in `patches.cc`. Patch toggles are only read from TOML in `_MODDBG` builds, so update both the `_MODDBG` config parsing path and the non-`_MODDBG` release defaults in `config.cc`.
+**Adding a new patch** — Create a `.cc` file in `mods/src/patches/parts/`, write an `InstallXxxHooks()` function, declare it in `patches.cc`, add a `bool installXxx` to `Config`, and register it in the `patches[]` array in `patches.cc`. Hook-install toggles are read from the `[patches]` TOML table in all build modes and should default to `true`; they exist as emergency compatibility switches for hook collisions or client drift.
 
-**Config** — User settings are in TOML files. The `Config` singleton (`Config::Get()`) is loaded once during `il2cpp_init_hook`. Add new settings to `config.h`, add defaults in `defaultconfig.h`, and load them in `config.cc`. For user-facing settings, update every localized example (`example_community_patch_settings_en.toml`, `example_community_patch_settings_de.toml`, `example_community_patch_settings_fr.toml`, and `example_community_patch_settings_nl.toml`) unless the setting is intentionally internal. The unsuffixed `example_community_patch_settings.toml` is only a pointer to these localized examples.
+**Separate hook installation from feature enablement** — Do not use a user-facing feature setting to decide whether its hooks are installed. Normally install all supported hooks, then have each hook check the feature setting and immediately preserve native behavior (usually by calling `original`) when the feature is disabled. Keep hook-install switches under `[patches]` and feature settings in their relevant sections such as `[ui]`, `[graphics]`, or `[audio]`; never place a feature-only toggle under `[patches]`. If an installer contains an early return based on a feature setting, or a `patches[]` entry points directly at a feature setting, treat that as a design error. Helpers that install no hooks, such as shortcut-only behavior, do not belong in `patches[]` at all.
+
+**Config** — User settings are in TOML files. The `Config` singleton (`Config::Get()`) is loaded once during `il2cpp_init_hook`. Add new settings to `config.h`, add defaults in `defaultconfig.h`, and load them in `config.cc`. For user-facing settings, update only the English example (`example_community_patch_settings_en.toml`). Do not update the other localized examples unless the user explicitly asks for translation updates. The unsuffixed `example_community_patch_settings.toml` is only a pointer to these localized examples and should not be changed when adding or modifying settings.
 
 ### Dependencies (via xmake packages)
 

@@ -1,0 +1,14 @@
+syntax="proto3";
+
+option optimize_for = LITE_RUNTIME;
+
+// Messages the game doesn't declare. Kept out of the generated Digit.*.proto so regenerating doesn't drop them.
+
+import "Digit.PrimeServer.Models.proto";
+
+package Digit.PrimeServer.Models;
+
+// MyDeployedFleets payload, keyed by fleet id
+message MyDeployedFleetsResponse {
+  map<int64, DeployedFleet> fleets = 1;
+}

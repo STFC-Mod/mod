@@ -143,46 +143,46 @@ PACKAGED_APP_PATH="${BUILD_DIR}/STFC Community Mod.app"
 # Configure the project
 configure_project() {
     print_info "Configuring project for ${ARCH} in ${BUILD_MODE} mode..."
-    
+
     cd "$PROJECT_ROOT"
-    
-    local xmake_opts="-y -p macosx -a ${ARCH} -m ${BUILD_MODE} --target_minver=13.5"
+
+    local xmake_opts="-y -p macosx -a ${ARCH} -m ${BUILD_MODE} --target_minver=14.6"
     if [[ "$VERBOSE" == true ]]; then
         xmake_opts="${xmake_opts} -v"
     fi
-    
+
     xmake f ${xmake_opts}
-    
+
     print_success "Configuration complete"
 }
 
 # Clean build artifacts
 clean_build() {
     print_info "Cleaning build artifacts..."
-    
+
     cd "$PROJECT_ROOT"
     xmake clean -a
-    
+
     print_success "Clean complete"
 }
 
 # Build the project
 build_project() {
     print_info "Building project for ${ARCH} in ${BUILD_MODE} mode..."
-    
+
     cd "$PROJECT_ROOT"
-    
+
     if [[ "$VERBOSE" == true ]]; then
         xmake -v
     else
         xmake
     fi
-    
+
     print_success "Build complete"
-    
+
     # Show build output location
     print_info "Build artifacts location: ${BUILD_DIR}"
-    
+
     # List built files
     if [[ -d "$BUILD_DIR" ]]; then
         print_info "Built files:"
@@ -249,7 +249,7 @@ package_app_bundle() {
 prepare_app() {
     if [[ "$USE_LAUNCHER" == true ]]; then
         print_info "Preparing launcher application bundle..."
-        
+
         # Check if app was built
         if [[ ! -d "$PACKAGED_APP_PATH" ]]; then
             print_warning "Packaged app not found at: $PACKAGED_APP_PATH"
@@ -265,21 +265,21 @@ prepare_app() {
         print_success "Launcher prepared at: $PACKAGED_APP_PATH"
     else
         print_info "Preparing loader..."
-        
+
         # Check if loader was built
         if [[ ! -f "$LOADER_PATH" ]]; then
             print_error "Loader not found at: $LOADER_PATH"
             print_info "Make sure the loader was built successfully"
             exit 1
         fi
-        
+
         # Check if dylib was built
         local dylib_path="${BUILD_DIR}/libstfc-community-mod.dylib"
         if [[ ! -f "$dylib_path" ]]; then
             print_warning "Mod library not found at: $dylib_path"
             print_warning "The loader may not work correctly without the mod library"
         fi
-        
+
         print_success "Loader prepared at: $LOADER_PATH"
         print_info "Loader will inject: $dylib_path"
     fi
@@ -288,12 +288,12 @@ prepare_app() {
 # Run the application
 run_app() {
     prepare_app
-    
+
     if [[ "$USE_LAUNCHER" == true ]]; then
         print_info "Launching application with launcher..."
         print_info "Crash dumps will be generated at: ~/Library/Logs/DiagnosticReports/"
         open "$PACKAGED_APP_PATH"
-        
+
         print_success "Launcher launched"
         print_info "To view logs, use: log stream --predicate 'process == \"macOSLauncher\"' --level debug"
         print_info "To view crash logs after a crash, run: $(basename "$0") crashlogs"
@@ -301,10 +301,10 @@ run_app() {
         print_info "Running loader directly..."
         print_info "The loader will launch the game with the mod injected"
         print_info "Crash dumps will be generated at: ~/Library/Logs/DiagnosticReports/"
-        
+
         # Run the loader
         "$LOADER_PATH"
-        
+
         print_success "Loader executed"
         print_info "To view game logs, use: log stream --predicate 'process == \"Star Trek Fleet Command\"' --level debug"
         print_info "To view crash logs after a crash, run: $(basename "$0") crashlogs"
@@ -314,13 +314,13 @@ run_app() {
 # Show crash logs
 show_crash_logs() {
     local crash_dir="${HOME}/Library/Logs/DiagnosticReports"
-    
+
     print_info "Searching for recent crash logs..."
     echo
-    
+
     # Look for crash logs from our apps
     local found_crashes=false
-    
+
     # Search for macOSLauncher crashes
     if compgen -G "${crash_dir}/macOSLauncher*.crash" > /dev/null 2>&1; then
         print_info "Recent macOSLauncher crashes:"
@@ -330,7 +330,7 @@ show_crash_logs() {
         echo
         found_crashes=true
     fi
-    
+
     # Search for loader crashes
     if compgen -G "${crash_dir}/stfc-community-mod-loader*.crash" > /dev/null 2>&1; then
         print_info "Recent stfc-community-mod-loader crashes:"
@@ -340,7 +340,7 @@ show_crash_logs() {
         echo
         found_crashes=true
     fi
-    
+
     # Search for game crashes
     if compgen -G "${crash_dir}/*Star Trek Fleet Command*.crash" > /dev/null 2>&1; then
         print_info "Recent Star Trek Fleet Command crashes:"
@@ -350,14 +350,14 @@ show_crash_logs() {
         echo
         found_crashes=true
     fi
-    
+
     if [[ "$found_crashes" == false ]]; then
         print_warning "No crash logs found in ${crash_dir}"
         echo
     else
         # Get the most recent crash file
         local most_recent=$(ls -t "${crash_dir}"/{macOSLauncher,stfc-community-mod-loader,*"Star Trek Fleet Command"}*.crash 2>/dev/null | head -1)
-        
+
         if [[ -f "$most_recent" ]]; then
             print_info "Most recent crash log: ${most_recent}"
             echo
@@ -368,7 +368,7 @@ show_crash_logs() {
             fi
         fi
     fi
-    
+
     print_info "Crash logs location: ${crash_dir}"
     print_info "To view a specific crash: less '${crash_dir}/<crash_file>'"
 }
@@ -376,10 +376,10 @@ show_crash_logs() {
 # Debug the application with lldb
 debug_app() {
     prepare_app
-    
+
     local executable
     local exec_name
-    
+
     if [[ "$USE_LAUNCHER" == true ]]; then
         executable="${PACKAGED_APP_PATH}/Contents/MacOS/macOSLauncher"
         exec_name="Launcher"
@@ -387,12 +387,12 @@ debug_app() {
         executable="$LOADER_PATH"
         exec_name="Loader"
     fi
-    
+
     if [[ ! -f "$executable" ]]; then
         print_error "Executable not found at: $executable"
         exit 1
     fi
-    
+
     print_warning "Running under lldb - system crash reports will NOT be generated"
     print_warning "Use 'run' action instead of 'debug' if you need crash dumps"
     echo
@@ -400,7 +400,7 @@ debug_app() {
     print_info "The ${exec_name} will launch under lldb"
     print_info "Use 'continue' or 'c' to start execution"
     print_info "Use 'breakpoint set -n <function_name>' to set breakpoints"
-    
+
     # Create lldb command file for better debugging experience
     local lldb_script=$(mktemp)
     cat > "$lldb_script" << 'LLDB_EOF'
@@ -424,28 +424,28 @@ target create "%EXECUTABLE%"
 # Set any initial breakpoints here if needed
 # breakpoint set -n main
 LLDB_EOF
-    
+
     # Replace placeholders with actual values
     sed -i '' "s|%EXECUTABLE%|${executable}|g" "$lldb_script"
     sed -i '' "s|%EXEC_NAME%|${exec_name}|g" "$lldb_script"
-    
+
     lldb -s "$lldb_script"
-    
+
     rm "$lldb_script"
 }
 
 # Main execution flow
 main() {
     print_info "STFC Community Mod Development Script"
-    
+
     local exec_type="Loader"
     if [[ "$USE_LAUNCHER" == true ]]; then
         exec_type="Launcher"
     fi
-    
+
     print_info "Action: ${ACTION}, Mode: ${BUILD_MODE}, Arch: ${ARCH}, Using: ${exec_type}"
     echo
-    
+
     case $ACTION in
         config)
             configure_project
@@ -490,11 +490,10 @@ main() {
             exit 1
             ;;
     esac
-    
+
     echo
     print_success "All operations completed successfully!"
 }
 
 # Run main function
 main
-

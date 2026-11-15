@@ -457,6 +457,7 @@ void AppendBelowDeckOption(void* list, const char* displayKey, bool forRoster, v
 void InitializeOfficerSorters_Hook(auto original, void* _this)
 {
   original(_this);
+  if (!Config::Get().officer_sort) return;
   auto& s = State();
   auto* optionsList = *reinterpret_cast<void**>(reinterpret_cast<char*>(_this) + s.rosterOptionsField->offset());
   auto* sortersList = *reinterpret_cast<void**>(reinterpret_cast<char*>(_this) + s.rosterSortersField->offset());
@@ -466,6 +467,7 @@ void InitializeOfficerSorters_Hook(auto original, void* _this)
 void InitializeAssignmentSorters_Hook(auto original, void* _this)
 {
   original(_this);
+  if (!Config::Get().officer_sort) return;
   auto& s = State();
   auto* list = *reinterpret_cast<void**>(reinterpret_cast<char*>(_this) + s.assignmentOptionsField->offset());
   AppendBelowDeckOption(list, kBelowDeckAssignmentKey, false);

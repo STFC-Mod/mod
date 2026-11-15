@@ -75,10 +75,10 @@ struct ActionView: View, XSollaUpdaterDelegate {
         GridRow {
           Button {
             withAnimation {
-              openSettings()
+              openConfigSite()
             }
           } label: {
-            commonButton(text: "Open Settings")
+            commonButton(text: "Configure Mod")
               .foregroundColor(.lcarViolet)
           }.buttonStyle(PlainButtonStyle())
 
@@ -197,19 +197,9 @@ struct ActionView: View, XSollaUpdaterDelegate {
       .joined()
   }
 
-  private func openSettings() {
-    let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
-    if let library {
-      let preferences = library.appendingPathComponent("Preferences").appendingPathComponent(
-        "com.stfcmod.startrekpatch")
-      let settingsTomlPath = preferences.appendingPathComponent("community_patch_settings.toml")
-      if !FileManager.default.fileExists(atPath: settingsTomlPath.path) {
-        do {
-          try "".write(to: settingsTomlPath, atomically: true, encoding: .utf8)
-        } catch {}
-      }
-      NSWorkspace.shared.open(settingsTomlPath)
-    }
+  private func openConfigSite() {
+    guard let configSiteURL = URL(string: "https://modconfig.pages.dev") else { return }
+    NSWorkspace.shared.open(configSiteURL)
   }
 
   private func launchGame() {

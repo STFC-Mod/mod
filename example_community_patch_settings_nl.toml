@@ -1,65 +1,80 @@
-#  +--------------------------------------------------------------+ 
-#  |                                                              | 
-#  |     #***  #****  #****   #***         #   *             #    | 
-#  |    #        #    #      #        #    #* **   #**       #    | 
-#  |     #**     #    #***   #             # * *  #   *   #***    | 
-#  |        #    #    #      #        #    #   *  #   *  #   *    | 
-#  |    #***     #    #       #***         #   *   #**    #***    | 
-#  |                                                              | 
-#  +--------------------------------------------------------------+ 
-#   Gegenereerd op 2026-09-17T11:10:54.248Z
-#   
+#  +--------------------------------------------------------------+
+#  |                                                              |
+#  |     #***  #****  #****   #***         #   *             #    |
+#  |    #        #    #      #        #    #* **   #**       #    |
+#  |     #**     #    #***   #             # * *  #   *   #***    |
+#  |        #    #    #      #        #    #   *  #   *  #   *    |
+#  |    #***     #    #       #***         #   *   #**    #***    |
+#  |                                                              |
+#  +--------------------------------------------------------------+
+#   Gegenereerd op 2026-11-12T23:23:43.301Z
+#
 #   Dit configuratiebestand is gegenereerd door https://modconfig.pages.dev
 #   en wordt geleverd zoals het is. Meld problemen met de STFC Community Mod,
 #   de configuratie of het configuratiehulpmiddel op de website alstublieft
 #   hier:
-#   
+#
 #       Discord : https://discord.gg/PrpHgs7Vjs
-#       GitHub  : https://github.com/netniV/stfc-mod
-#   
-#   Het configuratiebestand van vandaag wordt u aangeboden door de letter U en het getal 2
-#   
+#       GitHub  : https://github.com/STFC-Mod/mod
+#
+#   Het configuratiebestand van vandaag wordt u aangeboden door de letter F en het getal 2
+#
 
-#  <[=======================================]> 
-#                                              
-#         *               *    *               
-#        * *   *   *      *          ***       
-#       *****  *   *   ****    *    *   *      
-#       *   *  *  **  *   *    *    *   *      
-#       *   *   ****   ****    *     ***       
-#                                              
-#  <[=======================================]> 
+#  <[=======================================]>
+#
+#         *               *    *
+#        * *   *   *      *          ***
+#       *****  *   *   ****    *    *   *
+#       *   *  *  **  *   *    *    *   *
+#       *   *   ****   ****    *     ***
+#
+#  <[=======================================]>
 
 [audio]
+# Optional notification sound; none disables the alert. Requires Toast Banner Hooks.
+alert_armada_battle_lost = "none"
+
+# Optional notification sound; none disables the alert. Requires Toast Banner Hooks.
+alert_armada_battle_won = "none"
+
+# Optional notification sound; none disables the alert. Requires Toast Banner Hooks.
+alert_armada_created = "none"
+
+# Optional notification sound; none disables the alert. Requires Toast Banner Hooks.
+alert_defeat = "none"
+
+# Optional notification sound; none disables the alert. Requires Toast Banner Hooks.
+alert_victory = "none"
+
 # Comma-separated audio event names to suppress; leave blank to allow all audio events
 disabled_events = ""
 
 # Write audio event names to the trace log for troubleshooting
 trace_events = false
 
-#  <[=======================================]> 
-#                                              
-#       ****            **     **              
-#       *   *  *   *   *      *      ****      
-#       ****   *   *  ***    ***    **         
-#       *   *  *  **   *      *       **       
-#       ****    ****   *      *     ***        
-#                                              
-#  <[=======================================]> 
+#  <[=======================================]>
+#
+#       ****            **     **
+#       *   *  *   *   *      *      ****
+#       ****   *   *  ***    ***    **
+#       *   *  *  **   *      *       **
+#       ****    ****   *      *     ***
+#
+#  <[=======================================]>
 
 [buffs]
 # Deze optie zorgt ervoor dat de macht getoond worden alsof je schip altijd uit het dok is, dus ook wanneer die gedokt is. Standaard staat dit uit
 use_out_of_dock_power = true
 
-#  <[========================================================================================]> 
-#                                                                                               
-#        ****                  **     *                                 *       *               
-#       *       ***   ***     *             ****  *   *  ***     ***   ***            ***       
-#       *      *   *  *  *   ***      *    *   *  *   *  *   *      *   *       *    * **       
-#       *      *   *  *  *    *       *     ****  *  **  *       ****   *       *    *          
-#        ****   ***   *  *    *       *     ***    ****  *       ****   **      *     ****      
-#                                                                                               
-#  <[========================================================================================]> 
+#  <[========================================================================================]>
+#
+#        ****                  **     *                                 *       *
+#       *       ***   ***     *             ****  *   *  ***     ***   ***            ***
+#       *      *   *  *  *   ***      *    *   *  *   *  *   *      *   *       *    * **
+#       *      *   *  *  *    *       *     ****  *  **  *       ****   *       *    *
+#        ****   ***   *  *    *       *     ***    ****  *       ****   **      *     ****
+#
+#  <[========================================================================================]>
 
 [config]
 # Negeer dit gedeelte, is alleen voor ontwikkelaars
@@ -68,17 +83,23 @@ assets_url_override = ""
 # Negeer dit gedeelte, is alleen voor ontwikkelaars
 settings_url = ""
 
-#  <[=============================================================================================================]> 
-#                                                                                                                    
-#        ****                 *                     *                  ****                                 *        
-#       *       ***   ***    ***    ***     ***     *     ***          *   *   ***   ***     ***    ***     *        
-#       *      *   *  *  *    *     *   *  *   *    *    * **          ****       *  *  *   * **   * **     *        
-#       *      *   *  *  *    *     *      *   *    *    *             *       ****  *  *   *      *        *        
-#        ****   ***   *  *    **    *       ***     *     ****         *       ****  *  *    ****   ****    *        
-#                                                                                                                    
-#  <[=============================================================================================================]> 
+#  <[=============================================================================================================]>
+#
+#        ****                 *                     *                  ****                                 *
+#       *       ***   ***    ***    ***     ***     *     ***          *   *   ***   ***     ***    ***     *
+#       *      *   *  *  *    *     *   *  *   *    *    * **          ****       *  *  *   * **   * **     *
+#       *      *   *  *  *    *     *      *   *    *    *             *       ****  *  *   *      *        *
+#        ****   ***   *  *    **    *       ***     *     ****         *       ****  *  *    ****   ****    *
+#
+#  <[=============================================================================================================]>
 
 [control]
+# Protect and recover Kir’Shara queues after target or address changes.
+kirshara_fixes = true
+
+# Only allow the primary action when the selected target is visible in the current view.
+primary_requires_visible_target = false
+
 # Tijdsvenster in ms dubbel in te drukken van nr 1-8 schip selecteren/lokaliseren. Lager = sneller, hoger = trager. Standaardwaarde is 500
 select_timer = 500
 
@@ -103,15 +124,15 @@ use_scopely_hotkeys = false
 # Schakel experimentele functies in
 enable_experimental = false
 
-#  <[==============================================================================================================================================================]> 
-#                                                                                                                                                                     
-#        ****                  **     *                  *                    *****                 *              *      *      *                                    
-#       *      ***     ***    *             ****   ***   *       ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***        
-#       *  **  *   *      *  ***      *    **     *      ****   * **            *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *       
-#       *   *  *       ****   *       *      **   *      *   *  *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *       
-#        ****  *       ****   *       *    ***     ***   *   *   ****         *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *       
-#                                                                                                                                                                     
-#  <[==============================================================================================================================================================]> 
+#  <[==============================================================================================================================================================]>
+#
+#        ****                  **     *                  *                    *****                 *              *      *      *
+#       *      ***     ***    *             ****   ***   *       ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***
+#       *  **  *   *      *  ***      *    **     *      ****   * **            *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *
+#       *   *  *       ****   *       *      **   *      *   *  *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *
+#        ****  *       ****   *       *    ***     ***   *   *   ****         *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *
+#
+#  <[==============================================================================================================================================================]>
 
 [graphics]
 
@@ -127,11 +148,11 @@ transition_time = 0.01
 # Dit getal bepaalt de schaal van de UI. Standaardwaarde is 1.0, best incrementeren in decimaal
 ui_scale = 0.6
 
-# Dit getal bepaalt met hoeveel de schaalwaarde zich aanpast met de sneltoetsen. Standaardwaarde is 0.05
-ui_scale_adjust = 0.05
-
 # Dit bepaalt de schaalfactor voor de scheepsmodellen in de systeemweergave, waarbij 1.0 de standaardwaarde is
 ui_scale_ship = 1.0
+
+# This specifies the amount to adjust the scale by, 0.05 being default
+ui_scale_step = 0.05
 
 # Dit getal bepaalde de schaal van het objectscherm. Standaarwaarde is 1.0
 ui_scale_viewer = 1.2
@@ -201,8 +222,14 @@ allow_cursor = true
 # Staat randloos volledig scherm toe, schakel dit uit als je dit niet wilt
 borderless_fullscreen = true
 
+# Keep the system camera free when selecting a target. Requires mod 1.1.10 or newer.
+disable_target_camera_lock = false
+
 # Sta het vrij schalen van het venster toe, zit dit uit om het uit te schakelen
 free_resize = true
+
+# Show the remaining Galactic Anomaly time below Help All, Engage, and Claim
+galactic_anomaly_timer = false
 
 # Na het gebruiken van een zoom voorinstellingen, zet de waarde als de standaardwaarde
 use_presets_as_default = true
@@ -212,6 +239,12 @@ use_presets_as_default = true
 
 # Zet dit op 0.0 om geen standaard systeem zoom te gebruiken met de mod;Open een systeem met een specifieke zoom
 default_system_zoom = 1750.0
+
+# Maximum zoom-out distance in Haven; 0 preserves native behavior.
+haven_zoom = 4000.0
+
+# Station-interior zoom-out multiplier; 1 preserves native behavior. Default 2.
+interior_zoom_scale = 2.0
 
 # Zoom voorinstelling F1 voor in een systeem
 system_zoom_preset_1 = 50.0
@@ -231,58 +264,97 @@ system_zoom_preset_5 = 5000.0
 # Dit bepaalt de maximale zoomafstand in een systeem. Standaardwaarde is 2500, hoe hoger de waarde hoe langer je de labels nog kan zien als je aan het uitzoomen bent.
 zoom = 5000.0
 
-#  <[=====================================================]> 
-#                                                            
-#       ****           *            *                        
-#       *   *   ***   ***     ***   *       ***    ****      
-#       ****       *   *     *      ****   * **   **         
-#       *       ****   *     *      *   *  *        **       
-#       *       ****   **     ***   *   *   ****  ***        
-#                                                            
-#  <[=====================================================]> 
+#  <[=====================================================]>
+#
+#       ****           *            *
+#       *   *   ***   ***     ***   *       ***    ****
+#       ****       *   *     *      ****   * **   **
+#       *       ****   *     *      *   *  *        **
+#       *       ****   **     ***   *   *   ****  ***
+#
+#  <[=====================================================]>
 
 [patches]
 
 # Subgroup: Leave Well Alone
 # --------------------------
 
+# Enable recovery of interrupted action queues.
+actionqueuerecoveryhooks = true
+artifactexchangehooks = true
+audioeventhooks = true
+
 # Enable the buff fixes
 bufffixhooks = true
 cargoformathooks = true
 chatpatches = true
 
+# Enable chat player-title visibility hooks.
+chattitledisplayhooks = true
+
 # Schakelt bulkclaimen per factie in voor dagelijkse doelen
 dailyfactionbulkclaimhooks = true
-focussearch = true
+doubleclickassignshiphooks = true
+forbiddentechconfirmhooks = true
+
+# Enable the equipped ship name in Forbidden Tech details. Requires mod 1.1.10 or newer.
+forbiddentechshipnamehooks = true
 freeresizehooks = true
+galacticanomalytimerhooks = true
 game_version = true
 giftsbulkclaimhooks = true
+
+# Enable Haven help-history ordering hooks.
+havenhistoryhooks = true
+
+# Enable Haven zoom hooks.
+havenzoomhooks = true
 hotkeyhooks = true
+
+# Show cargo totals immediately instead of counting up
+instantcargocounterhooks = true
+
+# Enable station-interior zoom hooks.
+interiorzoomhooks = true
 loadingscreenhooks = true
+loadingtiphooks = true
 miscpatches = true
+missionhudtweakshooks = true
 objecttracker = true
 officersorthooks = true
 panhooks = true
 
+# SHIFT+click a fleet dock ship tile to pin or unpin it; updates pinned ships.
+pinnedshipclicktoggle = true
+
 # Zet geconfigureerde schepen vooraan in het vlootbeheerdok
 pinnedshiphooks = true
+
+# Enable queue protection after address changes.
+queueaddressguardhooks = true
+
+# Enable automatic confirmation of the Excelsior Decloaking Deflector when configured.
+revealconfirmhooks = true
 syncpatches = true
 tempcrashfixes = true
 testpatches = true
+
+# Enable protection for thin action queues.
+thinqueueprotectionhooks = true
 toastbannerhooks = true
 transitionscreenhooks = true
 uiscalehooks = true
 zoomhooks = true
 
-#  <[=================================================================================]> 
-#                                                                                        
-#        ****                  *     *                    *                              
-#       *      ***     ***     *    ***     ***    ***   ***     ****   ***   ***        
-#        ***   *  *   * **     *     *     *   *  * **    *     **     * **   *  *       
-#           *  *  *   *        *     *     *   *  *       *       **   *      *  *       
-#       ****   *  *    ****    *     **     ***    ****   **    ***     ****  *  *       
-#                                                                                        
-#  <[=================================================================================]> 
+#  <[=================================================================================]>
+#
+#        ****                  *     *                    *
+#       *      ***     ***     *    ***     ***    ***   ***     ****   ***   ***
+#        ***   *  *   * **     *     *     *   *  * **    *     **     * **   *  *
+#           *  *  *   *        *     *     *   *  *       *       **   *      *  *
+#       ****   *  *    ****    *     **     ***    ****   **    ***     ****  *  *
+#
+#  <[=================================================================================]>
 
 [shortcuts]
 
@@ -356,16 +428,16 @@ select_ship8 = "8"
 # ----------------------
 
 # ⚠️ EXPERIMENTEEL: Beweeg omlaag op het scherm
-move_down = "S"
+move_down = "S|DOWN"
 
 # ⚠️ EXPERIMENTEEL: Beweeg links op het scherm
-move_left = "LEFT"
+move_left = "A|LEFT"
 
 # ⚠️ EXPERIMENTEEL: Beweeg rechts op het scherm
-move_right = "RIGHT"
+move_right = "D|RIGHT"
 
 # ⚠️ EXPERIMENTEEL: Beweeg omhoog op het scherm
-move_up = "W"
+move_up = "W|UP"
 
 # ⚠️ EXPERIMENTEEL: Toont bladwijzer->zoekscherm
 show_lookup = "L"
@@ -511,8 +583,14 @@ show_inventory = "I"
 # Ga naar Missies
 show_missions = "M"
 
+# Go directly to Officer Presets
+show_officerpresets = "CTRL-O"
+
 # Ga naar Officieren
 show_officers = "SHIFT-O"
+
+# Go directly to Officer Swap
+show_officerswap = "ALT-O"
 
 # Ga naar Q Proeven
 show_qtrials = "SHIFT-Q"
@@ -537,6 +615,9 @@ show_shipconstruction = "SHIFT-N"
 
 # Ga naar Scheepsmanagement
 show_ships = "N"
+
+# Go directly to Ship Swap
+show_shipswap = "ALT-N"
 
 # Station Exterieur
 show_stationexterior = "SHIFT-G"
@@ -619,15 +700,15 @@ zoom_preset5 = "F5"
 # =
 zoom_reset = "="
 
-#  <[===================================================================]> 
-#                                                                          
-#       *****          *                     **                            
-#         *    ***    ***     ***   ***     *      ***    ***    ***       
-#         *    *  *    *     * **   *   *  ***        *  *      * **       
-#         *    *  *    *     *      *       *      ****  *      *          
-#       *****  *  *    **     ****  *       *      ****   ***    ****      
-#                                                                          
-#  <[===================================================================]> 
+#  <[===================================================================]>
+#
+#       *****          *                     **
+#         *    ***    ***     ***   ***     *      ***    ***    ***
+#         *    *  *    *     * **   *   *  ***        *  *      * **
+#         *    *  *    *     *      *       *      ****  *      *
+#       *****  *  *    **     ****  *       *      ****   ***    ****
+#
+#  <[===================================================================]>
 
 [ui]
 # Slaat de onthullig animatie van een kist altijd over en opent gewoon de kist
@@ -652,8 +733,17 @@ disable_move_keys = false
 # ⚠️ EXPERIMENTEEL: Zorgt ervoor dat de standaard notificaties in het spel zelf niet werken
 disable_toast_banners = false
 
+# Show only the first popup advert and suppress subsequent popup adverts.
+only_show_first_popup = false
+
+# Show the newest Haven help-history entries first.
+reverse_haven_history = true
+
 # Subgroup: Auto Confirm
 # ----------------------
+
+# Automatically confirm the max-level warning when contributing to an alliance that has reached level 60. Requires mod 1.1.10 or newer.
+auto_confirm_alliance_contribution = false
 
 # Level- en rangupgrades voor Verboden Technologie automatisch bevestigen
 auto_confirm_ft_upgrade = false
@@ -663,6 +753,9 @@ auto_confirm_ft_upgrade = false
 #   "warp" - Automatically choose regular warp
 #   "jump" - Automatically choose instant jump
 auto_confirm_instant_warp = "none"
+
+# Skip the Excelsior Decloaking Deflector confirmation popup.
+auto_confirm_reveal_ability = false
 
 # Comma-separated ship hull names for which the instant-warp popup is always shown, overriding all automatic actions
 instant_warp_always_ask = ""
@@ -685,11 +778,20 @@ notify_banner_types = ""
 # Subgroup: Chat
 # --------------
 
+# Open alliance side chat once per login, after station and chat initialization, section completion, and three continuous seconds of readiness. Requires mod 1.1.10 or newer.
+auto_open_chat = false
+
+# Initial side-chat width in canvas units; 0 preserves the native width. Positive values are clamped to available space and the minimum width. Requires mod 1.1.10 or newer.
+default_chat_width = 0
+
 # Zet dit aan als je Stelsel chat (globale chat) niet wilt zien
 disable_galaxy_chat = false
 
 # Zet dit aan als je Veil chat niet wilt zien
 disable_veil_chat = false
+
+# Show player title rows in chat messages.
+show_player_title = true
 
 # Subgroup: Chest Purchases
 # -------------------------
@@ -701,7 +803,7 @@ extend_chest_purchase_max = 160
 # ---------------------------
 
 # Door komma's gescheiden facties (federation, klingon, romulan) waarop de bulkclaimschakelaar voor dagelijkse doelen van toepassing is; laat leeg om het standaardgedrag van het spel te behouden
-daily_bulk_claim_factions = ""
+daily_bulk_claim_factions = "federation,klingon,romulan"
 
 # Schakel Alles claimen voor dagelijkse doelen opnieuw in wanneer het scherm voor het eerst in een sessie wordt geopend
 daily_bulk_claim_toggle_default_on = false
@@ -721,6 +823,9 @@ extend_donation_slider = true
 # Gebruik de linker- en rechterpijltjestoets om het vorige of volgende schip in het vlootbeheerdok te selecteren
 arrow_keys_to_select_ship = true
 
+# Keep the dock selection in sync with Manage Ships.
+dock_syncmanagement = true
+
 # Dubbelklik op een schip in het vlootbeheerdok om het toe te wijzen, in plaats van het te selecteren en daarna op Toewijzen te klikken
 double_click_to_assign_ship = false
 
@@ -729,12 +834,6 @@ pinned_ships = ""
 
 # Subgroup: HUD
 # -------------
-
-# HUD visibility mode: auto, show, or hide
-#   "auto" - Use the game's default visibility behaviour
-#   "show" - Always show this HUD item
-#   "hide" - Always hide this HUD item
-hud_daily_goals = "auto"
 
 # HUD visibility mode: auto, show, or hide
 #   "auto" - Use the game's default visibility behaviour
@@ -760,6 +859,24 @@ hud_outposts = "auto"
 #   "hide" - Always hide this HUD item
 hud_q_trials = "auto"
 
+# Subgroup: Options
+# -----------------
+
+# Hide the Exchange All button in the Artifact Gallery
+disable_exchange_all = false
+
+# Enable the shortcut that focuses the search box on supported screens
+focus_search = true
+
+# Show the equipped ship name in Forbidden Tech details. Requires mod 1.1.10 or newer.
+forbidden_tech_ship_name = true
+
+# Format abbreviated cargo values using Cargo Significant Decimals
+format_cargo_values = true
+
+# Restore the Below Deck Ability officer sort option
+officer_sort = true
+
 # Subgroup: Previews
 # ------------------
 
@@ -771,6 +888,9 @@ disable_preview_locate = false
 
 # Zorgt ervoor dat het terugroepen van je schip niet werkt als je naar de vracht van een schip of andere nodes bekijkt
 disable_preview_recall = false
+
+# Show cargo used and capacity immediately instead of counting up. Restart after changing. Windows client 263 only; other builds keep native behavior
+instant_cargo_counter = true
 
 # Zet dit aan als je altijd de vracht wilt zien van armadas
 show_armada_cargo = true
@@ -787,29 +907,35 @@ show_player_cargo = true
 # Zet dit aan als je altijd de vracht wilt zien van stations
 show_station_cargo = true
 
-#  <[===========================================================================================================================]> 
-#                                                                                                                                  
-#        ****                              *****                 *              *      *      *                                    
-#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***        
-#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *       
-#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *       
-#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *       
-#                                                                                                                                  
-#  <[===========================================================================================================================]> 
+#  <[===========================================================================================================================]>
+#
+#        ****                              *****                 *              *      *      *
+#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***
+#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *
+#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *
+#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *
+#
+#  <[===========================================================================================================================]>
 
 [sync]
 
 # Subgroup: Data
 # --------------
 
+# Do you want to sync away team assignment data?
+away_assignments = true
+
 # Wil je Gevechtslogboeken syncen?
-battlelogs = true
+battlelogs = false
 
 # Wil je data van buffs syncen?
 buffs = true
 
 # Wil je data van gebouwen syncen?
 buildings = true
+
+# Do you want to sync Haven data?
+haven = true
 
 # Wil je data van je inventaris syncen?
 inventory = true
@@ -820,8 +946,11 @@ jobs = true
 # Wil je data van missies syncen?
 missions = true
 
-# Wil je data van officieren die je in bezit hebt syncen?
-officer = true
+# Do you want to sync owned officer data?
+officers = true
+
+# Sync your own player profile (level, XP, power, Haven unlocked), never other players. Requires mod 1.1.10 or newer.
+profile = false
 
 # Wil je data van onderzoeken syncen?
 research = true
@@ -834,6 +963,9 @@ ships = true
 
 # Wil je de data van je slots syncen?
 slots = true
+
+# Sync faction store offer data. Requires mod 1.1.10 or newer.
+store_offers = false
 
 # Wil je data van de verboden technologie die je in bezit hebt syncen?
 tech = true
@@ -856,12 +988,6 @@ logging = false
 # De url van de proxyserver die je wilt gebruiken om de verbinding door te sturen
 proxy = ""
 
-# De token dat gebruikt wordt voor de authenticatie
-token = ""
-
-# De url van de server waar je data naartoe wilt verzenden
-url = ""
-
 # Subgroup: Network
 # -----------------
 
@@ -871,26 +997,44 @@ resolver_cache_ttl = 300
 # Zouden SSL certificaten geverifieerd moeten worden?
 verify_ssl = true
 
-#  <[===========================================================================================================================]> 
-#                                                                                                                                  
-#        ****                              *****                 *              *      *      *                                    
-#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***        
-#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *       
-#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *       
-#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *       
-#                                                                                                                                  
-#  <[===========================================================================================================================]> 
+#  <[===========================================================================================================================]>
+#
+#        ****                              *****                 *              *      *      *
+#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***
+#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *
+#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *
+#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *
+#
+#  <[===========================================================================================================================]>
+
+[sync.targets.stfcdata]
+token = ""
+url = "https://sync.stfcdata.de"
+
+#  <[===========================================================================================================================]>
+#
+#        ****                              *****                 *              *      *      *
+#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***
+#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *
+#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *
+#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *
+#
+#  <[===========================================================================================================================]>
 
 [sync.targets.nextspocksclub]
+token = ""
+url = "https://next.spocks.club/sync/ingress/"
 
-#  <[===========================================================================================================================]> 
-#                                                                                                                                  
-#        ****                              *****                 *              *      *      *                                    
-#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***        
-#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *       
-#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *       
-#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *       
-#                                                                                                                                  
-#  <[===========================================================================================================================]> 
+#  <[===========================================================================================================================]>
+#
+#        ****                              *****                 *              *      *      *
+#       *      *   *  ***     ***            *    ***     ****  ***     ***     *      *           ***     ****   ***   ***
+#        ***    ****  *  *   *               *    *  *   **      *     * **     *      *      *    *  *   *   *  * **   *  *
+#           *      *  *  *   *               *    *  *     **    *     *        *      *      *    *  *    ****  *      *  *
+#       ****    ***   *  *    ***          *****  *  *   ***     **     ****    *      *      *    *  *    ***    ****  *  *
+#
+#  <[===========================================================================================================================]>
 
 [sync.targets.spocksclub]
+token = ""
+url = "https://spocks.club/sync/ingress/"

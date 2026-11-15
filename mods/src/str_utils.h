@@ -145,6 +145,16 @@ inline std::string to_string(const Il2CppString* str)
   return result;
 }
 
+inline bool operator==(const Il2CppString* lhs, const std::string& rhs)
+{
+  return to_string(lhs) == rhs;
+}
+
+inline bool operator==(const std::string& lhs, const Il2CppString* rhs)
+{
+  return lhs == to_string(rhs);
+}
+
 inline std::optional<std::chrono::time_point<std::chrono::system_clock>> parse_timestamp(const std::string& timestamp)
 {
 #ifdef _WIN32

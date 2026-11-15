@@ -51,6 +51,8 @@ This project is maintained solely at my own cost of time, energy and money. Any 
 - Create parsed toml file to show what settings have been applied
 - Customise your keyboard shortcuts
 
+For a full list of features see our [FEATURES.md](FEATURES.md)
+
 ## Installing
 
 Please see the [INSTALL.md](INSTALL.md) instructions which has steps on how to use this mod with Star Trek Fleet Command.

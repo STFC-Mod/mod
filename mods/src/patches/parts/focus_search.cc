@@ -14,7 +14,7 @@
 
 bool FocusSearchBox()
 {
-  if (!Config::Get().installFocusSearchHooks) {
+  if (!Config::Get().focus_search) {
     return false;
   }
 
@@ -93,11 +93,4 @@ bool FocusSearchBox()
   }
 
   return false;
-}
-
-void InstallFocusSearchHooks()
-{
-#ifdef _MODDBG
-  spdlog::info("[FocusSearch] installed");
-#endif
 }

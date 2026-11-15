@@ -135,9 +135,6 @@ void ResetLoadingTipState()
 
 void InstallLoadingTipHooks()
 {
-  const auto& cfg = Config::Get();
-  if (!cfg.loader_tip_enabled) return;
-
   auto ltv_h = il2cpp_get_class_helper("Assembly-CSharp", "Prime.LoadingScreen", "LoadingTipViewController");
   if (!ltv_h.isValidHelper()) {
     ErrorMsg::MissingHelper("Prime.LoadingScreen", "LoadingTipViewController");

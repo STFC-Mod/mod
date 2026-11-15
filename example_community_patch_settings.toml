@@ -1,16 +1,16 @@
 # Localized example configuration files are generated from the languages
 # supported by https://modconfig.pages.dev:
 #
-# English (en): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_en.toml
-# Deutsch (de): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_de.toml
-# Nederlands (nl): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_nl.toml
-# Français (fr): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_fr.toml
-# Español (es): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_es.toml
-# Русский (ru): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_ru.toml
-# Dansk (da): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_da.toml
-# tlhIngan Hol (tlh): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_tlh.toml
-# Minionese (en-x-minionese): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_en-x-minionese.toml
-# Cockney (en-GB-x-cockney): https://github.com/netniV/stfc-mod/blob/dev/example_community_patch_settings_en-GB-x-cockney.toml
+# English (en): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_en.toml
+# Deutsch (de): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_de.toml
+# Nederlands (nl): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_nl.toml
+# Français (fr): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_fr.toml
+# Español (es): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_es.toml
+# Русский (ru): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_ru.toml
+# Dansk (da): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_da.toml
+# tlhIngan Hol (tlh): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_tlh.toml
+# Minionese (en-x-minionese): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_en-x-minionese.toml
+# Cockney (en-GB-x-cockney): https://github.com/STFC-Mod/mod/blob/dev/example_community_patch_settings_en-GB-x-cockney.toml
 #
 # Choose the example for your preferred language and save a copy as
 # community_patch_settings.toml in the appropriate settings folder.

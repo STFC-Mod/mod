@@ -98,9 +98,6 @@ static void LS_LoginSequence_Awake_Hook(auto original, void* _this)
 
 void InstallLoadingScreenHooks()
 {
-  const auto& cfg = Config::Get();
-  if (!cfg.loader_enabled) return;
-
   auto ls_h = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Login", "LoginSequence");
   if (!ls_h.isValidHelper()) {
     ErrorMsg::MissingHelper("Digit.Prime.Login", "LoginSequence");

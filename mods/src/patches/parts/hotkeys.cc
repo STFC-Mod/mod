@@ -1,10 +1,13 @@
 #include "config.h"
+#include "patches/ship_shortcut_hint.h"
 
 #include <spud/detour.h>
+#include <il2cpp/method_contract.h>
 
 // Object Viewers
 #include "prime/AllianceStarbaseObjectViewerWidget.h"
 #include "prime/ArmadaObjectViewerWidget.h"
+#include "prime/WaveDefenseObjectViewerWidget.h"
 #include "prime/CelestialObjectViewerWidget.h"
 #include "prime/EmbassyObjectViewer.h"
 #include "prime/HousingObjectViewerWidget.h"
@@ -30,16 +33,21 @@
 #include "prime/LanguageManager.h"
 #include "prime/NavigationInteractionUIViewController.h"
 #include "prime/NavigationSectionManager.h"
+#include "prime/OfficerAssignmentViewController.h"
 #include "prime/PlanetaryBaseManager.h"
 #include "prime/PreScanTargetWidget.h"
 #include "prime/ScanEngageButtonsWidget.h"
 #include "prime/ScreenManager.h"
 #include "prime/SelectableList.h"
+#include "prime/ShipManagementViewController.h"
+#include "prime/ShipManagementScreenStateViewController.h"
 #include "prime/ShortcutsManager.h"
 
+#include "patches/parts/action_queue.h"
 #include "patches/key.h"
 #include "patches/mapkey.h"
 #include "patches/parts/daily_faction_bulk_claim.h"
+#include "patches/parts/double_click_assign_ship.h"
 #include "patches/parts/focus_search.h"
 #include "str_utils.h"
 
@@ -64,8 +72,12 @@
 #include <Windows.h>
 #endif
 
-static bool reset_focus_next_frame = false;
-static int  show_info_pending      = 0;
+static bool reset_focus_next_frame             = false;
+static int  show_info_pending                  = 0;
+static int  show_officer_presets_pending       = 0;
+static int  show_officer_swap_pending          = 0;
+static int  show_ship_swap_pending             = 0;
+static bool officer_presets_assignment_opened = false;
 
 using GetShowKeybindingsFn     = bool(void*);
 using SetShowKeybindingsFn     = void(void*, bool);
@@ -256,7 +268,18 @@ void ShortcutKeybindHint_UpdateText_Hook(auto original, void* _this)
     return;
   }
 
-  auto shortcut = MapKey::GetShortcutHint(mapping->primary);
+  auto hint_action = mapping->primary;
+  if (hint_action >= GameFunction::SelectShip1 && hint_action <= GameFunction::SelectShip8) {
+    // Use the same context array as FleetBarViewController::RequestSelect(int, bool), not the native dock index.
+    auto* bar     = ObjectFinder<FleetBarViewController>::Get();
+    auto* context = bar ? bar->CanvasContext() : nullptr;
+    auto* fleets  = context ? context->FleetData() : nullptr;
+    hint_action   = ShipShortcutHintAction(hint_action, fleets ? fleets->max_length : 0, [fleets](std::size_t position) {
+      auto* fleet = reinterpret_cast<FleetPlayerData**>(fleets->vector)[position];
+      return fleet ? fleet->Index : -1;
+    });
+  }
+  auto shortcut = hint_action == GameFunction::Max ? std::string{} : MapKey::GetShortcutHint(hint_action);
   if (shortcut.empty() && mapping->fallback != GameFunction::Max) {
     shortcut = MapKey::GetShortcutHint(mapping->fallback);
   }
@@ -443,12 +466,255 @@ bool MoveShipSelectionInDock(bool goLeft)
   return acted;
 }
 
+void UpdateManageShipDockSelection()
+{
+  static uint64_t last_fleet_id = 0;
+  static auto next_update = std::chrono::steady_clock::time_point{};
+  const auto now = std::chrono::steady_clock::now();
+  if (now < next_update)
+    return;
+  next_update = now + std::chrono::milliseconds(100);
+  auto* sections = Hub::get_SectionManager();
+  if (!Config::Get().dock_syncmanagement || !sections
+      || sections->CurrentSection != SectionID::ShipManagement_Details) {
+    last_fleet_id = 0;
+    return;
+  }
+  for (auto* controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
+    if (!controller || !controller->isActiveAndEnabled)
+      continue;
+    auto* canvas = GetCanvasControllerFromComponent(controller);
+    if (!canvas || !canvas->Visible())
+      continue;
+    auto* context = controller->Context();
+    auto* fleet = context ? context->CurrentFleet() : nullptr;
+    auto* manager = FleetsManager::Instance();
+    if (!fleet || !fleet->HasShip || !manager || !manager->HasFleetService())
+      continue;
+    const auto index = fleet->Index;
+    if (index < 0)
+      continue;
+    // Exclude unassigned and synthetic fleets; management list order is not dock order.
+    auto* dock_fleet = manager->GetFleetPlayerData(index);
+    if (!dock_fleet || dock_fleet->Id != fleet->Id)
+      continue;
+    if (last_fleet_id == fleet->Id)
+      return;
+    auto* bar = ObjectFinder<FleetBarViewController>::Get();
+    if (!bar)
+      return;
+    if (!bar->IsIndexSelected(index)) {
+      // Use the bar's selection flow to update both the highlight and fleet panel.
+      bar->RequestSelect(index);
+      if (!bar->IsIndexSelected(index))
+        return; // Retry next update if native selection was blocked.
+      spdlog::debug("[ManageShips] selected dock {} for fleet {}", index + 1, fleet->Id);
+    }
+    last_fleet_id = fleet->Id;
+    return;
+  }
+  last_fleet_id = 0;
+}
+
+void UpdateExpiredAbilityButtons()
+{
+  static auto next_update = std::chrono::steady_clock::time_point{};
+  const auto now = std::chrono::steady_clock::now();
+  if (now < next_update)
+    return;
+  next_update = now + std::chrono::milliseconds(250);
+  auto* bar = ObjectFinder<FleetBarViewController>::Get();
+  auto* controller = bar ? bar->_fleetPanelController : nullptr;
+  auto* fleet = controller ? controller->fleet : nullptr;
+  if (!fleet || (static_cast<int>(fleet->CurrentState) & static_cast<int>(FleetState::CanActivateAbility)) == 0)
+    return;
+  static auto fleet_class = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Ships", "FleetLocalViewController");
+  static auto panel_field = fleet_class.GetField("_shipActionPanelLocalViewController");
+  static auto panel_class =
+      il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Ships", "ShipActionPanelLocalViewController");
+  static auto ids_field = panel_class.GetField("_abilityIDs");
+  static auto buttons_field = panel_class.GetField("_buttons");
+  static auto cooldown = panel_class.GetMethodInfo("GetRemainingCooldown", 1);
+  static auto has_effect = panel_class.GetMethod<bool(void*)>("HasShipAnActiveAbilityWithActiveEffect", 0);
+  static auto timer_class =
+      il2cpp_get_class_helper("Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "TimerDataContext");
+  static auto remaining_time = timer_class.GetMethodInfo("get_RemainingTime", 0);
+  static auto ability_class =
+      il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.ActivatedAbilities", "ActivatedAbilityManager");
+  static auto instance = ability_class.GetParent("MonoSingleton`1").GetProperty("Instance");
+  static auto can_use = method_contract::Resolve(ability_class.get_cls(), "CanUseAbility", false, "System.Boolean",
+                                                {"Digit.PrimeServer.Models.FleetPlayerData", "System.Int64"});
+  if (!panel_field.get_info() || !ids_field.get_info() || !buttons_field.get_info() || !cooldown
+      || !remaining_time || !has_effect || !can_use)
+    return;
+  auto* manager = instance.GetRaw<Il2CppObject>(nullptr);
+  if (!manager)
+    return;
+  auto* panel = *reinterpret_cast<void**>(reinterpret_cast<char*>(controller) + panel_field.offset());
+  auto* canvas = panel ? GetCanvasControllerFromComponent(panel) : nullptr;
+  if (!canvas || !canvas->Visible() || has_effect(panel))
+    return;
+  auto* ids = *reinterpret_cast<Il2CppArraySize**>(reinterpret_cast<char*>(panel) + ids_field.offset());
+  auto* buttons = *reinterpret_cast<Il2CppArraySize**>(reinterpret_cast<char*>(panel) + buttons_field.offset());
+  if (!ids || !buttons)
+    return;
+  for (uintptr_t index = 0; index < ids->max_length && index < buttons->max_length; ++index) {
+    auto* button = reinterpret_cast<GenericButtonWidget**>(buttons->vector)[index];
+    if (!button || !button->isActiveAndEnabled || !button->Context || button->Context->Interactable)
+      continue;
+    auto ability_id = reinterpret_cast<int64_t*>(ids->vector)[index];
+    void* args[] = {&ability_id};
+    Il2CppException* exception = nullptr;
+    auto* timer = il2cpp_runtime_invoke(cooldown, panel, args, &exception);
+    if (exception || !timer)
+      continue;
+    auto* remaining = il2cpp_runtime_invoke(remaining_time, timer, nullptr, &exception);
+    // TimeSpan is boxed Int64 in 100 ns ticks. Repair at -1 second or below.
+    if (exception || !remaining || *static_cast<int64_t*>(il2cpp_object_unbox(remaining)) > -10000000)
+      continue;
+    void* ready_args[] = {fleet, &ability_id};
+    auto* ready = il2cpp_runtime_invoke(can_use, manager, ready_args, &exception);
+    if (!exception && ready && *static_cast<bool*>(il2cpp_object_unbox(ready)))
+      button->Context->Interactable = true;
+  }
+}
+
+bool MoveDockInManagementView(bool goLeft)
+{
+  if (!Config::Get().arrow_keys_to_select_ship) {
+    return false;
+  }
+
+  auto* section_manager = Hub::get_SectionManager();
+  if (!section_manager || section_manager->CurrentSection != SectionID::ShipManagement_Details) {
+    return false;
+  }
+
+  bool acted = false;
+  for (auto controller : ObjectFinder<ShipManagementViewController>::GetAll()) {
+    if (!controller || !controller->isActiveAndEnabled) {
+      continue;
+    }
+
+    auto canvas = GetCanvasControllerFromComponent(controller);
+    if (!canvas || !canvas->Visible()) {
+      spdlog::trace("MoveDockInManagementView({}) - controller={} not visible", (int)goLeft, (void*)controller);
+      continue;
+    }
+
+    auto* context = controller->Context();
+    if (!context) {
+      spdlog::trace("MoveDockInManagementView({}) - controller={} has no context", (int)goLeft,
+                    (void*)controller);
+      continue;
+    }
+
+    const int32_t count   = context->ListCount();
+    const int32_t current = context->CurrentIndex();
+    if (count <= 1 || current < 0) {
+      spdlog::trace("MoveDockInManagementView({}) - context={} index={} count={}", (int)goLeft, (void*)context,
+                    current, count);
+      continue;
+    }
+
+    const auto next = current + (goLeft ? -1 : 1);
+    if (next < 0 || next >= count) {
+      spdlog::trace("MoveDockInManagementView({}) - no further dock (index={} count={})", (int)goLeft, current, count);
+      continue;
+    }
+
+    spdlog::debug("MoveDockInManagementView({}) - switching dock {} -> {}", (int)goLeft, current, next);
+    context->SetLastMovementWasToIncrement(!goLeft);
+    context->SetCurrentIndex(next);
+    acted = true;
+  }
+
+  return acted;
+}
+
+bool PressShipSwapButton()
+{
+  for (auto controller : ObjectFinder<ShipManagementScreenStateViewController>::GetAll()) {
+    if (!controller) {
+      continue;
+    }
+
+    auto canvas = GetCanvasControllerFromComponent(controller);
+    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled) {
+      continue;
+    }
+
+    auto* button = controller->_swapShipButton;
+    if (button) {
+      spdlog::info("[ShipSwap] pressing swap button controller={} button={}", static_cast<void*>(controller),
+                   static_cast<void*>(button));
+      button->Press();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool PressOfficerSwapButton()
+{
+  for (auto controller : ObjectFinder<ShipManagementScreenStateViewController>::GetAll()) {
+    if (!controller) {
+      continue;
+    }
+
+    auto canvas = GetCanvasControllerFromComponent(controller);
+    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled) {
+      continue;
+    }
+
+    auto* button = controller->_officerIconButton;
+    if (button) {
+      spdlog::info("[OfficerSwap] pressing officer button controller={} button={}", static_cast<void*>(controller),
+                   static_cast<void*>(button));
+      button->Press();
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool PressOfficerPresetsButton()
+{
+  for (auto controller : ObjectFinder<OfficerAssignmentViewController>::GetAll()) {
+    if (!controller) {
+      continue;
+    }
+
+    auto canvas = GetCanvasControllerFromComponent(controller);
+    if (!canvas || !canvas->Visible() || !controller->isActiveAndEnabled) {
+      continue;
+    }
+
+    auto* button = controller->_officerPresetsButton;
+    auto* listener = button ? button->SemaphoreListener : nullptr;
+    auto* native_button = listener ? listener->TheButton : nullptr;
+    if (native_button) {
+      spdlog::info("[OfficerPresets] pressing presets button controller={} button={}",
+                   static_cast<void*>(controller), static_cast<void*>(button));
+      native_button->Press();
+      return true;
+    }
+  }
+
+  return false;
+}
+
 void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 {
   dispatch_screen_manager_update_callbacks();
   if (!Config::Get().installHotkeyHooks) {
     return original(_this);
   }
+
+  UpdateManageShipDockSelection();
+  UpdateExpiredAbilityButtons();
 
   // This function is called every frame to update the screen manager.
   // Create a global clock to detect time elapsed
@@ -468,6 +734,50 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
     Config::Get().hotkeys_enabled = true;
     spdlog::warn("Setting hotkeys to ENABLED");
     return;
+  }
+
+  // Per-frame driver - must run every frame, before the hotkey-mode
+  // early-returns below (it must also run in Scopely-hotkey mode and
+  // while hotkeys are toggled off).
+  AssignShipEnterKeyUpdate();
+
+  if (show_officer_presets_pending > 0) {
+    if (PressOfficerPresetsButton()) {
+      show_officer_presets_pending       = 0;
+      officer_presets_assignment_opened = false;
+      return;
+    }
+
+    if (!officer_presets_assignment_opened && PressOfficerSwapButton()) {
+      officer_presets_assignment_opened = true;
+    }
+
+    if (--show_officer_presets_pending == 0) {
+      officer_presets_assignment_opened = false;
+      spdlog::warn("[Hotkeys] timed out waiting for the Officer Presets button");
+    }
+  }
+
+  if (show_officer_swap_pending > 0) {
+    if (PressOfficerSwapButton()) {
+      show_officer_swap_pending = 0;
+      return;
+    }
+
+    if (--show_officer_swap_pending == 0) {
+      spdlog::warn("[Hotkeys] timed out waiting for the Officer Swap button");
+    }
+  }
+
+  if (show_ship_swap_pending > 0) {
+    if (PressShipSwapButton()) {
+      show_ship_swap_pending = 0;
+      return;
+    }
+
+    if (--show_ship_swap_pending == 0) {
+      spdlog::warn("[Hotkeys] timed out waiting for the Ship Swap button");
+    }
   }
 
   if (Config::Get().use_scopely_hotkeys && Config::Get().hotkeys_enabled) {
@@ -604,6 +914,8 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
       if ((MapKey::IsDown(GameFunction::ToggleQueue))) {
         config->queue_enabled = !config->queue_enabled;
+        // Forget stale recovery authorizations; existing native target queues keep processing.
+        ResetQueueRecoveryTracking();
         return;
       }
 
@@ -627,20 +939,22 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       }
 
       if (MapKey::IsDown(GameFunction::MoveLeft)) {
-        auto const result = MoveShipSelectionInDock(true) || MoveArtifactCanvas(true) || MoveOfficerCanvas(true);
+        auto const result = MoveDockInManagementView(true) || MoveShipSelectionInDock(true) || MoveArtifactCanvas(true)
+                            || MoveOfficerCanvas(true);
         if (result) {
           return;
         }
       }
 
       if (MapKey::IsDown(GameFunction::MoveRight)) {
-        auto const result = MoveShipSelectionInDock(false) || MoveArtifactCanvas(false) || MoveOfficerCanvas(false);
+        auto const result = MoveDockInManagementView(false) || MoveShipSelectionInDock(false)
+                            || MoveArtifactCanvas(false) || MoveOfficerCanvas(false);
         if (result) {
           return;
         }
       }
 
-      if (Config::Get().installFocusSearchHooks && MapKey::IsDown(GameFunction::FocusSearch)) {
+      if (Config::Get().focus_search && MapKey::IsDown(GameFunction::FocusSearch)) {
         if (FocusSearchBox()) {
           return;
         }
@@ -685,6 +999,45 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
       } else if (MapKey::IsDown(GameFunction::ShowShipConstruction)) {
         InvokeNativeShortcut(show_shipconstruction_action, "Ship Construction");
         return;
+      } else if (MapKey::IsDown(GameFunction::ShowOfficerSwap)) {
+        auto* section_manager = Hub::get_SectionManager();
+        spdlog::info("[OfficerSwap] shortcut pressed current_section={}",
+                     section_manager ? static_cast<int32_t>(section_manager->CurrentSection) : 0);
+        if (PressOfficerSwapButton()) {
+          return;
+        }
+
+        auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
+        auto* fleet_controller = fleet_bar ? fleet_bar->_fleetPanelController : nullptr;
+        auto* fleet            = fleet_controller ? fleet_controller->fleet : nullptr;
+        if (fleet) {
+          spdlog::info("[OfficerSwap] requesting Manage Ships before officer assignment fleet={}",
+                       static_cast<void*>(fleet));
+          fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+          show_officer_swap_pending = 300;
+        } else {
+          spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Swap");
+        }
+        return;
+      } else if (MapKey::IsDown(GameFunction::ShowShipSwap)) {
+        auto* section_manager = Hub::get_SectionManager();
+        spdlog::info("[ShipSwap] shortcut pressed current_section={}",
+                     section_manager ? static_cast<int32_t>(section_manager->CurrentSection) : 0);
+        if (PressShipSwapButton()) {
+          return;
+        }
+
+        auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
+        auto* fleet_controller = fleet_bar ? fleet_bar->_fleetPanelController : nullptr;
+        auto* fleet            = fleet_controller ? fleet_controller->fleet : nullptr;
+        if (fleet) {
+          spdlog::info("[ShipSwap] requesting Manage Ships before swap fleet={}", static_cast<void*>(fleet));
+          fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+          show_ship_swap_pending = 300;
+        } else {
+          spdlog::warn("[Hotkeys] unable to open Manage Ships for Ship Swap");
+        }
+        return;
       } else if (MapKey::IsDown(GameFunction::ShowShields)) {
         InvokeNativeShortcut(show_shields_action, "Peace Shields");
         return;
@@ -701,6 +1054,27 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         return GotoSection(SectionID::ShipScrapping_List);
       } else if (MapKey::IsDown(GameFunction::ShowOfficers)) {
         return GotoSection(SectionID::OfficerInventory);
+      } else if (MapKey::IsDown(GameFunction::ShowOfficerPresets)) {
+        if (PressOfficerPresetsButton()) {
+          return;
+        }
+
+        officer_presets_assignment_opened = PressOfficerSwapButton();
+        if (!officer_presets_assignment_opened) {
+          auto* fleet_bar        = ObjectFinder<FleetBarViewController>::Get();
+          auto* fleet_controller = fleet_bar ? fleet_bar->_fleetPanelController : nullptr;
+          auto* fleet            = fleet_controller ? fleet_controller->fleet : nullptr;
+          if (fleet) {
+            spdlog::info("[OfficerPresets] requesting Manage Ships before officer presets fleet={}",
+                         static_cast<void*>(fleet));
+            fleet_controller->RequestAction(fleet, ActionType::Manage, 0, ActionBehaviour::Default);
+          } else {
+            spdlog::warn("[Hotkeys] unable to open Manage Ships for Officer Presets");
+            return;
+          }
+        }
+        show_officer_presets_pending = 300;
+        return;
       } else if (MapKey::IsDown(GameFunction::ShowCommander)) {
         // TODO: Does not work properly, defaults to first FleetCommander (spock, rather than selected fleet
         // commander)
@@ -801,8 +1175,13 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
   if (!Key::IsInputFocused()) {
     // Lets try to remove the pre-scan because we hit escape and it's visible
-    if (Key::Pressed(KeyCode::Escape) && DidHideViewers()) {
-      return;
+    if (Key::Pressed(KeyCode::Escape)) {
+      if (config->primary_requires_visible_target) {
+        force_space_action_next_frame = false;
+      }
+      if (DidHideViewers()) {
+        return;
+      }
     }
 
     // Dismiss the golden rewards screen when escape or space is pressed.
@@ -820,12 +1199,10 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
         || force_space_action_next_frame) {
       if (Hub::IsInSystemOrGalaxyOrStarbase() && !Hub::IsInChat() && !Key::IsInputFocused()) {
         auto fleet_bar = ObjectFinder<FleetBarViewController>::Get();
-        if (fleet_bar) {
-          bool was_forced = force_space_action_next_frame;
-          ExecuteSpaceAction(fleet_bar);
-          if (was_forced) {
-            force_space_action_next_frame = false;
-          }
+        bool was_forced = force_space_action_next_frame;
+        ExecuteSpaceAction(fleet_bar);
+        if (was_forced) {
+          force_space_action_next_frame = false;
         }
       }
     }
@@ -903,14 +1280,23 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
   return original(_this);
 }
 
-// NOTE: If you change this loop functionality, also change DoHideViewersOfType template
+template <typename T> inline bool CanHideViewer(T* widget, bool require_parent = false)
+{
+  auto* visibility = widget ? widget->_visibilityController : nullptr;
+  if (!visibility || (visibility->_state != VisibilityState::Visible && visibility->_state != VisibilityState::Show)) {
+    return false;
+  }
+  if (!require_parent) {
+    return true;
+  }
+  auto* parent = widget->Parent;
+  return parent && parent->IsShowing;
+}
+
 template <typename T> inline bool CanHideViewersOfType()
 {
   for (auto widget : ObjectFinder<T>::GetAll()) {
-    const auto visible = widget && widget->_visibilityController != NULL
-                         && (widget->_visibilityController->_state == VisibilityState::Visible
-                             || widget->_visibilityController->_state == VisibilityState::Show);
-    if (visible) {
+    if (CanHideViewer(widget)) {
       return true;
     }
   }
@@ -927,22 +1313,12 @@ bool CanHideViewers()
           || CanHideViewersOfType<HousingObjectViewerWidget>());
 }
 
-// NOTE: If you change this loop functionality, also change CanideViewersOfType template
 template <typename T> inline bool DidHideViewersOfType()
 {
   const auto objects = ObjectFinder<T>::GetAll();
   auto       didHide = false;
   for (auto widget : objects) {
-    if (!widget) {
-      continue;
-    }
-    auto visbility_controller = widget->_visibilityController;
-    if (!visbility_controller) {
-      continue;
-    }
-    const auto visible = (visbility_controller->_state == VisibilityState::Visible
-                          || visbility_controller->_state == VisibilityState::Show);
-    if (visible) {
+    if (CanHideViewer(widget)) {
       widget->HideAllViewers();
       didHide = true;
     }
@@ -1045,6 +1421,24 @@ bool DidExecuteRepair(FleetBarViewController* fleet_bar)
 
 void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
 {
+  if (MapKey::IsDown(GameFunction::ActionPrimary)) {
+    if (auto* navigation = ObjectFinder<NavigationInteractionUIViewController>::Get();
+        navigation && navigation->TryPressJoinWaveDefense()) {
+      return;
+    }
+    // Query active viewers without adding constructor detours for this popup or its subclasses.
+    if (auto viewers = WaveDefenseObjectViewerWidget::FindActiveViewers()) {
+      for (uintptr_t index = 0; index < viewers->max_length; ++index) {
+        auto widget = reinterpret_cast<WaveDefenseObjectViewerWidget**>(viewers->vector)[index];
+        if (CanHideViewer(widget, true)) {
+          // Use the displayed native action, including its eligibility and confirmation checks.
+          widget->PressPrimaryButton();
+          return;
+        }
+      }
+    }
+  }
+
   if (!fleet_bar) {
     return;
   }
@@ -1068,6 +1462,7 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
   auto has_queue_clear   = MapKey::IsDown(GameFunction::ActionQueueClear);
   auto has_recall =
       MapKey::IsDown(GameFunction::ActionRecall) && (!Config::Get().disable_preview_recall || !CanHideViewers());
+  const bool require_visible_target = has_primary && Config::Get().primary_requires_visible_target;
 
   if (has_queue_clear) {
     action_queue->ClearQueue(fleet);
@@ -1077,15 +1472,10 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
   } else {
     auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
     for (auto pre_scan_widget : all_pre_scan_widgets) {
-      auto visibility_controller = pre_scan_widget ? pre_scan_widget->_visibilityController : nullptr;
-      if (visibility_controller
-          && (visibility_controller->_state == VisibilityState::Visible
-              || visibility_controller->_state == VisibilityState::Show)) {
+      if (CanHideViewer(pre_scan_widget, require_visible_target)) {
 
         if (auto mine_object_viewer_widget = ObjectFinder<MiningObjectViewerWidget>::Get();
-            mine_object_viewer_widget && mine_object_viewer_widget->_visibilityController
-            && (mine_object_viewer_widget->_visibilityController->_state == VisibilityState::Visible
-                || mine_object_viewer_widget->_visibilityController->_state == VisibilityState::Show)) {
+            CanHideViewer(mine_object_viewer_widget, require_visible_target)) {
           if (has_secondary && pre_scan_widget->_scanEngageButtonsWidget) {
             return pre_scan_widget->_scanEngageButtonsWidget->OnScanButtonClicked();
           } else if (has_primary) {
@@ -1177,9 +1567,7 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
     }
 
     if (auto mine_object_viewer_widget = ObjectFinder<MiningObjectViewerWidget>::Get();
-        mine_object_viewer_widget && mine_object_viewer_widget->_visibilityController
-        && (mine_object_viewer_widget->_visibilityController->_state == VisibilityState::Visible
-            || mine_object_viewer_widget->_visibilityController->_state == VisibilityState::Show)) {
+        CanHideViewer(mine_object_viewer_widget, require_visible_target)) {
       if (has_secondary && mine_object_viewer_widget->_scanEngageButtonsWidget) {
         if (mine_object_viewer_widget->_scanEngageButtonsWidget->Context) {
           return mine_object_viewer_widget->_scanEngageButtonsWidget->OnScanButtonClicked();
@@ -1188,7 +1576,8 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
         return mine_object_viewer_widget->MineClicked();
       }
     } else if (auto star_node_object_viewer_widget = ObjectFinder<StarNodeObjectViewerWidget>::Get();
-               star_node_object_viewer_widget && star_node_object_viewer_widget->Context) {
+               star_node_object_viewer_widget && star_node_object_viewer_widget->Context
+               && (!require_visible_target || CanHideViewer(star_node_object_viewer_widget, true))) {
       if (has_secondary) {
         star_node_object_viewer_widget->OnViewButtonActivation();
         return;
@@ -1218,7 +1607,10 @@ void ExecuteSpaceAction(FleetBarViewController* fleet_bar)
           return;
         }
       } else {
-        navigation_ui_controller->OnSetCourseButtonClick();
+        // Dismissal keeps the native context's last position/path. Preserve that legacy shortcut unless opted out.
+        if (!require_visible_target || navigation_ui_controller->IsSetCourseVisible()) {
+          navigation_ui_controller->OnSetCourseButtonClick();
+        }
         return;
       }
     }
@@ -1343,7 +1735,8 @@ bool install_screen_manager_update_hook()
   if (!helper.isValidHelper()) {
     ErrorMsg::MissingHelper("UI", "ScreenManager");
   } else if (auto update = helper.GetMethod("Update"); update) {
-    SPUD_STATIC_DETOUR(update, ScreenManager_Update_Hook);
+    if (!SPUD_STATIC_DETOUR(update, ScreenManager_Update_Hook))
+      return false;
     installed = true;
     return true;
   } else {

@@ -49,6 +49,14 @@ target("macOSLauncher")
 
     -- Generate Info.plist from template during configuration
     on_config(function (target)
+        -- xmake invokes swift-frontend directly, bypassing the swiftc driver that
+        -- normally injects macro plugin search paths. Xcode 26+ SDKs implement
+        -- SwiftUI property wrappers (@State etc.) as external macros, so point the
+        -- frontend at the platform's macro plugins explicitly.
+        local sdk_platform = os.iorun("xcrun --show-sdk-platform-path"):trim()
+        target:add("scflags", "-external-plugin-path",
+            sdk_platform .. "/Developer/usr/lib/swift/host/plugins#" .. sdk_platform .. "/Developer/usr/bin/swift-plugin-server")
+
         local version_file = path.join(os.scriptdir(), "../mods/src/version.h")
         if not os.isfile(version_file) then
             -- GitHub Actions warning

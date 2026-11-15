@@ -123,6 +123,7 @@ enum Domain {
   DOMAIN_FORBIDDENTECH = -696223371;
   DOMAIN_MINIGAMES = 1618762116;
   DOMAIN_DAILYGOALS = -1315542941;
+  DOMAIN_PLANETARY = 838119310;
 }
 
 enum GameActivityPhaseType {
@@ -498,6 +499,8 @@ enum ClientModifierType {
   CLIENTMODIFIERTYPE_MODSKILLCUTTINGBEAMABILITYCOST = 226;
   CLIENTMODIFIERTYPE_MODSKILLCUTTINGBEAMPVEBASEDAMAGEPERCENTAGE = 240;
   CLIENTMODIFIERTYPE_MODSKILLCUTTINGBEAMPVPBASEDAMAGEPERCENTAGE = 241;
+  CLIENTMODIFIERTYPE_MODPLANETARYBASERESOURCEGENERATION = 254;
+  CLIENTMODIFIERTYPE_MODPLANETARYBASERESOURCESTORAGE = 255;
   CLIENTMODIFIERTYPE_MODISOLYTICDAMAGE = 707;
   CLIENTMODIFIERTYPE_MODISOLYTICDEFENSE = 808;
   CLIENTMODIFIERTYPE_MODBDABILITYEFFECT = 220;
@@ -610,6 +613,7 @@ enum JobType {
   JOBTYPE_REPAIRFLEETIPVP = 14;
   JOBTYPE_CLIENTMODULERESOURCEPRODUCTION = 1000;
   JOBTYPE_CLIENTMINERESOURCEPRODUCTION = 1001;
+  JOBTYPE_CLIENTMODULERESOURCEPRODUCTIONPLANETARY = 1002;
 }
 
 enum MissionState {
@@ -689,6 +693,8 @@ enum ObjectiveType {
   OBJECTIVETYPE_MINIGAMESTAGE = 25;
   OBJECTIVETYPE_VISITSECTION = 26;
   OBJECTIVETYPE_DONTDEFEATFLEET = 27;
+  OBJECTIVETYPE_PLANETARYBASEBUILDINGLEVEL = 28;
+  OBJECTIVETYPE_PLANETARYBASEBUILDINGPIECES = 29;
 }
 
 enum HullType {
@@ -850,6 +856,7 @@ enum InventoryItemType {
   INVENTORYITEMTYPE_INVENTORYCOSMETICS = 12;
   INVENTORYITEMTYPE_INVENTORYWORKER = 13;
   INVENTORYITEMTYPE_INVENTORYFORBIDDENTECHSHARD = 14;
+  INVENTORYITEMTYPE_INVENTORYPLANETARYBASEBUILDINGPIECE = 15;
   INVENTORYITEMTYPE_INVENTORYSTACK = 100;
   INVENTORYITEMTYPE_INVENTORYSPEEDUP = 101;
   INVENTORYITEMTYPE_INVENTORYRESOURCEBATCH = 102;
@@ -1009,6 +1016,8 @@ enum RequirementType {
   REQUIREMENTTYPE_SHIPTIER = 8;
   REQUIREMENTTYPE_NUMOFFICERATGIVENTIERS = 9;
   REQUIREMENTTYPE_NUMARTIFACTSATGIVENLEVEL = 10;
+  REQUIREMENTTYPE_PLANETARYBUILDINGLEVEL = 11;
+  REQUIREMENTTYPE_PLANETARYPROSPERITY = 12;
 }
 
 enum AccountState {
@@ -1083,6 +1092,8 @@ enum ObjectiveEventTrigger {
   OBJECTIVEEVENTTRIGGER_OFFICERASSIGNED = 16;
   OBJECTIVEEVENTTRIGGER_STARBASEMOVED = 17;
   OBJECTIVEEVENTTRIGGER_MINIGAMESTAGECOMPLETED = 18;
+  OBJECTIVEEVENTTRIGGER_PLANETARYBASEBUILDINGBUILT = 19;
+  OBJECTIVEEVENTTRIGGER_PLANETARYBASEBUILDINGPIECESGRANTED = 20;
 }
 
 enum ChestSourceType {
@@ -1725,6 +1736,8 @@ oneof Attributes {
   MissionObjective.DefeatChallengeNPCInstantiatedAttributes defeatChallengeNpcInstantiatedAttributes = 23;
   MissionObjective.VisitSectionAttributes visitSectionAttributes = 24;
   MissionObjective.DefeatNPCInstantiatedAttributes dontDefeatFleetAttributes = 25;
+  MissionObjective.PlanetaryBaseBuildingLevelAttributes planetaryBaseBuildingLevelAttributes = 26;
+  MissionObjective.PlanetaryBaseBuildingPiecesAttributes planetaryBaseBuildingPiecesAttributes = 27;
 }
 
 }
@@ -1857,6 +1870,16 @@ message VisitSectionAttributes {
   int64 sectionId = 1;
 }
 
+message PlanetaryBaseBuildingLevelAttributes {
+  int64 buildingId = 1;
+  int64 level = 2;
+}
+
+message PlanetaryBaseBuildingPiecesAttributes {
+  int64 buildingId = 1;
+  int64 amount = 2;
+}
+
   MissionAttributes attributes = 7;
   int64 id = 1;
   ObjectiveType type = 2;
@@ -1986,6 +2009,7 @@ oneof Params {
 
 message ChestContent {
   repeated InventoryItem inventoryItems = 1;
+  string orderId = 2;
 }
 
 message MissionParams {
@@ -2170,6 +2194,17 @@ oneof Params {
   PartyState state = 7;
   int64 partySpecId = 8;
   map<string, bool> memberReadyStatus = 10;
+}
+
+message PlanetaryBase {
+  map<int64, PlanetaryBuilding> buildings = 1;
+  map<int64, int64> pieces = 2;
+}
+
+message PlanetaryBuilding {
+  int64 id = 1;
+  int64 specId = 2;
+  int32 level = 3;
 }
 
 message InventoryItem {
@@ -2769,6 +2804,7 @@ message UserProfile {
   int32 gameworldId = 11;
   bool isMentor = 12;
   uint64 maxWarpRange = 13;
+  bool planetaryBaseUnlocked = 14;
 }
 
 message WaveDefenseChallenge {
@@ -3293,6 +3329,10 @@ message ResourceEntry {
   int64 upperCapacity = 3;
 }
 
+message ResearchConfig {
+  int32 bulkResearchLevelUnlock = 1;
+}
+
 message ResourceConfig {
   int64 officerExchangeCurrencyId = 1;
   int32 harvestCooldown = 2;
@@ -3503,6 +3543,17 @@ enum Type {
   TYPE_CROSSALLIANCEARMADASFROMREGIONALRESPONSE = 216;
   TYPE_PLAYERPARTYRESPONSE = 217;
   TYPE_USERHISTORY = 218;
+  TYPE_PLANETARYBASEDATA = 1213;
+  TYPE_PLANETARYRESOURCEPRODUCERS = 1214;
+  TYPE_PLANETARYMAPDATA = 1215;
+  TYPE_PLANETARYMAPPROSPERITY = 1216;
+  TYPE_PLANETARYMAPLOCK = 1217;
+  TYPE_PLANETARYMAPCLEARABLEPOINTS = 1218;
+  TYPE_PLANETARYMAPRESPONSE = 1219;
+  TYPE_PLANETARYHELPRESPONSE = 1220;
+  TYPE_PLANETARYHELPRECORDSRESPONSE = 1221;
+  TYPE_PLANETARYHELPDATA = 1222;
+  TYPE_PLANETARYSTATICSPECS = 1223;
   TYPE_BATTLERESULTHEADERS = 219;
   TYPE_HAZARDRESULTHEADERS = 220;
   TYPE_BATTLEREPORT = 221;
@@ -3526,6 +3577,17 @@ enum Type {
   TYPE_STARBASEMODULES = 239;
   TYPE_RESOURCEPRODUCERS = 240;
   TYPE_STARBASE = 241;
+  TYPE_NODESYSTEM = 242;
+  TYPE_DOCKINGPOINTS = 243;
+  TYPE_PLAYERCONTAINER = 244;
+  TYPE_MARAUDERQUICKSCANDATA = 245;
+  TYPE_ALLIANCECONTAINER = 246;
+  TYPE_QUICKSCANRESULTS = 247;
+  TYPE_DEPLOYEDFLEETS = 248;
+  TYPE_MYDEPLOYEDFLEETS = 249;
+  TYPE_FLEETS = 250;
+  TYPE_SHIPS = 251;
+  TYPE_RESOURCEHARVESTERS = 252;
   TYPE_OUTPOSTSTATICDATA = 8401;
   TYPE_OUTPOSTUPGRADERESPONSE = 8402;
   TYPE_OUTPOSTSYNC = 8403;
@@ -3535,6 +3597,7 @@ enum Type {
   TYPE_DYNAMICGALAXYDATASYNC = 8502;
   TYPE_CROSSALLIANCEARMADAS = 87001;
   TYPE_TRACKER = 9301;
+  TYPE_RESEARCHCONFIG = 91100;
 }
 
   Type type = 1;
@@ -3656,6 +3719,9 @@ message AllianceContributionCooldownParams {
 message ResearchParams {
   int64 projectId = 1;
   int32 level = 2;
+  repeated int64 projectIds = 3;
+  repeated int32 levels = 4;
+  bool isBulk = 5;
 }
 
 message ScrapyardParams {
@@ -3843,6 +3909,163 @@ message PartyResponse {
 
 message PlayerPartyResponse {
   PartyResponse response = 1;
+}
+
+message PlayerShipData {
+  int64 id = 1;
+  int32 tier = 2;
+  int64 hullId = 3;
+  repeated int64 components = 4;
+  int32 level = 5;
+  float levelPercentage = 6;
+}
+
+message PlayerShipsResponse {
+  map<int64, PlayerShipData> ships = 1;
+}
+
+message PlanetaryBaseSpec {
+  int64 id = 1;
+  string buildingName = 2;
+  int32 buildingType = 3;
+  bool canDisassemble = 4;
+  bool canMove = 5;
+  bool canRetrieve = 6;
+  bool inHandbook = 7;
+  int32 category = 8;
+  int32 maxActive = 9;
+  int32 rarity = 10;
+  string ref = 11;
+  int32 size = 12;
+  bool canProducePoints = 13;
+  bool hasPieces = 14;
+  IdRefs idRefs = 15;
+  bool canConvert = 16;
+  int64 convertType = 17;
+  int64 convertAmount = 18;
+  int32 maxOwned = 19;
+}
+
+message PlanetaryBaseUpgradeSpec {
+message Level {
+  int64 militaryMight = 1;
+  int64 picId = 2;
+  int64 prefabId = 3;
+  int64 prosperity = 4;
+  int64 prosperityAmountRequired = 5;
+  map<int64, int64> refunds = 6;
+  repeated Requirement requirements = 7;
+  map<int64, int64> resourcesCost = 8;
+  repeated InventoryItem rewards = 9;
+  int64 resourceType = 10;
+  int64 planetaryBuildingPiecesCost = 11;
+  int64 planetaryBuildingPiecesRefunds = 12;
+}
+
+  int64 id = 1;
+  string ref = 2;
+  repeated int64 buffIds = 3;
+  bool startingModule = 4;
+  repeated Level levels = 5;
+}
+
+message PlanetaryBaseHelpSpec {
+message Rewards {
+  repeated InventoryItem items = 1;
+}
+
+  int32 baseLevel = 1;
+  int64 cooldown = 2;
+  int32 helpeeCount = 3;
+  map<int32, Rewards> helpeeRewards = 4;
+  int32 helperCount = 5;
+  map<int32, Rewards> helperRewards = 6;
+}
+
+message PlanetaryMapData {
+message BuildingData {
+  int64 position = 1;
+  int32 status = 2;
+  int64 specId = 3;
+  int32 level = 4;
+}
+
+  map<int64, BuildingData> buildings = 1;
+}
+
+message PlanetaryResourceProducer {
+  google.protobuf.Timestamp lastSnapshot = 1;
+  google.protobuf.Timestamp lastHarvest = 2;
+  float currentAmount = 3;
+  bool isActive = 4;
+  float totalAmount = 5;
+}
+
+message PlanetaryResourceProducersResponse {
+  map<int64, PlanetaryResourceProducer> planetaryResourceProducers = 1;
+}
+
+message PlanetaryGridOccupancy {
+  repeated string cells = 1;
+  int32 width = 2;
+}
+
+message PlanetaryMapProsperityResponse {
+  int64 prosperity = 1;
+}
+
+message PlanetaryMapLockResponse {
+  PlanetaryGridOccupancy lockStatus = 1;
+}
+
+message PlanetaryMapClearablePointsResponse {
+  int64 clearablePoints = 1;
+}
+
+message PlanetaryHelpData {
+  int64 given = 1;
+  int64 received = 2;
+  int64 totalGiven = 3;
+  int64 totalReceived = 4;
+  int64 cooldownUntil = 5;
+  int64 cooldownEta = 6;
+  string targetUserId = 7;
+}
+
+message PlanetaryHelpRecordItem {
+  string actionId = 1;
+  string helperId = 2;
+  int64 helperBaseLevel = 3;
+  int64 targetBaseLevel = 4;
+  repeated InventoryItem helperRewardSummary = 5;
+  repeated InventoryItem targetRewardSummary = 6;
+  int64 createdTimestamp = 7;
+}
+
+message PlanetaryStaticSpecs {
+  repeated PlanetaryBaseSpec planetaryBaseSpecs = 1;
+  repeated PlanetaryBaseUpgradeSpec planetaryBaseUpgradeSpecs = 2;
+  repeated PlanetaryBaseHelpSpec planetaryBaseHelpSpecs = 3;
+}
+
+message PlanetaryMapResponse {
+  PlanetaryMapData mapData = 1;
+  PlanetaryGridOccupancy locked = 2;
+  int64 prosperity = 3;
+  int64 clearablePoints = 4;
+  string ownerUserId = 5;
+}
+
+message PlanetaryHelpResponse {
+  PlanetaryHelpData helper = 1;
+  PlanetaryHelpData target = 2;
+  bool canHelpTarget = 3;
+  bool helperHasHelpedTargetToday = 4;
+  int64 helpErrorCode = 5;
+}
+
+message PlanetaryHelpRecordsResponse {
+  repeated PlanetaryHelpRecordItem planetaryHelpRecords = 1;
 }
 
 message CommonInventoryItemParams {
@@ -4603,6 +4826,14 @@ message StaticSyncOutpostStaticDataResponse {
   OutpostStaticSpecs outpostStaticSpecs = 1;
 }
 
+message StaticSyncResearchConfResponse {
+  ResearchConfig researchConfig = 1;
+}
+
+message StaticSyncPlanetarySpecsResponse {
+  PlanetaryStaticSpecs planetaryStaticSpecs = 1;
+}
+
 message HazardSpec {
 message HazardLevel {
   int32 level = 1;
@@ -4832,6 +5063,10 @@ oneof Params {
   float miningNodeThreshold = 20;
   ResourceOwnerType ownerType = 21;
   int32 generation = 22;
+  google.protobuf.Timestamp expirationTimestamp = 23;
+  int64 hardCap = 24;
+  int64 expiryConversionResourceId = 25;
+  float expiryConversionRatio = 26;
 }
 
 message ResourceSpeedupParameters {
@@ -5371,4 +5606,12 @@ message WaveDefenseChallengeDataResponse {
 
 message ActiveWormholesResponse {
   repeated Wormhole wormholes = 1;
+}
+
+message JournalHeaderProto {
+  int64 id = 1;
+}
+
+message BattleResultHeadersResponse {
+  repeated JournalHeaderProto headers = 1;
 }

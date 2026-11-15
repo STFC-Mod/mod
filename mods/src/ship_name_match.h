@@ -2,26 +2,20 @@
 
 #include "str_utils.h"
 
+#include <il2cpp/il2cpp-functions.h>
+
 #include <prime/FleetPlayerData.h>
 #include <prime/HullSpec.h>
 
-#include <algorithm>
 #include <string>
 #include <string_view>
 #include <vector>
 
-// Shared ship-name matching for pinned_ships and the instant_warp_* filters.
-// Compares a config entry against a ship's HullSpec.Name and HullSpec.IdStr,
-// normalized and matched on trailing words only (so "Athena" matches "USS
-// Academy Athena" without a generic "Titan" matching "Titan-A").
 namespace ShipNameMatch {
 
-// Upper-cases, drops "_LIVE"/abbreviation dots/apostrophes, turns
-// underscores/hyphens into spaces, and makes a leading "USS " optional.
 inline std::string NormalizeKey(std::string_view raw)
 {
   auto upper = AsciiStrToUpper(raw);
-  upper      = std::string(StripSuffix(upper, "_LIVE"));
 
   std::string cleaned;
   cleaned.reserve(upper.size());
@@ -79,80 +73,71 @@ inline bool EndsWithWords(const std::vector<std::string>& candidate, const std::
   return true;
 }
 
-// Ships whose HullSpec.Name/IdStr share no words with what players actually
-// call them (e.g. GS-31's HullSpec.Name is "Junker"). `canonical` must exactly
-// match one of a ship's normal candidates for its aliases to apply.
-struct ShipAliasGroup {
-  std::string_view              canonical;
-  std::vector<std::string_view> aliases;
-};
-
-inline const std::vector<ShipAliasGroup>& KnownShipAliases()
+inline std::string LocalizedShipName(int64_t loca_id)
 {
-  static const std::vector<ShipAliasGroup> groups = {
-      {"Junker", {"GS-31"}},
-      {"Franklin 2.0", {"Franklin-A"}},
-      {"Vidar 2", {"Vidar Talios", "Talios", "Vi'dar Talios"}},
-      {"USS Luna", {"USS Beatty", "Beatty"}},
-      {"D'Vor NanDi", {"D'Vor Feesha", "Feesha", "Dvor Feesha"}},
-      {"ROM_KID_Aug", {"Hijacked Legionary"}},
-      {"FED_KID_Aug", {"Hijacked USS Mayflower", "Hijacked Mayflower"}},
-      {"KLG_KID_Aug", {"Hijacked D3", "Hijacked D3 Class"}},
+  if (loca_id <= 0) return {};
+
+  struct Resolved {
+    Il2CppClass*  ctx_cls  = nullptr;
+    const MethodInfo* ctor = nullptr;
+    Il2CppString* (*localise)(void*, bool, int32_t) = nullptr;
   };
-  return groups;
+
+  static const Resolved resolved = [] {
+    Resolved r{};
+
+    auto ctx_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.UI", "LocaleTextContext");
+    if (!ctx_helper.get_cls()) return r;
+
+    auto* ctor = ctx_helper.GetMethodInfo(".ctor", 2);
+    if (!ctor) return r;
+
+    auto localizer_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Client.Localization", "Localizer");
+    auto* localise = localizer_helper.get_cls()
+                         ? localizer_helper.GetMethod<Il2CppString* (void*, bool, int32_t)>("Localise", 3)
+                         : static_cast<Il2CppString* (*)(void*, bool, int32_t)>(nullptr);
+    if (!localise) return r;
+
+    r.ctx_cls  = ctx_helper.get_cls();
+    r.ctor     = ctor;
+    r.localise = localise;
+    return r;
+  }();
+
+  if (!resolved.localise) return {};
+
+  auto* id_str  = il2cpp_string_new(("ship_name_" + std::to_string(loca_id)).c_str());
+  auto* cat_str = il2cpp_string_new("ships");
+  if (!id_str || !cat_str) return {};
+
+  void*            ctor_args[2] = {id_str, cat_str};
+  Il2CppException* exc          = nullptr;
+  auto*            ctx          = il2cpp_object_new(resolved.ctx_cls);
+  if (!ctx) return {};
+  il2cpp_runtime_invoke(resolved.ctor, ctx, ctor_args, &exc);
+  if (exc) return {};
+
+  if (const auto* str = resolved.localise(ctx, false, 0); str != nullptr) {
+    return to_string(str);
+  }
+  return {};
 }
 
-// Word-sequences from a ship's Name/IdStr plus any known aliases (see
-// KnownShipAliases). Optionally captures the raw strings for diagnostics.
-inline std::vector<std::vector<std::string>> CandidateWords(FleetPlayerData* ship, std::string* debug_name = nullptr,
-                                                             std::string* debug_idstr = nullptr)
+inline std::string GameDisplayName(FleetPlayerData* ship)
 {
-  std::vector<std::vector<std::string>> candidates;
-  if (!ship) return candidates;
-
-  const auto hull = ship->Hull;
-  if (!hull) return candidates;
-
-  if (const auto name = hull->Name; name != nullptr) {
-    const auto raw = to_string(name);
-    if (debug_name) *debug_name = raw;
-    if (auto words = SplitWords(NormalizeKey(raw)); !words.empty()) {
-      candidates.push_back(std::move(words));
-    }
-  }
-
-  if (const auto idstr = hull->IdStr; idstr != nullptr) {
-    const auto raw = to_string(idstr);
-    if (debug_idstr) *debug_idstr = raw;
-    if (auto words = SplitWords(NormalizeKey(raw));
-        !words.empty() && std::ranges::find(candidates, words) == candidates.end()) {
-      candidates.push_back(std::move(words));
-    }
-  }
-
-  for (const auto& group : KnownShipAliases()) {
-    const auto canonical_words = SplitWords(NormalizeKey(group.canonical));
-    if (canonical_words.empty()) continue;
-    const bool is_this_ship =
-        std::ranges::any_of(candidates, [&](const auto& words) { return words == canonical_words; });
-    if (!is_this_ship) continue;
-
-    for (const auto alias : group.aliases) {
-      if (auto words = SplitWords(NormalizeKey(alias));
-          !words.empty() && std::ranges::find(candidates, words) == candidates.end()) {
-        candidates.push_back(std::move(words));
-      }
-    }
-  }
-
-  return candidates;
+  return ship && ship->Hull ? LocalizedShipName(ship->GetLocaId()) : std::string{};
 }
 
-// True if any of `candidates` ends with `pinned_words`.
-inline bool MatchesAny(const std::vector<std::vector<std::string>>& candidates,
-                       const std::vector<std::string>& pinned_words)
+inline std::vector<std::string> DisplayWords(FleetPlayerData* ship)
 {
-  return std::ranges::any_of(candidates, [&](const auto& words) { return EndsWithWords(words, pinned_words); });
+  if (!ship) return {};
+
+  return SplitWords(NormalizeKey(GameDisplayName(ship)));
+}
+
+inline bool MatchesDisplay(const std::vector<std::string>& display_words, const std::vector<std::string>& pinned_words)
+{
+  return EndsWithWords(display_words, pinned_words);
 }
 
 } // namespace ShipNameMatch

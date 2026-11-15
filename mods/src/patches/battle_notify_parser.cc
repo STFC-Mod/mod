@@ -383,7 +383,7 @@ static std::string build_armada_created_body(Il2CppObject* data)
         auto tag         = tag_value ? to_string(tag_value) : std::string{};
         auto owner_name  = owner_value ? to_string(owner_value) : std::string{};
         auto target_name = target_value ? to_string(target_value) : std::string{};
-        auto target_level = read_instance_field<int32_t>(target, "level_");
+        auto target_level = read_instance_field<int32_t>(attack, "<TargetLevel>k__BackingField");
 
         if (target_name.empty()) {
           auto loca_id = read_instance_field<int64_t>(target, "_locaId");

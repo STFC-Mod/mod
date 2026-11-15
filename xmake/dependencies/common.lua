@@ -20,7 +20,7 @@ add_requires("toml++")
 add_requires("nlohmann_json")
 add_requires("protobuf 35.1")
 add_requires("cpr", {system = false})
-add_requires("spud v0.2.0-3")
+add_requires("spud v0.2.0-4")
 add_requires("libil2cpp")
 add_requires("simdutf", {system = false})
 

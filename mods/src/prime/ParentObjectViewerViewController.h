@@ -54,6 +54,7 @@ public:
   bool __get_IsShowing()
   {
     static auto field = get_class_helper().GetProperty("IsShowing");
-    return *field.GetRaw<bool>(this);
+    const auto* showing = field.Get<bool>(this);
+    return showing && *showing;
   }
 };

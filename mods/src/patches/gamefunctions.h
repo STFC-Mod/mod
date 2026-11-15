@@ -22,6 +22,7 @@ enum GameFunction {
   ShowAllianceHelp,
   ShowArtifacts,
   ShowOfficers,
+  ShowOfficerPresets,
   ShowCommander,
   ShowRefinery,
   ShowQTrials,
@@ -102,6 +103,8 @@ enum GameFunction {
   FocusSearch,
 
   ShowShipConstruction,
+  ShowOfficerSwap,
+  ShowShipSwap,
   ShowShields,
   ShowBattlelogs,
 

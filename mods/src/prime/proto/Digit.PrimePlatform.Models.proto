@@ -258,6 +258,11 @@ message Instance {
   PlayerTransferState playerTransferState = 7;
 }
 
+message StreakRewardData {
+  int64 bundleId = 1;
+  repeated Digit.PrimePlatform.Content.ContentItem items = 2;
+}
+
 message AllianceGamesChangesNotification {
   repeated string addedTaskIds = 1;
   repeated string removedTaskIds = 2;
@@ -386,6 +391,7 @@ message LoginStreakResponse {
   int32 lastStreakGameDay = 2;
   int32 resetTimeOfDay = 3;
   int32 resetTimeDuration = 4;
+  StreakRewardData streakRewardData = 5;
 }
 
 message PlatformUserProfile {

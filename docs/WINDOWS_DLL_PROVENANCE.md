@@ -4,7 +4,7 @@ Windows builds publish a `stfc-identity-v1` marker in the DLL's standard `Commen
 minimal, descriptive, and self-declared. It helps identify a build, but it is not evidence of authenticity and must
 not be used as an authorization or trust decision by itself.
 
-For protected `main` and `dev` pushes in `netniV/stfc-mod`, the upstream Build workflow creates a GitHub/Sigstore
+For protected `main` and `dev` pushes in `STFC-Mod/mod`, the upstream Build workflow creates a GitHub/Sigstore
 build-provenance attestation for the exact `version.dll` bytes after verifying the embedded marker. Pull requests,
 fork runs, unprotected refs, tags, and other repositories do not create authoritative attestations.
 
@@ -14,11 +14,15 @@ protected source ref, and reviewed source commit with a current GitHub CLI. Repl
 
 ```shell
 gh attestation verify version.dll \
-  --repo netniV/stfc-mod \
-  --signer-workflow netniV/stfc-mod/.github/workflows/ci.yaml \
+  --repo STFC-Mod/mod \
+  --signer-workflow STFC-Mod/mod/.github/workflows/ci.yaml \
   --source-ref refs/heads/main \
   --source-digest <expected-commit-sha>
 ```
+
+The canonical repository is `STFC-Mod/mod` (GitHub repository ID `693298224`), transferred from `netniV/stfc-mod`.
+For artifacts attested before the transfer, verify the original repository and signer-workflow identity recorded in
+the attestation; the transfer does not rewrite those historical claims or authorize a broader signer policy.
 
 For a reviewed `dev` artifact, use `--source-ref refs/heads/dev` instead. Do not omit the source ref or digest when
 making a trust decision.

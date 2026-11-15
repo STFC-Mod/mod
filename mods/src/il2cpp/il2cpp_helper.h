@@ -104,6 +104,11 @@ public:
 #endif
   }
 
+  FieldInfo* get_info() const
+  {
+    return this->fieldInfo;
+  }
+
   inline ptrdiff_t offset() const
   {
     return this->fieldInfo->offset;
@@ -337,10 +342,10 @@ private:
 inline IL2CppClassHelper il2cpp_get_class_helper_impl(const char* assembly, const char* namespacez, const char* name)
 {
   auto domain    = il2cpp_domain_get();
-  auto assemblyT = il2cpp_domain_assembly_open(domain, assembly);
-  auto image     = il2cpp_assembly_get_image(assemblyT);
+  auto assemblyT = domain ? il2cpp_domain_assembly_open(domain, assembly) : nullptr;
+  auto image     = assemblyT ? il2cpp_assembly_get_image(assemblyT) : nullptr;
 
-  auto cls = il2cpp_class_from_name(image, namespacez, name);
+  auto cls = image ? il2cpp_class_from_name(image, namespacez, name) : nullptr;
 
   return IL2CppClassHelper{cls};
 }

@@ -20,7 +20,7 @@ sponsorships are greatly appreciated.
 First clone and initialize the repository:
 
 ```bash
-git clone https://github.com/netniv/stfc-mod.git
+git clone https://github.com/STFC-Mod/mod.git stfc-mod
 cd stfc-mod
 ```
 

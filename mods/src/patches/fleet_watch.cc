@@ -165,6 +165,23 @@ void dispatch_transition(int slot, FleetPlayerData* fleet, FleetState before, Fl
   }
 }
 
+void dispatch_baseline()
+{
+  CallbackScope callback_scope;
+  for (const auto& subscription : s_subscriptions) {
+    if (!subscription.on_baseline) {
+      continue;
+    }
+    try {
+      subscription.on_baseline();
+    } catch (const std::exception& error) {
+      spdlog::warn("[FleetWatch] baseline callback failed: {}", error.what());
+    } catch (...) {
+      spdlog::warn("[FleetWatch] baseline callback failed with an unknown exception");
+    }
+  }
+}
+
 void observe_fleet(FleetPlayerData* fleet, int requested_slot, bool publish)
 {
   if (!fleet || requested_slot < 0 || requested_slot >= kFleetSlotCount) {
@@ -360,6 +377,9 @@ void Tick()
             spdlog::info("[FleetWatchProbe] established stable baseline for {} fleet slots", baseline_count);
           }
 #endif
+          if (final_scan.manager_available) {
+            dispatch_baseline();
+          }
         }
       }
     } else if (lifetime >= kSeedLifetimeMs) {

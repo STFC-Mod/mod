@@ -6,6 +6,7 @@ struct PopulatedSystemData {
 public:
   __declspec(property(get = __get__backdrop)) void* _backdrop;
   __declspec(property(get = __get__systemId)) int64_t _systemId;
+  __declspec(property(get = __get__VariationCollection)) void* VariationCollection;
 
 private:
   static IL2CppClassHelper& get_class_helper()
@@ -16,6 +17,12 @@ private:
   }
 
 public:
+  void* __get__VariationCollection()
+  {
+    static auto field = get_class_helper().GetField("<VariationCollection>k__BackingField");
+    return field.get_info() ? *(void**)((ptrdiff_t)this + field.offset()) : nullptr;
+  }
+
   void* __get__backdrop()
   {
     static auto field = get_class_helper().GetField("_backdrop");

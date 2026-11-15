@@ -4,6 +4,7 @@
 #include <patches/mapkey.h>
 
 #include <il2cpp/il2cpp_helper.h>
+#include <il2cpp/method_contract.h>
 
 #include <prime/NavigationFleetWidget.h>
 #include <prime/NavigationLOD.h>
@@ -226,6 +227,7 @@ inline void StoreZoom(std::string label, float &zoom, NavigationZoom *_this)
 }
 
 static float s_expectedScale = 0;
+static uint64_t s_backdropLoadRevision = 0;
 
 static void ApplySystemZoomRange(NavigationZoom *_this, float radius)
 {
@@ -534,6 +536,49 @@ void PlanetViewUtils_CameraZoomedEventHandler_Hook(auto original, PlanetViewUtil
   }
 }
 
+void PlanetViewUtils_CreateBackdrop_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *backdrop,
+                                        Il2CppObject *resource, bool usingDefault)
+{
+  original(_this, backdrop, resource, usingDefault);
+  // Native creation has now assigned the selected scenery's authored transform.
+  // Reuse the existing getter/scaling path before any player zoom event.
+  if (_this && resource) {
+    ++s_backdropLoadRevision;
+    // A newly authored scale must not be compared with the previous system.
+    s_expectedScale = 0;
+    _this->GetFlatRenderable();
+  }
+}
+
+void PlanetViewUtils_CreateBackdropCollection_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *backdrop,
+                                                  Il2CppObject *resource, bool usingDefault)
+{
+  original(_this, backdrop, resource, usingDefault);
+  // The collection overload can load scenery without the Object callback.
+  if (_this && resource) {
+    ++s_backdropLoadRevision;
+    s_expectedScale = 0;
+    _this->GetFlatRenderable();
+  }
+}
+
+void PlanetViewUtils_Populate_Hook(auto original, PlanetViewUtils *_this, Il2CppObject *system, int64_t nodeId,
+                                  NodeDepth depth)
+{
+  auto      *previous_population = _this ? _this->_popData : nullptr;
+  const auto load_revision       = s_backdropLoadRevision;
+  original(_this, system, nodeId, depth);
+
+  // Cached variations reload their authored transforms in Populate rather than CreateBackdrop.
+  // A cached prefab backdrop already retains its scaled transform and must not be scaled again.
+  auto *population = _this ? _this->_popData : nullptr;
+  if (depth == NodeDepth::SolarSystem && population && population != previous_population
+      && population->VariationCollection && load_revision == s_backdropLoadRevision) {
+    s_expectedScale = 0;
+    _this->GetFlatRenderable();
+  }
+}
+
 void NavigationZoom_SetViewParameters_Hook(auto original, NavigationZoom *_this, float radius, NodeDepth depth)
 {
   if (fleet_label_hooks_installed && depth != NodeDepth::SolarSystem) {
@@ -701,6 +746,27 @@ void InstallZoomHooks()
   {
     auto pv_helper = il2cpp_get_class_helper("Assembly-CSharp", "Digit.Prime.Navigation", "PlanetViewUtils");
     if (pv_helper.isValidHelper()) {
+      auto ptr_populate = pv_helper.GetMethod("Populate");
+      if (ptr_populate)
+        SPUD_STATIC_DETOUR(ptr_populate, PlanetViewUtils_Populate_Hook);
+      else
+        ErrorMsg::MissingMethod("PlanetViewUtils", "Populate");
+
+      const auto *create = method_contract::Resolve(
+          pv_helper.get_cls(), "CreateBackdrop", false, "System.Void",
+          {"Digit.PrimeServer.Models.ITreeNode", "UnityEngine.Object", "System.Boolean"});
+      const auto *create_collection = method_contract::Resolve(
+          pv_helper.get_cls(), "CreateBackdrop", false, "System.Void",
+          {"Digit.PrimeServer.Models.ITreeNode", "SystemVariationConfigCollection", "System.Boolean"});
+      if (create)
+        SPUD_STATIC_DETOUR(create->methodPointer, PlanetViewUtils_CreateBackdrop_Hook);
+      else
+        ErrorMsg::MissingMethod("PlanetViewUtils", "CreateBackdrop(Object)");
+      if (create_collection)
+        SPUD_STATIC_DETOUR(create_collection->methodPointer, PlanetViewUtils_CreateBackdropCollection_Hook);
+      else
+        ErrorMsg::MissingMethod("PlanetViewUtils", "CreateBackdrop(SystemVariationConfigCollection)");
+
       auto ptr_zoom = pv_helper.GetMethod("CameraZoomedEventHandler");
       if (ptr_zoom != nullptr) {
         SPUD_STATIC_DETOUR(ptr_zoom, PlanetViewUtils_CameraZoomedEventHandler_Hook);

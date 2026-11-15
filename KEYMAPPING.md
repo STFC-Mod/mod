@@ -27,7 +27,10 @@ These bindings can be changed in the `[shortcuts]` section of `community_patch_s
 
 | Setting | Default | Action |
 | --- | --- | --- |
+| `show_officerpresets` | `CTRL-O` | Open Officer Presets. |
+| `show_officerswap` | `ALT-O` | Open officer assignment for the selected ship. |
 | `show_shipconstruction` | `SHIFT-N` | Open Ships / Ship Construction (Shipyard → Build Ship). |
+| `show_shipswap` | `ALT-N` | Open Ship Swap for the selected ship. |
 | `show_shields` | `CTRL-S` | Open the Peace Shield selection popup. |
 | `show_battlelogs` | `SHIFT-B` | Open the Battle Reports inbox. |
 
@@ -92,3 +95,11 @@ Value | Key | Value | Key | Value | Key | Value | Key
 ## License
 
 - GPLv3
+
+## Camera movement
+
+In mod-hotkey mode, system and galaxy panning uses `move_up`, `move_down`, `move_left`, and `move_right`.
+Defaults are `W|UP`, `S|DOWN`, `A|LEFT`, and `D|RIGHT`. Existing configured values take precedence;
+for example, `move_left = "LEFT"` keeps left-arrow-only movement until you add `A`.
+Modifiers follow the normal shortcut rules, so `CTRL-S` does not also match plain `S` movement.
+`disable_move_keys` disables keyboard panning; Scopely-hotkey mode retains native pan input.

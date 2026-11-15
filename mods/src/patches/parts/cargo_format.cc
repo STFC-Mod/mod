@@ -15,7 +15,7 @@ static constexpr size_t kCargoIdentifierLen = sizeof(kCargoIdentifier) - 1;
 
 void ColourTextLocalizer_SetLocalTextParameters_Hook(auto original, void* _this, bool parseID, void* args)
 {
-  if (!_this) {
+  if (!_this || !Config::Get().format_cargo_values) {
     original(_this, parseID, args);
     return;
   }
