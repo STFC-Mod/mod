@@ -1,5 +1,9 @@
 # Features
 
+<p align="center">
+  <img src="https://repository-images.githubusercontent.com/693298224/6a87716f-3dbb-48a5-80e0-709e0a1ad133" alt="STFC Community Mod">
+</p>
+
 The mod adds controls and display options to the desktop game.
 Change them in `community_patch_settings.toml`; the
 [English example](configuration/example_community_patch_settings_en.toml) lists the settings and defaults.

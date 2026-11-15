@@ -29,7 +29,7 @@ namespace
 
 struct ZoomEntryState {
   il2cpp::GcHandle controller;
-  ZoomEntry::Gate gate;
+  ZoomEntry::Gate  gate;
 };
 std::unordered_map<NavigationZoom*, ZoomEntryState> zoom_entries;
 

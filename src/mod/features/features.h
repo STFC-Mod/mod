@@ -200,3 +200,8 @@ float WindowDpiScale(bool refresh = false);
 
 // sync/sync.cc
 extern const Feature kSync;
+
+#if __APPLE__
+// mouse_navigation_mac.mm
+extern const Feature kMacNavigationMouse;
+#endif

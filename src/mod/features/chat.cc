@@ -195,16 +195,16 @@ void ChatPreviewController_OnRegionalMessageReceived_Hook(auto original, ChatPre
 
 struct ChatTitleLayout {
   il2cpp::GcHandle element;
-  bool            original_ignore = false;
+  bool             original_ignore = false;
 };
 std::unordered_map<unity::LayoutElement*, ChatTitleLayout> chat_title_layouts;
 
 void RestoreChatTitleLayout(UserProfileWidget* profile)
 {
-  auto* title = profile ? profile->playerTitleWidget() : nullptr;
-  auto* container = title ? title->container() : nullptr;
-  auto* element = container ? container->GetComponent<unity::LayoutElement>() : nullptr;
-  const auto saved = chat_title_layouts.find(element);
+  auto*      title     = profile ? profile->playerTitleWidget() : nullptr;
+  auto*      container = title ? title->container() : nullptr;
+  auto*      element   = container ? container->GetComponent<unity::LayoutElement>() : nullptr;
+  const auto saved     = chat_title_layouts.find(element);
   if (saved == chat_title_layouts.end())
     return;
   if (saved->second.element.Get() == element)
@@ -216,7 +216,7 @@ void HideChatTitle(UserProfileWidget* profile)
 {
   auto* title     = profile ? profile->playerTitleWidget() : nullptr;
   auto* transform = title ? profile->transform() : nullptr;
-  auto* row = transform ? transform->FindInParents<ChatMessageWidget>() : nullptr;
+  auto* row       = transform ? transform->FindInParents<ChatMessageWidget>() : nullptr;
   if (!row) {
     RestoreChatTitleLayout(profile);
     return;

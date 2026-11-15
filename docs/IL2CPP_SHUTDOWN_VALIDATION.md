@@ -1,5 +1,9 @@
 # macOS runtime shutdown hook validation
 
+<p align="center">
+  <img src="https://repository-images.githubusercontent.com/693298224/6a87716f-3dbb-48a5-80e0-709e0a1ad133" alt="STFC Community Mod">
+</p>
+
 Client: `1.000.53284` (`100053284`), inspected 14 November 2026.
 GameAssembly.dylib SHA-256: `a17be3929bc7545b2537093586d971ad800fe9ef4fe15a22063936b731491108`.
 

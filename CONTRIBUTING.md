@@ -111,6 +111,11 @@ git diff --check
 `fmt` requires `clang-format` on `PATH`.
 It formats C++ under `src` and `tests`, plus the Zig build files. It skips Objective-C++ `.mm` files.
 
+In VS Code, install the workspace-recommended Zig and clangd extensions. Workspace settings enable
+formatting on save for C++ and Zig, using `.clang-format` and `zig fmt` respectively.
+Use **Tasks: Run Task → Format project** to run `zig build fmt` across the project.
+The task requires `zig` and `clang-format` on `PATH`; Objective-C++ format on save is disabled.
+
 Choose the relevant native tests:
 
 | Command | Coverage |
