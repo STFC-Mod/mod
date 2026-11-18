@@ -267,38 +267,26 @@ struct TutorialMaskUILoader : unity::Behaviour {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialMaskUILoader">;
 
   unity::Behaviour* Controller()
-  {
-    return Get<"Controller", unity::Behaviour*>();
-  }
+  { return Get<"Controller", unity::Behaviour*>(); }
 };
 
 struct TutorialManager : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager">;
 
   static bool Active()
-  {
-    return Class::Field<"_isActive", bool>();
-  }
+  { return Class::Field<"_isActive", bool>(); }
 
   static void SetActive(bool active)
-  {
-    Class::SetField<"_isActive">(active);
-  }
+  { Class::SetField<"_isActive">(active); }
 
   static bool BlockingInput()
-  {
-    return Class::Field<"_isBlockingInput", bool>();
-  }
+  { return Class::Field<"_isBlockingInput", bool>(); }
 
   static void SetBlockingInput(bool blocked)
-  {
-    Class::SetField<"_isBlockingInput">(blocked);
-  }
+  { Class::SetField<"_isBlockingInput">(blocked); }
 
   TutorialMaskUILoader* loadAndShow()
-  {
-    return Field<"_loadAndShow", TutorialMaskUILoader*>();
-  }
+  { return Field<"_loadAndShow", TutorialMaskUILoader*>(); }
 };
 
 // TouchKit's global pointer-input gate. Tutorials hold it while only their highlighted control may receive input.
@@ -306,14 +294,10 @@ struct TouchKit {
   using Class = il2cpp::Class<"TouchKit", "", "TouchKit">;
 
   static bool BlockTouch()
-  {
-    return Class::Field<"BlockTouch", bool>();
-  }
+  { return Class::Field<"BlockTouch", bool>(); }
 
   static void SetBlockTouch(bool blocked)
-  {
-    Class::SetField<"BlockTouch">(blocked);
-  }
+  { Class::SetField<"BlockTouch">(blocked); }
 };
 
 // Fabric.EventManager, the game's sound middleware. Its shorter PostEvent overloads funnel into the
