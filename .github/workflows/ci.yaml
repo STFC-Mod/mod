@@ -40,7 +40,7 @@ jobs:
         shell: pwsh
         run: |
           zig build install test-toolchains test-codegen test-deps test-il2cpp test-mod test-sync test-spud `
-            -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dtest-optimize=Debug `
+            -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dstrip=true -Dtest-optimize=Debug `
             "-Dstfc_source_state_id=git:${{ github.sha }}" `
             "-Dstfc_base_commit=${{ github.sha }}" `
             "-Dstfc_build_invocation_id=github:${{ github.run_id }}:${{ github.run_attempt }}:windows" `
@@ -70,7 +70,7 @@ jobs:
           STFC_WINDOWS_TOOLCHAIN_URL: ${{ vars.STFC_WINDOWS_TOOLCHAIN_URL }}
         run: |
           zig build fetch-toolchains
-          zig build install build-tests -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dtest-optimize=Debug
+          zig build install build-tests -Dtarget=x86_64-windows-msvc -Doptimize=ReleaseFast -Dstrip=true -Dtest-optimize=Debug
           python3 scripts/verify-windows-binary.py
 
   # The native fixtures need no SDK, so they run on Linux too, where they are cheapest.
@@ -112,7 +112,7 @@ jobs:
       - name: Build and test
         run: |
           zig build install launcher test-toolchains test-codegen test-deps test-il2cpp test-mod ${{ matrix.tests }} \
-            -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast -Dtest-optimize=Debug --summary all
+            -Dtarget=${{ matrix.target }} -Doptimize=ReleaseFast -Dstrip=true -Dtest-optimize=Debug --summary all
       - name: Verify portable linkage
         run: |
           scripts/check-mac-linkage.sh zig-out/macOSLauncher.app/Contents/MacOS/macOSLauncher \

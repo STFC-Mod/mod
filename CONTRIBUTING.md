@@ -80,7 +80,8 @@ To reset build outputs, remove `.zig-cache` and `zig-out`. Keep `.cache/toolchai
 
 ## Choose build options
 
-`Debug` is the default. Use `-Doptimize=ReleaseFast` for releases.
+The default developer build is `ReleaseFast` with debug symbols (`releasedbg`). Use `-Doptimize=Debug` for an
+unoptimized debug build. Production packages also pass `-Dstrip=true`.
 Windows release builds enable link-time optimization. Disable it with `-Dlto=false`.
 The Swift launcher compiles as one module and links after the native archives are ready.
 macOS `ReleaseFast` builds batch feature sources to share header parsing; sync sources compile separately.
@@ -89,11 +90,12 @@ Zig does not support Mach-O LTO, so macOS builds use ordinary optimized compilat
 
 | Option | Effect |
 | --- | --- |
+| `-Dstrip=true` | Strip debug symbols for a production package. |
 | `-Dmoddbg=true` | Define `_MODDBG`: enable debug logging by default, disable sync request timeouts, and add diagnostics. |
 | `-Dbg_image=<file>` | Replace the embedded loading image. |
 | `-Duse_original_bg=true` | Keep the game's loading background. |
 | `-Dmacos-sdk=<path>` | Use an explicit macOS SDK. |
-| `-Dtest-optimize=Debug` | Keep test fixtures and their assertions in Debug while sharing dependencies built with `-Doptimize=ReleaseFast`. |
+| `-Dtest-optimize=<mode>` | Override the test fixtures' `Debug` default; dependencies still use `-Doptimize`. |
 
 `[patches]` switches work in every build.
 For library-only checks, use `zig build il2cpp`, `zig build unity`, or `zig build mods` with the required target.
