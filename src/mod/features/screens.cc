@@ -66,6 +66,12 @@ void ShowCoordinateSearch()
   }
 }
 
+void ShowSettings()
+{
+  PrepareSettingsInput();
+  Hub::GotoSection(SectionID::GameSettings);
+}
+
 // Opens Manage Ships for the fleet selected in the fleet bar. False when none is selected.
 bool OpenManageShips()
 {
@@ -202,7 +208,7 @@ constexpr ScreenShortcut kScreens[] = {
     {Action::kShowAlliance, Goto<SectionID::Alliance_Main>},
     {Action::kShowAllianceHelp, Goto<SectionID::Alliance_Help>},
     {Action::kShowAllianceArmada, Goto<SectionID::Alliance_Armadas>},
-    {Action::kShowSettings, Goto<SectionID::GameSettings>},
+    {Action::kShowSettings, ShowSettings},
     {Action::kShowShips, [] { OpenManageShips(); }, false},
 };
 
