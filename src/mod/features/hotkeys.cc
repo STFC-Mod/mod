@@ -25,9 +25,81 @@ namespace
 // The frame tick dispatches shortcuts whether or not this feature installed; this says whether it did.
 bool                                                 hotkeys_installed = false;
 std::optional<std::chrono::steady_clock::time_point> hotkeys_escape_first_press;
+il2cpp::GcHandle                                     suspended_tutorial_mask;
+std::optional<bool>                                  suspended_tutorial_active;
+std::optional<bool>                                  suspended_tutorial_input;
+std::optional<bool>                                  suspended_touch_block;
+bool                                                 settings_input_requested = false;
+bool                                                 settings_input_entered   = false;
+int                                                  settings_input_wait      = 0;
+
+void RestoreTutorialInput()
+{
+  auto* object = suspended_tutorial_mask.Get<unity::GameObject>();
+  suspended_tutorial_mask.Reset();
+  if (unity::Alive(object))
+    object->SetActive(true);
+  if (suspended_tutorial_active) {
+    TutorialManager::SetActive(*suspended_tutorial_active);
+    suspended_tutorial_active.reset();
+  }
+  if (suspended_tutorial_input) {
+    TutorialManager::SetBlockingInput(*suspended_tutorial_input);
+    suspended_tutorial_input.reset();
+  }
+  if (suspended_touch_block) {
+    TouchKit::SetBlockTouch(*suspended_touch_block);
+    suspended_touch_block.reset();
+  }
+}
+
+void ReleaseSettingsInput()
+{
+  if (!suspended_tutorial_active)
+    suspended_tutorial_active = TutorialManager::Active();
+  TutorialManager::SetActive(false);
+  if (!suspended_tutorial_input)
+    suspended_tutorial_input = TutorialManager::BlockingInput();
+  TutorialManager::SetBlockingInput(false);
+  if (!suspended_touch_block)
+    suspended_touch_block = TouchKit::BlockTouch();
+  TouchKit::SetBlockTouch(false);
+}
 
 void ResetHotkeys()
-{ hotkeys_escape_first_press.reset(); }
+{
+  RestoreTutorialInput();
+  settings_input_requested = false;
+  settings_input_entered   = false;
+  settings_input_wait      = 0;
+  hotkeys_escape_first_press.reset();
+}
+
+void SettingsTutorialInputFrame()
+{
+  if (Hub::CurrentSection() != SectionID::GameSettings) {
+    if (settings_input_entered || (settings_input_requested && --settings_input_wait == 0)) {
+      RestoreTutorialInput();
+      settings_input_requested = false;
+      settings_input_entered   = false;
+    }
+    return;
+  }
+  settings_input_entered = true;
+  ReleaseSettingsInput();
+  if (suspended_tutorial_mask)
+    return;
+
+  auto* manager    = Hub::Class::Get<"TutorialManager", TutorialManager*>();
+  auto* loader     = manager ? manager->loadAndShow() : nullptr;
+  auto* controller = loader ? loader->Controller() : nullptr;
+  auto* object     = unity::ActiveAndEnabled(controller) ? controller->gameObject() : nullptr;
+  if (!object)
+    return;
+
+  suspended_tutorial_mask = il2cpp::GcHandle::Strong(object);
+  object->SetActive(false);
+}
 
 // --- Setting shortcuts ---
 
@@ -118,10 +190,19 @@ void ShortcutsManager_InitializeActions_Hook(auto original, ShortcutsManager* _t
     original(_this);
 }
 
+bool TutorialManager_get_IsBlockingInput_Hook(auto original)
+{
+  // A screen opened directly by a mod shortcut is not one of the tutorial's highlighted controls. Let Settings
+  // receive pointer input while it is open, then restore the tutorial's normal restriction as soon as it closes.
+  return settings_input_requested || Hub::CurrentSection() == SectionID::GameSettings ? false : original();
+}
+
 bool InstallHotkeys()
 {
   il2cpp::HookSet hooks("Hotkeys");
   IL2CPP_STAGE(hooks, ShortcutsManager::Class::Method("InitializeActions"), ShortcutsManager_InitializeActions_Hook);
+  IL2CPP_STAGE(hooks, TutorialManager::Class::StaticMethod<bool()>("get_IsBlockingInput"),
+               TutorialManager_get_IsBlockingInput_Hook);
   // The badges only make sense when the game's own input actions are under the mod's control.
   if (hooks.Commit())
     InstallKeybindBadges();
@@ -132,6 +213,14 @@ bool InstallHotkeys()
   return true;
 }
 } // namespace
+
+void PrepareSettingsInput()
+{
+  ReleaseSettingsInput();
+  settings_input_requested = true;
+  settings_input_entered   = false;
+  settings_input_wait      = 300;
+}
 
 bool HandleShortcuts()
 {
@@ -208,4 +297,5 @@ bool HandleShortcuts()
   return FleetActionShortcuts() || SwallowEscape();
 }
 
-const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys, nullptr, ResetHotkeys};
+const Feature kHotkeys{"Hotkeys", &Config::Patches::hotkeyhooks, InstallHotkeys, SettingsTutorialInputFrame,
+                       ResetHotkeys};

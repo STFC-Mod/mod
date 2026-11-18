@@ -136,6 +136,8 @@ extern const Feature kHavenHistory;
 
 // hotkeys.cc
 extern const Feature kHotkeys;
+// Arms the tutorial-input override before the Settings section transition begins.
+void PrepareSettingsInput();
 // The shortcut dispatch for one frame, run by the frame tick. True when the game's own ScreenManager.Update must
 // not run, so it does not handle the key as well. False until kHotkeys is installed.
 bool HandleShortcuts();

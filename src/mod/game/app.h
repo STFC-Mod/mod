@@ -4,6 +4,7 @@
 // the services the mod touches that belong to no screen (tutorial gates, audio, the Windows window procedure).
 
 #include <il2cpp/il2cpp.h>
+#include <unity/core.h>
 
 #include <algorithm>
 #include <array>
@@ -258,6 +259,60 @@ struct Hub {
     return std::ranges::contains(std::array{SectionID::Navigation_Galaxy, SectionID::Navigation_System,
                                             SectionID::Starbase_Interior, SectionID::Starbase_Exterior},
                                  CurrentSection());
+  }
+};
+
+// The tutorial mask is a full-screen canvas that routes pointer input only to the highlighted control.
+struct TutorialMaskUILoader : unity::Behaviour {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialMaskUILoader">;
+
+  unity::Behaviour* Controller()
+  {
+    return Get<"Controller", unity::Behaviour*>();
+  }
+};
+
+struct TutorialManager : il2cpp::Object {
+  using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Tutorial", "TutorialManager">;
+
+  static bool Active()
+  {
+    return Class::Field<"_isActive", bool>();
+  }
+
+  static void SetActive(bool active)
+  {
+    Class::SetField<"_isActive">(active);
+  }
+
+  static bool BlockingInput()
+  {
+    return Class::Field<"_isBlockingInput", bool>();
+  }
+
+  static void SetBlockingInput(bool blocked)
+  {
+    Class::SetField<"_isBlockingInput">(blocked);
+  }
+
+  TutorialMaskUILoader* loadAndShow()
+  {
+    return Field<"_loadAndShow", TutorialMaskUILoader*>();
+  }
+};
+
+// TouchKit's global pointer-input gate. Tutorials hold it while only their highlighted control may receive input.
+struct TouchKit {
+  using Class = il2cpp::Class<"TouchKit", "", "TouchKit">;
+
+  static bool BlockTouch()
+  {
+    return Class::Field<"BlockTouch", bool>();
+  }
+
+  static void SetBlockTouch(bool blocked)
+  {
+    Class::SetField<"BlockTouch">(blocked);
   }
 };
 
