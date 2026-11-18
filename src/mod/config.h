@@ -243,6 +243,7 @@ public:
     float       loader_logo_scale      = 1.0f;
     bool        loader_tip_enabled     = true;
     bool        galactic_anomaly_timer = false;
+    bool        mirror_space_timer     = false;
   } graphics;
 
   struct Buffs {

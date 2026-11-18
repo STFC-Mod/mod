@@ -642,6 +642,7 @@ void Config::Read(const toml::table& file, toml::table& effective, bool log_valu
   r.Read("graphics", "loader_logo_scale", g.loader_logo_scale);
   r.Read("graphics", "loader_tip_enabled", g.loader_tip_enabled);
   r.Read("graphics", "galactic_anomaly_timer", g.galactic_anomaly_timer);
+  r.Read("graphics", "mirror_space_timer", g.mirror_space_timer);
 
   // [buffs]
   r.Read("buffs", "use_out_of_dock_power", buffs.use_out_of_dock_power);

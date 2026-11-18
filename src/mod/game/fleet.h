@@ -231,8 +231,62 @@ struct ForbiddenTechManager : MonoSingleton<ForbiddenTechManager> {
   }
 };
 
+// Client status effects, including the per-fleet Mirror space countdown.
+enum class StatusEffectType : int32_t {
+  Invalid                      = 0,
+  Cloaked                      = 1,
+  Supported                    = 2,
+  Debuffed                     = 3,
+  WarShieldActivated           = 4,
+  ArmadaSupported              = 5,
+  WeaponDamageActivated        = 6,
+  WeaponPenetrationActivated   = 7,
+  WeaponShotsActivated         = 8,
+  CriticalDamageActivated      = 9,
+  Detected                     = 10,
+  SystemWideBuffed             = 11,
+  SystemWideSupremeBuffed      = 12,
+  IsoDamageBoosted             = 14,
+  DamageToExplorersBoosted     = 15,
+  DamageToBattleshipsBoosted   = 16,
+  DamageToInterceptorsBoosted  = 17,
+  CuttingBeamHit               = 18,
+  SystemPeek                   = 19,
+  WormholeInstaRecallAvailable = 20,
+  MirrorUniverseTimer          = 21,
+  Indestructible               = 22,
+  PostWormholeBuff             = 70001,
+  TauntAsaActivated            = 71001,
+  Static                       = 75001,
+  Charged                      = 75002,
+  Weakened                     = 77001,
+  ChainShotImmunityActivated   = 78001,
+  AutoHuntingActivated         = 83001,
+  Enhanced                     = 86001,
+  BorgProtocolActivated        = 89001,
+  Amplified                    = 91001,
+  TempAutoHuntingActivated     = 96001,
+  NoEffect                     = -1,
+};
+
+struct StatusEffect : il2cpp::Object {
+  using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "StatusEffect">;
+
+  bool IsStatusActive()
+  { return Get<"IsStatusActive", bool>(); }
+  unity::TimeSpan GetRemainingTimespan()
+  { return Call<"GetRemainingTimespan", unity::TimeSpan>(); }
+};
+
 struct FleetPlayerData : il2cpp::Object {
   using Class = il2cpp::Class<"Digit.Client.PrimeLib.Runtime", "Digit.PrimeServer.Models", "FleetPlayerData">;
+
+  bool IsInMirrorUniverse()
+  { return Get<"IsInMirrorUniverse", bool>(); }
+  NodeAddress* Address()
+  { return Get<"Address", NodeAddress*>(); }
+  bool TryGetStatusEffectData(StatusEffectType type, StatusEffect*& effect)
+  { return Call<"TryGetStatusEffectData", bool(StatusEffectType, StatusEffect*&)>(type, effect); }
 
   // No property for the mining timer, so read the private field.
   ITimerData* miningSlotTimer()
