@@ -1,5 +1,6 @@
 // [graphics] galactic_anomaly_timer: a countdown for the active galactic anomaly in the viewed system, under the HUD's
-// Help All / Engage / Claim drawer. All Unity work runs on the frame tick; there are no detours of its own.
+// Help All / Engage / Claim drawer. [graphics] mirror_space_timer shows the earliest fleet countdown in the viewed
+// Mirror system in the same panel. All Unity work runs on the frame tick; there are no detours of its own.
 
 #include "config.h"
 #include "features/features.h"
@@ -68,6 +69,32 @@ int64_t AnomalyRemainingTicks(HudNavigationViewController* nav)
   return timer ? timer->RemainingTime().ticks : 0;
 }
 
+int64_t MirrorRemainingTicks(HudNavigationViewController* nav)
+{
+  auto* context = nav->CanvasContext();
+  auto* address = context ? context->ViewingAddress() : nullptr;
+  auto* bar     = unity::Newest<FleetBarViewController>();
+  auto* fleets  = bar ? bar->CanvasContext() : nullptr;
+  if (!address || !fleets)
+    return 0;
+
+  int64_t remaining = 0;
+  for (auto* fleet : il2cpp::Items(fleets->FleetData())) {
+    if (!fleet || !fleet->IsInMirrorUniverse())
+      continue;
+    auto*         location = fleet->Address();
+    StatusEffect* effect   = nullptr;
+    if (!location || location->System() != address->System()
+        || !fleet->TryGetStatusEffectData(StatusEffectType::MirrorUniverseTimer, effect) || !effect
+        || !effect->IsStatusActive())
+      continue;
+    const int64_t ticks = effect->GetRemainingTimespan().ticks;
+    if (ticks > 0 && (remaining == 0 || ticks < remaining))
+      remaining = ticks;
+  }
+  return remaining;
+}
+
 // Builds the panel: the native rounded sprite twice, with a narrow inset making the border, and a countdown in the
 // system-name font. A missing sprite still gives a visible frame. Null while the drawer or the HUD's font is not up
 // yet; the next tick tries again.
@@ -128,11 +155,14 @@ void AnomalyTimerFrame()
     return;
 
   // View only returns a HUD that is up on a visible canvas, so nothing about it needs holding between ticks.
-  auto* nav = Config::Get().graphics.galactic_anomaly_timer && Hub::CurrentSection() == SectionID::Navigation_System
-                  ? ScreenManager::View<HudNavigationViewController>()
-                  : nullptr;
-  const int64_t ticks = nav && nav->CanShowGalacticAnomaly() ? AnomalyRemainingTicks(nav) : 0;
-  auto*         label = anomaly_label.Get<unity::TMP_Text>();
+  auto*   nav   = (Config::Get().graphics.galactic_anomaly_timer || Config::Get().graphics.mirror_space_timer)
+                          && Hub::CurrentSection() == SectionID::Navigation_System
+                      ? ScreenManager::View<HudNavigationViewController>()
+                      : nullptr;
+  int64_t ticks = nav && Config::Get().graphics.mirror_space_timer ? MirrorRemainingTicks(nav) : 0;
+  if (ticks <= 0 && nav && Config::Get().graphics.galactic_anomaly_timer && nav->CanShowGalacticAnomaly())
+    ticks = AnomalyRemainingTicks(nav);
+  auto* label = anomaly_label.Get<unity::TMP_Text>();
   if (!unity::Alive(label))
     label = nullptr;
   if (ticks <= 0) {

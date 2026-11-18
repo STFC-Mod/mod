@@ -235,6 +235,10 @@ free_resize = true
 # Show the remaining Galactic Anomaly time below Help All, Engage, and Claim
 galactic_anomaly_timer = false
 
+# Show the earliest Mirror space ship countdown in the viewed system in the same HUD panel.
+# Both HUD timers use [patches] galacticanomalytimerhooks.
+mirror_space_timer = false
+
 # After using a zoom preset it will be set as default zoom
 use_presets_as_default = true
 
