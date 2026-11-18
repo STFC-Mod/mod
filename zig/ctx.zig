@@ -18,11 +18,13 @@ pub const macos_min = "14.6";
 pub const Options = struct {
     /// null keeps the per-target default: on for Windows release builds, off elsewhere.
     lto: ?bool,
+    /// Strip debug information for production packages. Local release builds retain symbols by default.
+    strip: bool,
     moddbg: bool,
     use_original_bg: bool,
     /// A custom loading screen, relative to the working directory; empty for the built-in one.
     bg_image: []const u8,
-    /// Fixture optimization; null follows -Doptimize.
+    /// Fixture optimization; null keeps assertions and diagnostics in Debug.
     test_optimize: ?OptimizeMode,
     msvc_sysroot: ?[]const u8,
     macos_sdk: ?[]const u8,
@@ -31,6 +33,7 @@ pub const Options = struct {
     pub fn parse(b: *Build) Options {
         return .{
             .lto = b.option(bool, "lto", "Enable LTO (Windows release default; unsupported for macOS)"),
+            .strip = b.option(bool, "strip", "Strip debug symbols from production artifacts") orelse false,
             .moddbg = b.option(bool, "moddbg", "Enable diagnostic patch toggles (_MODDBG)") orelse false,
             .use_original_bg = b.option(
                 bool,
@@ -41,7 +44,7 @@ pub const Options = struct {
             .test_optimize = b.option(
                 OptimizeMode,
                 "test-optimize",
-                "Optimization mode for test fixtures (dependencies use -Doptimize)",
+                "Optimization mode for test fixtures (Debug by default; dependencies use -Doptimize)",
             ),
             .msvc_sysroot = b.option([]const u8, "msvc-sysroot", "Path to an extracted MSVC + Windows SDK toolchain"),
             .macos_sdk = b.option([]const u8, "macos-sdk", "Path to a MacOSX.sdk directory"),
@@ -86,7 +89,10 @@ pub const Ctx = struct {
         const copy = ctx.b.allocator.create(Ctx) catch @panic("OOM");
         copy.* = ctx.*;
         copy.optimize = optimize;
-        if (optimize == OptimizeMode.Debug) copy.lto = false;
+        if (optimize == OptimizeMode.Debug) {
+            copy.lto = false;
+            copy.options.strip = false;
+        }
         return copy;
     }
 
@@ -121,9 +127,13 @@ pub const Ctx = struct {
             .link_libc = true,
             .link_libcpp = if (cpp and !ctx.isWindows()) true else null,
             .pic = true,
+            .strip = ctx.options.strip,
             // Zig turns UBSan on in Debug, but a trap inside a game detour takes the client down.
             .sanitize_c = .off,
         });
+        // Zig's optimization mode does not define the conventional C/C++ release macro. Keep debug-only runtime
+        // behavior out of optimized builds even when they retain debug symbols.
+        if (!ctx.isDebug()) module.addCMacro("NDEBUG", "1");
 
         if (ctx.isWindows()) {
             if (ctx.sysroot.msvc_root) |root| {

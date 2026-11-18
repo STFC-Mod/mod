@@ -36,7 +36,9 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{
         .default_target = .{ .abi = if (builtin.os.tag == .windows) .msvc else null },
     });
-    const optimize = b.standardOptimizeOption(.{});
+    // Local builds should behave like the shipped mod while retaining symbols for crash reports and debuggers.
+    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Prioritize performance, safety, or binary size")
+        orelse .ReleaseFast;
     const options = Options.parse(b);
     mod.addUniversal(b, optimize, options);
     const ctx = Ctx.init(b, target, optimize, options);

@@ -14,7 +14,7 @@ Actions:
   clean       Remove .zig-cache and zig-out
 
 Options:
-  -m, --mode MODE   debug (default), release, or releasedbg (release with the mod's -Dmoddbg diagnostics)
+  -m, --mode MODE   releasedbg (default; optimized with symbols), debug, or release
   -a, --arch ARCH   arm64, x86_64 or universal (default: this Mac's)
   -l, --launcher    Run the launcher bundle instead of the loader
   -c, --clean       Clean before building
@@ -22,7 +22,7 @@ Options:
 EOF
 }
 
-MODE=debug
+MODE=releasedbg
 ARCH="$(uname -m)"
 ACTION=build
 CLEAN=false
@@ -40,9 +40,9 @@ while (($#)); do
 done
 
 case "$MODE" in
-  debug) OPTIMIZE=Debug MODDBG=false ;;
-  release) OPTIMIZE=ReleaseFast MODDBG=false ;;
-  releasedbg) OPTIMIZE=ReleaseFast MODDBG=true ;;
+  debug) OPTIMIZE=Debug STRIP=false ;;
+  release) OPTIMIZE=ReleaseFast STRIP=true ;;
+  releasedbg) OPTIMIZE=ReleaseFast STRIP=false ;;
   *) echo "Invalid mode: $MODE (debug, release, releasedbg)" >&2 && exit 1 ;;
 esac
 
@@ -70,7 +70,7 @@ build() {
     target=aarch64
   fi
   # Keep in step with macos_min in zig/ctx.zig.
-  zig build install launcher -Dtarget="$target-macos.14.6" -Doptimize="$OPTIMIZE" -Dmoddbg="$MODDBG" \
+  zig build install launcher -Dtarget="$target-macos.14.6" -Doptimize="$OPTIMIZE" -Dstrip="$STRIP" \
     --prefix "$PREFIX"
   scripts/assemble-mac-app.sh "$APP" "$PREFIX"
 }

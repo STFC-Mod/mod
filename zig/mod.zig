@@ -139,7 +139,7 @@ fn addModSources(ctx: *const Ctx, module: *std.Build.Module, flags: []const []co
 /// marker; the RC's /D cuts a value at '=', so the whole marker cannot be passed as one define.
 fn identityDefines(ctx: *const Ctx) []const []const u8 {
     const b = ctx.b;
-    const mode = if (ctx.options.moddbg) "releasedbg" else if (ctx.isDebug()) "debug" else "release";
+    const mode = if (ctx.isDebug()) "debug" else if (ctx.options.strip) "release" else "releasedbg";
     var flags: std.ArrayList([]const u8) = .empty;
     flags.appendSlice(b.allocator, &.{ "/D", b.fmt("STFC_BUILD_MODE=\"{s}\"", .{mode}) }) catch @panic("OOM");
     inline for (.{
@@ -226,6 +226,7 @@ pub fn addUniversal(b: *std.Build, optimize: std.builtin.OptimizeMode, options: 
             "-Dtarget=" ++ arch ++ "-macos." ++ macos_min,
             b.fmt("-Doptimize={s}", .{@tagName(optimize)}),
             b.fmt("-Dlto={}", .{options.lto orelse false}),
+            b.fmt("-Dstrip={}", .{options.strip}),
             b.fmt("-Dmoddbg={}", .{options.moddbg}),
             b.fmt("-Duse_original_bg={}", .{options.use_original_bg}),
         });

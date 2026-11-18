@@ -9,9 +9,9 @@ cd "$ROOT"
 
 MODE="${1:-release}"
 case "$MODE" in
-  debug) OPTIMIZE=Debug MODDBG=false ;;
-  release) OPTIMIZE=ReleaseFast MODDBG=false ;;
-  releasedbg) OPTIMIZE=ReleaseFast MODDBG=true ;;
+  debug) OPTIMIZE=Debug STRIP=false ;;
+  release) OPTIMIZE=ReleaseFast STRIP=true ;;
+  releasedbg) OPTIMIZE=ReleaseFast STRIP=false ;;
   *)
     echo "Unknown build mode: $MODE" >&2
     exit 1
@@ -27,7 +27,7 @@ for ARCH in arm64 x86_64; do
     TARGET=aarch64
   fi
   PREFIX="zig-out/$ARCH/$MODE"
-  zig build install launcher -Dtarget="$TARGET-macos.$MACOS_MIN" -Doptimize="$OPTIMIZE" -Dmoddbg="$MODDBG" \
+  zig build install launcher -Dtarget="$TARGET-macos.$MACOS_MIN" -Doptimize="$OPTIMIZE" -Dstrip="$STRIP" \
     --prefix "$PREFIX"
   PREFIXES+=("$PREFIX")
 done

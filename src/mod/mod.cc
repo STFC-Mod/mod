@@ -345,12 +345,6 @@ void InstallFeatures(const Config& config)
 
 int il2cpp_init_Hook(auto original, const char* domain_name)
 {
-#if _WIN32 && !defined(NDEBUG)
-  AllocConsole();
-  FILE* console;
-  freopen_s(&console, "CONOUT$", "w", stdout);
-#endif
-
   // Nothing here may throw into the game: a mod that cannot set itself up leaves the game running without it.
   // Keeping the settings pointer is safe here because only the frame tick reloads, and it is not installed yet.
   const Config* config = nullptr;

@@ -4,6 +4,7 @@ const builtin = @import("builtin");
 const compat = @import("compat.zig");
 const Ctx = @import("ctx.zig").Ctx;
 const Lib = @import("ctx.zig").Lib;
+const OptimizeMode = @import("ctx.zig").OptimizeMode;
 const deps = @import("deps.zig");
 
 /// The libraries the fixtures link. They are the production artifacts, built at -Doptimize.
@@ -19,7 +20,7 @@ pub const Libs = struct {
 /// Register the fixture steps. Fixture code compiles at -Dtest-optimize, so a Debug fixture keeps its assertions
 /// while sharing release libraries with the shipped build.
 pub fn add(build_ctx: *const Ctx, libs: Libs) void {
-    const ctx = build_ctx.withOptimize(build_ctx.options.test_optimize orelse build_ctx.optimize);
+    const ctx = build_ctx.withOptimize(build_ctx.options.test_optimize orelse OptimizeMode.Debug);
     const b = ctx.b;
     const build_tests = b.step("build-tests", "Compile the tests without running them");
     const test_il2cpp = b.step("test-il2cpp", "Build and run the IL2CPP boundary tests (native targets only)");
