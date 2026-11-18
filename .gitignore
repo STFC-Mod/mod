@@ -26,3 +26,9 @@ assets/LoadingScreens/*.psd
 /zig-out/
 /.zig-cache/
 /zig-pkg/
+
+# older build artifacts
+/mods/
+/.xmake/
+/vsxmake2022/
+/zig-build-error.log
