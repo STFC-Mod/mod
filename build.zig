@@ -13,6 +13,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const compat = @import("zig/compat.zig");
 const Ctx = @import("zig/ctx.zig").Ctx;
+const OptimizeMode = @import("zig/ctx.zig").OptimizeMode;
 const Options = @import("zig/ctx.zig").Options;
 const globFiles = @import("zig/ctx.zig").globFiles;
 const deps = @import("zig/deps.zig");
@@ -37,7 +38,8 @@ pub fn build(b: *std.Build) void {
         .default_target = .{ .abi = if (builtin.os.tag == .windows) .msvc else null },
     });
     // Local builds should behave like the shipped mod while retaining symbols for crash reports and debuggers.
-    const optimize = b.option(std.builtin.OptimizeMode, "optimize", "Prioritize performance, safety, or binary size") orelse .ReleaseFast;
+    const optimize = b.option(OptimizeMode, "optimize", "Prioritize performance, safety, or binary size") orelse
+        OptimizeMode.ReleaseFast;
     const options = Options.parse(b);
     mod.addUniversal(b, optimize, options);
     const ctx = Ctx.init(b, target, optimize, options);
