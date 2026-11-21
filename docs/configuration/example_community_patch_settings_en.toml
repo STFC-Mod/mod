@@ -964,6 +964,9 @@ inventory = true
 # Do you want to sync jobs data?
 jobs = true
 
+# Sync mission acceptance requirement data. Requires mod 1.1.11 or newer.
+mission_requirements = false
+
 # Do you want to sync mission data?
 missions = true
 

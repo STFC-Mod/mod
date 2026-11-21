@@ -46,6 +46,7 @@ namespace
       Spec{Stream::kJobs, &SyncConfig::jobs, "job", FullSync::kInitial, "completed_job", "uuid"},
       Spec{Stream::kActiveMissions, &SyncConfig::missions, "active_mission"},
       Spec{Stream::kCompletedMissions, &SyncConfig::missions, "mission"},
+      Spec{Stream::kMissionRequirements, &SyncConfig::mission_requirements, "mission_requirement"},
       Spec{Stream::kOfficers, &SyncConfig::officers, "officer"},
       Spec{Stream::kProfile, &SyncConfig::profile, "profile", FullSync::kInitial},
       Spec{Stream::kResearch, &SyncConfig::research, "research"},

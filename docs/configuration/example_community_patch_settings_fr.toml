@@ -943,6 +943,9 @@ inventory = true
 # Voulez-vous synchroniser les données de tâches ?
 jobs = true
 
+# Sync mission acceptance requirement data. Requires mod 1.1.11 or newer.
+mission_requirements = false
+
 # Voulez-vous synchroniser les données des missions ?
 missions = true
 
