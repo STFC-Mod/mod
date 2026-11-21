@@ -211,6 +211,8 @@ enum class Stream {
   kJobs,
   kActiveMissions,
   kCompletedMissions,
+  // Static acceptance requirements of the mission specs the client receives, one record per spec.
+  kMissionRequirements,
   kOfficers,
   kProfile,
   kResearch,

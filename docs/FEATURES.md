@@ -104,6 +104,7 @@ Each target has its own options and access token.
 | Fleets | Live fleet state: each state change with cargo, mining and timers, and the server's view of deployed fleets. Every change is sent, not just the latest; up to 300 per session. Off unless a target sets `fleets`. |
 | Store | Faction store offers: favor level prices, requirements and remaining purchases. Off unless a target sets `store_offers`. |
 | Profile | Your own level, XP, Power and Haven unlock. Other players' records are never sent. Off unless a target sets `profile`. |
+| Mission requirements | Acceptance requirements of the mission specs the client receives (login, active missions, and systems you enter). Off unless a target sets `mission_requirements`. |
 
 Failed uploads retry with the latest observed values.
 Target changes apply on reload and trigger a fresh snapshot.
