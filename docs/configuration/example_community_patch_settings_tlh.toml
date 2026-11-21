@@ -943,6 +943,9 @@ inventory = true
 # Do you want Daq  sync jobs De'?
 jobs = true
 
+# Sync mission acceptance requirement data. Requires mod 1.1.11 or newer.
+mission_requirements = false
+
 # Do you want Daq  sync mission De'?
 missions = true
 
