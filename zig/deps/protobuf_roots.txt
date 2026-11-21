@@ -18,6 +18,7 @@ Digit.PrimeServer.Models.GlobalActiveBuffsResponse
 Digit.PrimeServer.Models.InventoryResponse
 Digit.PrimeServer.Models.Job
 Digit.PrimeServer.Models.JobResponse
+Digit.PrimeServer.Models.JournalResponse
 # Declared by the mod in stfc.sync.proto; the game has no message for the MyDeployedFleets payload.
 Digit.PrimeServer.Models.MyDeployedFleetsResponse
 Digit.PrimeServer.Models.OfficerTraitsResponse
@@ -30,6 +31,7 @@ Digit.PrimeServer.Models.PlayerShipsResponse
 Digit.PrimeServer.Models.ResearchTreesState
 Digit.PrimeServer.Models.ResourcesDeltaResponse
 Digit.PrimeServer.Models.ResourcesResponse
+Digit.PrimeServer.Models.ServiceResponse
 Digit.PrimeServer.Models.StarbaseModulesResponse
 Digit.PrimeServer.Models.UserProfilesResponse
 

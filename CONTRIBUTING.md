@@ -227,6 +227,7 @@ It uses text matching. Runtime type checks and in-game validation remain necessa
 | `sync/state.cc` | Comparisons, removals, and per-target acknowledgements |
 | `sync/upload.cc` | Sessions, the record store, target workers, and HTTP delivery |
 | `sync/battlelogs.cc` | Battle-journal fetching |
+| `sync/journal.cc` | Protobuf battle journals rebuilt in the JSON journal shape |
 | `sync/fleets.cc` | Client fleet records: slot polling, state changes, snapshots, and late re-reads, on the game thread |
 
 Payload construction and HTTP run outside the store lock.

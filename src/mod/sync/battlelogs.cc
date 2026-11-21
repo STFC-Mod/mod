@@ -1,6 +1,7 @@
 // Battle logs: the game only sends battle headers, so each new battle's journal is fetched from the game server
 // with the participants' player and alliance names resolved, then uploaded.
 
+#include "sync/journal.h"
 #include "sync/sync.h"
 #include "version.h"
 
@@ -181,8 +182,9 @@ namespace
     return response.text;
   }
 
-  // The players in a battle. Fleet battles list them in deployed_fleets (fleet data with ref_ids is an NPC's);
-  // cracked stations have no fleet, so a base raid's defender only shows up in the journal's own ids.
+  // The players in a battle. Fleet battles list them in deployed_fleets, an object keyed by fleet id (fleet data
+  // with ref_ids is an NPC's); cracked stations have no fleet, so a base raid's defender only shows up in the
+  // journal's own ids.
   std::unordered_set<std::string> Participants(const json& journal)
   {
     std::unordered_set<std::string> ids;
@@ -193,11 +195,15 @@ namespace
       if (fleet == journal.end() || !fleet->is_object() || !fleet->value("ref_ids", json()).is_null())
         continue;
       const auto deployed_fleets = fleet->find("deployed_fleets");
-      if (deployed_fleets == fleet->end() || !deployed_fleets->is_array())
+      if (deployed_fleets == fleet->end() || !deployed_fleets->is_structured())
         continue;
-      for (const auto& deployed : *deployed_fleets)
+      for (const auto& deployed : *deployed_fleets) {
+        if (!deployed.is_object())
+          continue;
         if (const auto uid = deployed.find("uid"); uid != deployed.end() && uid->is_string())
-          ids.insert(uid->get<std::string>());
+          if (const auto& text = uid->get_ref<const std::string&>(); !text.empty())
+            ids.insert(text);
+      }
     }
     // NPC ids contain '_' (mar_61, npc_<id>_1); there is nothing to resolve for them.
     for (const char* key : {"initiator_id", "target_id"})
@@ -303,10 +309,23 @@ namespace
     const auto text = RequestGameData(session, "/journals/get", json{{"journal_id", battle.id}}.dump());
     if (text.empty())
       return false;
-    auto reply = json::parse(text, nullptr, false);
-    if (!reply.is_object() || !reply.contains("journal")) {
-      logging::Error("process", "battle log", "the journal of battle {} does not parse", battle.id);
-      return false;
+    json reply;
+    if (IsJsonBody(text)) {
+      reply = json::parse(text, nullptr, false);
+      if (!reply.is_object() || !reply.contains("journal")) {
+        logging::Error("process", "battle log", "the journal of battle {} does not parse", battle.id);
+        return false;
+      }
+    } else {
+      // Since 2026-11-19 the game server answers with protobuf; the journal is rebuilt in the JSON shape.
+      std::string error;
+      auto        converted = JournalFromProtobuf(text, &error);
+      if (!converted) {
+        logging::Error("process", "battle log", "the protobuf journal of battle {} ({} bytes) does not convert: {}",
+                       battle.id, text.size(), error);
+        return false;
+      }
+      reply = {{"journal", std::move(*converted)}};
     }
     auto& journal = reply["journal"];
     auto  names   = ResolveNames(session, journal);

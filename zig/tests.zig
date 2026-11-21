@@ -136,7 +136,7 @@ pub fn add(build_ctx: *const Ctx, libs: Libs) void {
         inline for (.{ libs.proto, libs.proto_runtime, libs.spdlog, libs.toml, deps.nlohmannJson(ctx) }) |lib|
             lib.linkInto(module);
         module.addCSourceFiles(.{
-            .files = &.{ "tests/sync_logic.cc", "src/mod/sync/records.cc", "src/mod/sync/state.cc" },
+            .files = &.{ "tests/sync_logic.cc", "src/mod/sync/journal.cc", "src/mod/sync/records.cc", "src/mod/sync/state.cc" },
             .flags = mod_flags,
         });
         addFixture(ctx, build_tests, test_sync, "sync-logic-tests", module);
