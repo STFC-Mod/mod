@@ -1,6 +1,7 @@
 // Production encoders against independent wire fixtures, and delivery against controlled HTTP outcomes and time.
 // Check throws instead of asserting, so one run reports every failing case.
 
+#include "sync/journal.h"
 #include "sync/sync.h"
 
 #include <Digit.PrimeServer.Models.pb.h>
@@ -758,6 +759,157 @@ void NameCaches()
   Check(!names.Find("c", 3), "a zero TTL expires names at once");
   settings->resolver_cache_ttl = previous_ttl;
 }
+// Protobuf journals: a synthetic player-vs-NPC battle against the exact JSON journal shape, then bodies that
+// must be refused. Values are invented; only their kinds matter.
+std::string BattleReportBody(const game::JournalResponse& journal, int32_t type = game::EntityGroup::TYPE_BATTLEREPORT)
+{
+  game::ServiceResponse response;
+  auto*                 group = response.add_entitygroups();
+  group->set_type(static_cast<game::EntityGroup::Type>(type));
+  group->set_group(journal.SerializeAsString());
+  return response.SerializeAsString();
+}
+game::JournalResponse SyntheticJournal()
+{
+  game::JournalResponse journal;
+  journal.set_id(2'860'000'000'000'000'001);
+  journal.set_battleduration(5);
+  journal.mutable_battletime()->set_seconds(1'763'600'000);
+  journal.set_battletype(5);
+  journal.set_initiatorwins(true);
+  journal.set_initiatorid("player1");
+  journal.set_targetid("mar_30");
+  journal.set_systemid(1'234'567'890'123);
+  journal.mutable_coords()->set_x(1.1f);
+  journal.mutable_coords()->set_y(-2.5f);
+  for (const char* entry : {"-96", "1234567890123456789", "5.0", "1.2000000000000002", "-97"})
+    journal.add_battlelog(entry);
+  (*journal.mutable_resourcesdropped())[2] = 100;
+  journal.mutable_battlecontextdata();
+  auto* chest = journal.mutable_chestdrop()->add_chestsgained();
+  chest->set_type(game::INVENTORYITEMTYPE_INVENTORYCHEST);
+  chest->set_count(1);
+  chest->mutable_commonparams()->set_refid(77);
+  journal.mutable_chestdrop()->add_chestidrefs()->set_locaid(9);
+
+  auto* player = journal.mutable_initiatorfleetdata();
+  player->set_cargomax(1000);
+  player->set_officerrating(5);
+  player->add_hullids(11);
+  player->add_shipids(21);
+  player->add_initialshiplevels(30);
+  player->add_initialshiplevelpercentages(0.3f);
+  player->add_initialshiphps(5000);
+  player->mutable_initialcargo();
+  auto* crew = player->add_fleetsofficers();
+  crew->set_fleetid(31);
+  crew->set_crewsize(10);
+  auto* captain = crew->add_officers();
+  captain->set_id(41);
+  captain->set_level(50);
+  captain->set_rank(3);
+  auto* officer = crew->add_officers();
+  officer->set_id(42);
+  officer->set_level(40);
+  officer->set_rank(2);
+  officer->set_slotindex(3);
+  auto* fleet = player->mutable_deployedfleet();
+  fleet->set_uid("player1");
+  fleet->set_fleetid(31);
+  fleet->set_fleettype(game::DEPLOYEDFLEETTYPE_PLAYER);
+  fleet->set_causeofdestruction(game::DAMAGESOURCES_NOTSET);
+  fleet->add_shipids(21);
+  fleet->add_hullids(11);
+  (*fleet->mutable_attributes())[-9] = 1234.6f;
+  (*fleet->mutable_stats())[64]      = 16.7f;
+  (*fleet->mutable_stats())[63]      = 2.0f;
+  auto& ship                         = *(*fleet->mutable_shipstats())[21].mutable_shipattributes_();
+  ship[61]                           = 5000.0f;
+  ship[60]                           = 2500.4f;
+  (*fleet->mutable_shiplevels())[21] = 30;
+  (*fleet->mutable_shiptiers())[21]  = 4;
+  auto& components                   = (*fleet->mutable_deployedships())[21];
+  components.add_componentids(101);
+  components.add_componentids(-1);
+  (*player->mutable_deployedfleets())[31] = *fleet;
+
+  auto* npc = journal.mutable_targetfleetdata();
+  npc->mutable_refids()->set_locaid(555);
+  npc->add_shipids(0);
+  auto* npc_fleet = npc->mutable_deployedfleet();
+  npc_fleet->set_uid("mar_30");
+  npc_fleet->set_fleetid(61);
+  npc_fleet->set_fleettype(game::DEPLOYEDFLEETTYPE_MARAUDER);
+  (*npc->mutable_deployedfleets())[61] = *npc_fleet;
+  return journal;
+}
+void ProtobufJournals()
+{
+  const auto body      = BattleReportBody(SyntheticJournal());
+  const auto converted = JournalFromProtobuf(body);
+  Check(!IsJsonBody(body) && converted.has_value(), "a protobuf battle report converts");
+  // dump() compares the JSON number kinds too: 5.0 must stay a float and the ids integers.
+  const auto expected = json::parse(R"(
+    {"battle_context_data":{"context_data":{}},"battle_duration":5,"battle_log":[-96,1234567890123456789,5.0,
+    1.2000000000000002,-97],"battle_time":"2025-11-20T00:53:20","battle_type":5,
+    "chest_drop":{"chest_id_refs":[{"art_file_reference":null,"loca_id":9}],"chests_gained":[{"count":1,
+    "expiry_time":null,"params":{"id_refs":{"art_file_reference":null,"loca_id":9},"ref_id":77},"type":2}],
+    "user_id_refs":[]},"coords":{"x":1.1,"y":-2.5},"id":2860000000000000001,"initiator_fired_first":false,
+    "initiator_fleet_data":{"armada_owner_id":null,"battle_data_type":0,"bridge_officers":[{"id":41,"level":50,
+    "rank":3},null,null,{"id":42,"level":40,"rank":2},null,null,null,null,null,null],"cargo_max":1000,
+    "cargo_max_list":[],"defense_rating":null,"deployed_fleet":{"active_buffs":[],"attributes":{"-9":1234.6},
+    "battle_opponent_fleet_id":61,"battle_won":true,"cause_of_destruction":-1,"defense_rating":1235,"fleet_id":31,
+    "hull_ids":[11],"pursued_by_num":0,"pursuit_target_id":null,"ship_attributes":{},"ship_components":{"21":[101,
+    -1]},"ship_cosmetics":{},"ship_dmg":{},"ship_hps":{"21":5000},"ship_ids":[21],"ship_level_percentages":{},
+    "ship_levels":{"21":30},"ship_shield_dmg":{},"ship_shield_hps":{"21":2500},
+    "ship_shield_total_regeneration_durations":{},"ship_stats":{"21":{"60":2500.4,"61":5000.0}},
+    "ship_tiers":{"21":4},"stats":{"63":2.0,"64":16.7},"status_counters":[],"status_effects":{},"type":1,
+    "uid":"player1","warp_data":null,"warp_distance":16.7,"warp_speed":2.0,"warp_time":null},
+    "deployed_fleets":{"31":{"active_buffs":[],"attributes":{"-9":1234.6},"battle_opponent_fleet_id":61,
+    "battle_won":true,"cause_of_destruction":-1,"defense_rating":1235,"fleet_id":31,"hull_ids":[11],
+    "pursued_by_num":0,"pursuit_target_id":null,"ship_attributes":{},"ship_components":{"21":[101,-1]},
+    "ship_cosmetics":{},"ship_dmg":{},"ship_hps":{"21":5000},"ship_ids":[21],"ship_level_percentages":{},
+    "ship_levels":{"21":30},"ship_shield_dmg":{},"ship_shield_hps":{"21":2500},
+    "ship_shield_total_regeneration_durations":{},"ship_stats":{"21":{"60":2500.4,"61":5000.0}},
+    "ship_tiers":{"21":4},"stats":{"63":2.0,"64":16.7},"status_counters":[],"status_effects":{},"type":1,
+    "uid":"player1","warp_data":null,"warp_distance":16.7,"warp_speed":2.0,"warp_time":null}},"final_cargo_list":[],
+    "final_ship_hps":[],"final_ship_level_percentages":[],"final_ship_levels":[],"final_ship_shps":[],"fleet_id":31,
+    "fleets_officers":{"31":[{"id":41,"level":50,"rank":3},null,null,{"id":42,"level":40,"rank":2},null,null,null,
+    null,null,null]},"health_rating":null,"hull_ids":[11],"initial_cargo":{"resources":{}},"initial_cargo_list":[],
+    "initial_ship_hps":[5000],"initial_ship_level_percentages":[0.3],"initial_ship_levels":[30],
+    "initial_ship_shps":[],"max_ship_hps":[],"max_ship_shps":[],"num_drydocks":0,"offense_rating":null,
+    "officer_rating":5,"ref_ids":null,"ship_ids":[21],"xp_gained":null},"initiator_id":"player1",
+    "initiator_wins":true,"journal_src":"pb1","resources_dropped":{"2":100},"resources_transferred":{},
+    "system_id":1234567890123,"target_fleet_data":{"armada_owner_id":null,"battle_data_type":0,"bridge_officers":{},
+    "cargo_max":null,"cargo_max_list":[],"defense_rating":null,"deployed_fleet":{"active_buffs":[],"attributes":{},
+    "battle_opponent_fleet_id":31,"battle_won":false,"cause_of_destruction":0,"fleet_id":61,"hull_ids":[],
+    "pursued_by_num":0,"pursuit_target_id":null,"ship_attributes":{},"ship_components":{},"ship_cosmetics":{},
+    "ship_dmg":{},"ship_hps":{},"ship_ids":[],"ship_level_percentages":{},"ship_levels":{},"ship_shield_dmg":{},
+    "ship_shield_hps":{},"ship_shield_total_regeneration_durations":{},"ship_stats":{},"ship_tiers":{},"stats":{},
+    "status_counters":[],"status_effects":{},"type":2,"uid":"mar_30","warp_data":null,"warp_time":null},
+    "deployed_fleets":{"61":{"active_buffs":[],"attributes":{},"battle_opponent_fleet_id":31,"battle_won":false,
+    "cause_of_destruction":0,"fleet_id":61,"hull_ids":[],"pursued_by_num":0,"pursuit_target_id":null,
+    "ship_attributes":{},"ship_components":{},"ship_cosmetics":{},"ship_dmg":{},"ship_hps":{},"ship_ids":[],
+    "ship_level_percentages":{},"ship_levels":{},"ship_shield_dmg":{},"ship_shield_hps":{},
+    "ship_shield_total_regeneration_durations":{},"ship_stats":{},"ship_tiers":{},"stats":{},"status_counters":[],
+    "status_effects":{},"type":2,"uid":"mar_30","warp_data":null,"warp_time":null}},"final_cargo_list":[],
+    "final_ship_hps":[],"final_ship_level_percentages":[],"final_ship_levels":[],"final_ship_shps":[],"fleet_id":61,
+    "fleets_officers":{},"health_rating":null,"hull_ids":[],"initial_cargo_list":[],"initial_ship_hps":[],
+    "initial_ship_level_percentages":[],"initial_ship_levels":[],"initial_ship_shps":[],"max_ship_hps":[],
+    "max_ship_shps":[],"num_drydocks":0,"offense_rating":null,"officer_rating":0,
+    "ref_ids":{"art_file_reference":null,"loca_id":555},"ship_ids":[0],"xp_gained":null},"target_id":"mar_30"}
+  )");
+  Check(converted && converted->dump() == expected.dump(), "a protobuf journal keeps the JSON journal shape");
+
+  Check(IsJsonBody(" \n{\"journal\":{}}"), "a JSON body keeps the JSON path");
+  Check(!JournalFromProtobuf(R"({"journal":{}})"), "a JSON body is not read as protobuf");
+  Check(!JournalFromProtobuf(""), "an empty body is refused");
+  Check(!JournalFromProtobuf("\xff\xff\xff\xff garbage"), "garbage is refused");
+  Check(!JournalFromProtobuf(body.substr(0, body.size() / 2)), "a truncated body is refused");
+  Check(!JournalFromProtobuf(BattleReportBody(SyntheticJournal(), game::EntityGroup::TYPE_BATTLERESULTHEADERS)),
+        "a body without a battle report group is refused");
+  Check(!JournalFromProtobuf(BattleReportBody(game::JournalResponse{})), "a journal without an id is refused");
+}
 } // namespace
 
 // Stand-ins for config.cc, sync.cc, battlelogs.cc and fleets.cc, which this test does not link: no threads, no game,
@@ -821,6 +973,7 @@ int main()
   run("queues", Queues);
   run("name caches", NameCaches);
   run("logging", SyncLogging);
+  run("protobuf journals", ProtobufJournals);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;
