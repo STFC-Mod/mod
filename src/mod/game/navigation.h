@@ -27,8 +27,13 @@ struct NavigationLOD : il2cpp::Object {
   { Call<"UpdateLOD">(level); }
 };
 
+enum class NodeDepth : int32_t;
+
 struct NavigationPan : il2cpp::Object {
   using Class = il2cpp::Class<"Assembly-CSharp", "Digit.Prime.Navigation", "NavigationPan">;
+
+  NodeDepth nodeDepth()
+  { return Field<"_nodeDepth", NodeDepth>(); }
 
   unity::Vector2 lastDelta()
   { return Field<"_lastDelta", unity::Vector2>(); }
@@ -38,8 +43,12 @@ struct NavigationPan : il2cpp::Object {
   { return Field<"_panningStarted", bool>(); }
   float deltaScaler()
   { return Field<"_deltaScaler", float>(); }
+  void SetDeltaScaler(float value)
+  { SetField<"_deltaScaler">(value); }
   float keyboardDeltaScaler()
   { return Field<"_keyboardDeltaScaler", float>(); }
+  void SetKeyboardDeltaScaler(float value)
+  { SetField<"_keyboardDeltaScaler">(value); }
   // Managed POI; only checked for null or cleared.
   void* trackingPOI()
   { return Field<"_trackingPOI", void*>(); }
