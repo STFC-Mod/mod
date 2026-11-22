@@ -131,7 +131,7 @@ void ShopSceneManager_ShowPlcOfferPopup_Hook(auto original, il2cpp::Object* _thi
 
 // --- Artifact Exchange All ---
 
-// Hides the button after the popup binds. Individual exchanges stay available.
+// Hide the button and its sibling background without disabling their shared container.
 void InventoryUsePopupViewController_OnDidBindCanvasContext_Hook(auto original, InventoryUsePopupViewController* _this)
 {
   original(_this);
@@ -139,6 +139,13 @@ void InventoryUsePopupViewController_OnDidBindCanvasContext_Hook(auto original, 
     return;
   auto* button = _this->convertAllButton();
   if (auto* object = button ? button->gameObject() : nullptr)
+    object->SetActive(false);
+
+  // Observed hierarchy: ArtifactConvertAll/{GenericButton, Footer_BG}.
+  auto* transform = button ? button->transform() : nullptr;
+  auto* container = transform ? transform->parent() : nullptr;
+  auto* footer    = container ? container->Find("Footer_BG") : nullptr;
+  if (auto* object = footer ? footer->gameObject() : nullptr)
     object->SetActive(false);
 }
 
