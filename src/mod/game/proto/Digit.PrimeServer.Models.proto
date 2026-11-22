@@ -5615,3 +5615,105 @@ message JournalHeaderProto {
 message BattleResultHeadersResponse {
   repeated JournalHeaderProto headers = 1;
 }
+
+// ===== Battle report (journal) messages for POST /journals/get. Recovered from the game client metadata and
+// checked against live responses (2026-11-20). Wrapper: ServiceResponse.entityGroups[type == TYPE_BATTLEREPORT].group.
+// Only new messages; existing messages are untouched. =====
+// EntityGroup type 221 (TYPE_BATTLEREPORT) payload; response to POST /journals/get.
+message JournalResponse {
+  int64 id = 1;                                   // id
+  int64 battleDuration = 2;                       // battle_duration
+  google.protobuf.Timestamp battleTime = 3;       // battle_time (seconds only on the wire)
+  int32 battleType = 4;                           // battle_type
+  bool initiatorWins = 5;                         // initiator_wins
+  bool initiatorFiredFirst = 6;                   // initiator_fired_first
+  string initiatorId = 7;                         // initiator_id
+  string targetId = 8;                            // target_id
+  int64 systemId = 9;                             // system_id
+  PlanetSlotsConfig.Slot coords = 10;             // coords {float x=1, float y=2}
+  repeated string battleLog = 11;                 // battle_log: one python-repr number per element ("-96", "1.2000000000000002", "5.0")
+  JournalFleetData initiatorFleetData = 12;       // initiator_fleet_data
+  JournalFleetData targetFleetData = 13;          // target_fleet_data
+  map<int64, int64> resourcesDropped = 14;        // resources_dropped
+  map<int64, int64> resourcesTransferred = 15;    // resources_transferred
+  JournalChestDrop chestDrop = 16;                // chest_drop
+  JournalContextData battleContextData = 17;      // battle_context_data
+}
+
+message JournalFleetData {
+  int32 battleDataType = 1;                       // battle_data_type
+  int32 cargoMax = 2;                             // cargo_max
+  int64 defenseRating = 3;                        // defense_rating
+  int64 healthRating = 4;                         // health_rating
+  int64 attackRating = 5;                         // attack_rating   (old JSON key: offense_rating)
+  int64 officerRating = 6;                        // officer_rating
+  int32 numDrydocks = 7;                          // num_drydocks
+  repeated int64 hullIds = 8;                     // hull_ids (packed)
+  repeated int64 shipIds = 9;                     // ship_ids (packed)
+  repeated int64 initialShipHps = 10;             // initial_ship_hps (packed)
+  repeated int64 finalShipHps = 11;               // final_ship_hps (packed)
+  repeated int64 maxShipHps = 12;                 // max_ship_hps (packed)
+  repeated int64 initialShipShps = 13;            // initial_ship_shps (packed)
+  repeated int64 finalShipShps = 14;              // final_ship_shps (packed)
+  repeated int64 maxShipShps = 15;                // max_ship_shps (packed)
+  repeated float initialShipLevelPercentages = 16;// initial_ship_level_percentages (packed fixed32)
+  repeated float finalShipLevelPercentages = 17;  // final_ship_level_percentages (packed fixed32)
+  repeated int32 initialShipLevels = 18;          // initial_ship_levels (packed)
+  repeated int32 finalShipLevels = 19;            // final_ship_levels (packed)
+  CargoProto initialCargo = 20;                   // initial_cargo
+  CargoProto finalCargo = 21;                     // final_cargo
+  repeated JournalFleetOfficerEntry fleetsOfficers = 22; // fleets_officers (old JSON: {fleetId: [officer|null ...]})
+  map<int64, DeployedFleet> deployedFleets = 23;  // deployed_fleets
+  DeployedFleet deployedFleet = 24;               // deployed_fleet
+  repeated CargoProto initialCargoList = 25;      // initial_cargo_list
+  repeated CargoProto finalCargoList = 26;        // final_cargo_list
+  repeated int32 cargoMaxList = 27;               // cargo_max_list (packed; -1 = 10-byte varint)
+  string armadaOwnerId = 28;                      // armada_owner_id
+  IdRefs refIds = 29;                             // ref_ids (NPC side only)
+}
+
+message JournalFleetOfficerEntry {
+  int64 fleetId = 1;                              // fleet_id
+  repeated BridgeCrewOfficer officers = 2;        // officers
+  int32 crewSize = 3;                             // crew_size (10 in all samples)
+}
+
+message BridgeCrewOfficer {
+  int64 id = 1;                                   // id
+  int32 level = 2;                                // level
+  int32 rank = 3;                                 // rank
+  int64 slotIndex = 4;                            // slot_index (absent = slot 0)
+}
+
+message CargoProto {
+  map<int64, int64> resources = 1;                // resources
+}
+
+message JournalChestDrop {
+  repeated InventoryItem chestsGained = 1;        // chests_gained (wire: type, count, commonParams.refId only)
+  repeated InventoryItem chestsDiscarded = 2;     // chests_discarded (not in old JSON)
+  int32 capacity = 3;                             // capacity (not in old JSON)
+  int32 currentCount = 4;                         // current_count (not in old JSON)
+  repeated IdRefs chestIdRefs = 5;                // chest_id_refs
+  repeated string userIdRefs = 6;                 // user_id_refs
+}
+
+message JournalContextData {
+  JournalContextDataInner contextDataMapping = 1; // context_data_mapping (old JSON key: context_data)
+}
+
+message JournalContextDataInner {
+  JournalMultitargetArmadaInfo multitargetArmadaInformation = 1; // multitarget_armada_information (old: multi_target_armadas_info)
+  int32 flags = 2;                                // flags
+  JournalGalacticAnomalyData galacticAnomalyData = 3; // galactic_anomaly_data (never seen in old JSON)
+}
+
+message JournalMultitargetArmadaInfo {
+  int64 mtaId = 1;                                // mta_id   (old: multi_armada_attack_id)
+  int32 mtaSize = 2;                              // mta_size (old: mta_group_size)
+}
+
+message JournalGalacticAnomalyData {
+  int64 tournamentId = 1;                         // tournament_id
+  map<int64, int64> systemBuffs = 2;              // system_buffs
+}
