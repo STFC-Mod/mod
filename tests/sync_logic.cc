@@ -219,6 +219,51 @@ void AwayAndEmerald()
   Process(EntityGroup::Kind::AllianceGetGameProperties, unclaimed);
   Check(Send(target) == json::parse(R"([{"type":"emerald_chain","level":-1}])"), "no claimed tier is level -1");
 }
+void MissionRequirements()
+{
+  auto                       target = Target();
+  game::MissionSpecsResponse specs;
+  auto*                      gated = specs.add_missionspecs();
+  gated->set_id(20);
+  auto* requirement = gated->add_acceptancerequirements();
+  requirement->set_type(game::MISSIONREQUIREMENTTYPE_SPREVIOUSLYCOMPLETEDMISSION);
+  requirement->mutable_previouslycompletedmissionparams()->set_value(10);
+  auto* ungated = specs.add_missionspecs();
+  ungated->set_id(21);
+  Process(EntityGroup::Kind::MissionSpecs, specs);
+  Delivery missions_only;
+  auto     options             = Options();
+  options.mission_requirements = false;
+  missions_only.Configure(options);
+  Check(!missions_only.Next(store, now), "mission requirements are opt-in, not part of missions");
+  Check(
+      Send(target)
+          == json::parse(
+              R"([{"type":"mission_requirement","mid":20,"req":[{"t":3,"v":10}]},{"type":"mission_requirement","mid":21,"req":[]}])"),
+      "mission requirement wire fixture, empty list kept");
+  Process(EntityGroup::Kind::MissionSpecs, specs);
+  Check(!target.Next(store, now), "unchanged mission specs are not uploaded again");
+  auto* range = ungated->add_acceptancerequirements();
+  range->set_type(game::MISSIONREQUIREMENTTYPE_SPLAYERLEVELRANGE);
+  range->mutable_playerlevelrangeparams()->set_minvalue(5);
+  range->mutable_playerlevelrangeparams()->set_maxvalue(60);
+  Process(EntityGroup::Kind::MissionSpecs, specs);
+  Check(Send(target) == json::parse(R"([{"type":"mission_requirement","mid":21,"req":[{"t":7,"min":5,"max":60}]}])"),
+        "a changed requirement list is sent again, alone");
+  game::NodeMissionsResponse node;
+  auto*                      entered = node.add_missionspecs();
+  entered->set_id(22);
+  auto* component = entered->add_acceptancerequirements();
+  component->set_type(game::MISSIONREQUIREMENTTYPE_SCOMPONENTVALUE);
+  component->mutable_componentvalueparams()->set_type("warp");
+  component->mutable_componentvalueparams()->set_value(14.364f);
+  Process(EntityGroup::Kind::NodeMissions, node);
+  Check(Send(target)
+            == json::parse(R"([{"type":"mission_requirement","mid":22,"req":[{"t":6,"c":"warp","v":14.364}]}])"),
+        "a system's mission specs are sent, floats in shortest form");
+  Check(store.Contains(Stream::kMissionRequirements, 20) && store.Contains(Stream::kMissionRequirements, 21),
+        "and merge with the login specs instead of replacing them");
+}
 void Snapshots()
 {
   auto                   target = Target();
@@ -949,6 +994,7 @@ int main()
   run("presets", Presets);
   run("slot transports", SlotTransports);
   run("away and emerald", AwayAndEmerald);
+  run("mission requirements", MissionRequirements);
   run("snapshots", Snapshots);
   run("removals", EmptyAndRemoved);
   run("jobs", Jobs);

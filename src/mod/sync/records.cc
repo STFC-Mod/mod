@@ -51,6 +51,21 @@ namespace
   json Seconds(bool has, int64_t seconds)
   { return has ? json(seconds) : json(nullptr); }
 
+  // 1234 not 1234.0, and 14.364 not 14.36400032043457.
+  json ShortNumber(float value)
+  {
+    if (std::trunc(value) == value && std::abs(value) < 9.0e15f)
+      return static_cast<int64_t>(value);
+    char   buffer[32];
+    double widened = value;
+    if (const auto [end, ec] = std::to_chars(std::begin(buffer), std::end(buffer), value); ec == std::errc{}) {
+      // Float from_chars needs macOS 26 in Apple's libc++; the JSON parser reads the shortest form back instead.
+      if (auto parsed = json::parse(std::begin(buffer), end, nullptr, false); parsed.is_number())
+        return parsed;
+    }
+    return widened;
+  }
+
   json AwayAssignment(const pb::AwayAssignmentInstance& instance)
   {
     // Protobuf maps are unordered; both lists go out in key order.
@@ -284,6 +299,83 @@ namespace
     Read<pb::CompletedMissionsResponse>(input, Stream::kCompletedMissions, [](const auto& response, auto& records) {
       for (const auto id : response.completedmissions())
         records[id] = {{"mid", id}};
+    });
+  }
+  // Requirement types: 3 {v: mission id}; 2 {m: module type, v: level}; 7 {min, max}; 8 {f: faction id, v: amount};
+  // 0 and 1 {s: core stat, v}; 4 {h: hull type, v}; 5 {g: grade, v}; 6 {c: component, v}. An unset oneof is {t} only.
+  json Requirement(const pb::MissionRequirement& requirement)
+  {
+    json out{{"t", static_cast<int>(requirement.type())}};
+    switch (requirement.Params_case()) {
+      case pb::MissionRequirement::kAllOfficersCoreStatTotalParams: {
+        const auto& p = requirement.allofficerscorestattotalparams();
+        out.update({{"s", static_cast<int>(p.type())}, {"v", p.value()}});
+        break;
+      }
+      case pb::MissionRequirement::kAtLeastOneOfficerWithCoreStatParams: {
+        const auto& p = requirement.atleastoneofficerwithcorestatparams();
+        out.update({{"s", static_cast<int>(p.type())}, {"v", p.value()}});
+        break;
+      }
+      case pb::MissionRequirement::kStarbaseModuleLevelParams: {
+        const auto& p = requirement.starbasemodulelevelparams();
+        out.update({{"m", p.type()}, {"v", p.value()}});
+        break;
+      }
+      case pb::MissionRequirement::kPreviouslyCompletedMissionParams:
+        out["v"] = requirement.previouslycompletedmissionparams().value();
+        break;
+      case pb::MissionRequirement::kHullTypeParams: {
+        const auto& p = requirement.hulltypeparams();
+        out.update({{"h", static_cast<int>(p.type())}, {"v", p.value()}});
+        break;
+      }
+      case pb::MissionRequirement::kHullGradeParams: {
+        const auto& p = requirement.hullgradeparams();
+        out.update({{"g", p.grade()}, {"v", p.value()}});
+        break;
+      }
+      case pb::MissionRequirement::kComponentValueParams: {
+        const auto& p = requirement.componentvalueparams();
+        out.update({{"c", p.type()}, {"v", ShortNumber(p.value())}});
+        break;
+      }
+      case pb::MissionRequirement::kPlayerLevelRangeParams: {
+        const auto& p = requirement.playerlevelrangeparams();
+        out.update({{"min", p.minvalue()}, {"max", p.maxvalue()}});
+        break;
+      }
+      case pb::MissionRequirement::kFactionStandingParams: {
+        const auto& p = requirement.factionstandingparams();
+        out.update({{"f", p.id()}, {"v", p.amount()}});
+        break;
+      }
+      case pb::MissionRequirement::PARAMS_NOT_SET:
+        break;
+    }
+    return out;
+  }
+  // One record per spec, empty lists too, so a target can tell "needs nothing" from "unseen". Specs are static game
+  // data: the store sends a spec once, and again only when its list changes.
+  void AddRequirements(const google::protobuf::RepeatedPtrField<pb::Mission>& specs, RecordSet& records)
+  {
+    for (const auto& spec : specs) {
+      auto req = json::array();
+      for (const auto& requirement : spec.acceptancerequirements())
+        req.push_back(Requirement(requirement));
+      records[spec.id()] = {{"mid", spec.id()}, {"req", std::move(req)}};
+    }
+  }
+  void ProcessMissionSpecs(const Input& input)
+  {
+    Read<pb::MissionSpecsResponse>(input, Stream::kMissionRequirements, [](const auto& response, auto& records) {
+      AddRequirements(response.missionspecs(), records);
+    });
+  }
+  void ProcessNodeMissions(const Input& input)
+  {
+    Read<pb::NodeMissionsResponse>(input, Stream::kMissionRequirements, [](const auto& response, auto& records) {
+      AddRequirements(response.missionspecs(), records);
     });
   }
   void ProcessOfficers(const Input& input)
@@ -531,21 +623,6 @@ namespace
     }
   }
 
-  // 1234 not 1234.0, and 14.364 not 14.36400032043457.
-  json ShortNumber(float value)
-  {
-    if (std::trunc(value) == value && std::abs(value) < 9.0e15f)
-      return static_cast<int64_t>(value);
-    char   buffer[32];
-    double widened = value;
-    if (const auto [end, ec] = std::to_chars(std::begin(buffer), std::end(buffer), value); ec == std::errc{}) {
-      // Float from_chars needs macOS 26 in Apple's libc++; the JSON parser reads the shortest form back instead.
-      if (auto parsed = json::parse(std::begin(buffer), end, nullptr, false); parsed.is_number())
-        return parsed;
-    }
-    return widened;
-  }
-
   using StatMap = google::protobuf::Map<int32_t, float>;
 
   std::optional<float> Stat(const StatMap& stats, pb::ClientModifierType key)
@@ -665,6 +742,8 @@ namespace
       {EntityGroup::Kind::Jobs, ProcessJobs},
       {EntityGroup::Kind::ActiveMissions, ProcessActiveMissions},
       {EntityGroup::Kind::CompletedMissions, ProcessCompletedMissions},
+      {EntityGroup::Kind::MissionSpecs, ProcessMissionSpecs},
+      {EntityGroup::Kind::NodeMissions, ProcessNodeMissions},
       {EntityGroup::Kind::Officers, ProcessOfficers},
       {EntityGroup::Kind::ResearchTreesState, ProcessResearch},
       {EntityGroup::Kind::Resources, ProcessResources},

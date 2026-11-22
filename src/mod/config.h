@@ -27,25 +27,26 @@ struct SyncConfig {
   };
 
   std::string proxy;
-  bool        verify_ssl       = true;
-  bool        away_assignments = false;
-  bool        battlelogs       = false;
-  bool        buffs            = false;
-  bool        buildings        = false;
-  bool        fleets           = false;
-  bool        haven            = false;
-  bool        inventory        = false;
-  bool        jobs             = false;
-  bool        missions         = false;
-  bool        officers         = false;
-  bool        profile          = false;
-  bool        research         = false;
-  bool        resources        = false;
-  bool        ships            = false;
-  bool        slots            = false;
-  bool        store_offers     = false;
-  bool        tech             = false;
-  bool        traits           = false;
+  bool        verify_ssl           = true;
+  bool        away_assignments     = false;
+  bool        battlelogs           = false;
+  bool        buffs                = false;
+  bool        buildings            = false;
+  bool        fleets               = false;
+  bool        haven                = false;
+  bool        inventory            = false;
+  bool        jobs                 = false;
+  bool        mission_requirements = false;
+  bool        missions             = false;
+  bool        officers             = false;
+  bool        profile              = false;
+  bool        research             = false;
+  bool        resources            = false;
+  bool        ships                = false;
+  bool        slots                = false;
+  bool        store_offers         = false;
+  bool        tech                 = false;
+  bool        traits               = false;
 
   bool operator==(const SyncConfig&) const = default;
 };
@@ -60,6 +61,7 @@ constexpr auto SyncOptions = std::to_array<SyncConfig::Option>({
     {"haven", &SyncConfig::haven},
     {"inventory", &SyncConfig::inventory},
     {"jobs", &SyncConfig::jobs},
+    {"mission_requirements", &SyncConfig::mission_requirements},
     {"missions", &SyncConfig::missions},
     {"officers", &SyncConfig::officers, "officer"},
     {"profile", &SyncConfig::profile},
