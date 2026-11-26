@@ -7,6 +7,8 @@
 #include <Digit.PrimeServer.Models.pb.h>
 #include <stfc.sync.pb.h>
 
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -843,6 +845,253 @@ game::JournalResponse SyntheticJournal()
   (*npc->mutable_deployedfleets())[61] = *npc_fleet;
   return journal;
 }
+void StoreBattle(uint64_t id)
+{ store.Apply(Stream::kBattles, {{id, {{"journal", {{"id", id}}}, {"names", json::object()}}}}); }
+// Delivers whatever battle journals are pending, one per request, and returns the ids sent.
+std::vector<uint64_t> SendBattles(Delivery& target)
+{
+  std::vector<uint64_t> sent;
+  while (auto upload = target.Next(store, now)) {
+    for (const auto& record : upload->Records())
+      sent.push_back(record.at("journal").at("id").get<uint64_t>());
+    target.Complete(std::move(*upload), true, store.Generation(), now);
+  }
+  return sent;
+}
+using Ids = std::vector<uint64_t>;
+void AckedAcrossSessions()
+{
+  auto target = Target();
+  StoreBattle(1);
+  StoreBattle(2);
+  Check(SendBattles(target) == Ids{1, 2}, "journals are sent in the session that fetched them");
+  store.Reset();
+  StoreBattle(1);
+  StoreBattle(2);
+  StoreBattle(3);
+  Check(SendBattles(target) == Ids{3}, "an acknowledged journal is not sent again in a new session");
+
+  // A failed upload is not recorded.
+  auto second = Target();
+  store.Reset();
+  StoreBattle(5);
+  auto upload = Take(second);
+  second.Complete(std::move(upload), false, store.Generation(), now);
+  Check(!second.Acked().Contains(5), "a failed upload is not recorded");
+  store.Reset();
+  StoreBattle(5);
+  now += std::chrono::seconds(120);
+  Check(SendBattles(second) == Ids{5}, "a journal that failed is sent in the next session");
+
+  // A target without a record still gets everything.
+  auto fresh = Target();
+  store.Reset();
+  StoreBattle(1);
+  StoreBattle(2);
+  StoreBattle(3);
+  Check(SendBattles(fresh) == Ids{1, 2, 3}, "a second target without a record gets the journals");
+  Check(SendBattles(target).empty(), "and the first still sends nothing");
+}
+void AckedEndpointChange()
+{
+  auto target = Target();
+  StoreBattle(1);
+  SendBattles(target);
+  Check(target.Acked().Contains(1) && target.TakeAckedDirty() && !target.TakeAckedDirty(),
+        "the record is marked dirty once");
+  auto config  = target.Config();
+  config.token = "another token";
+  target.Configure(config);
+  Check(target.Acked().Contains(1), "a new token keeps the record");
+  config.url = "http://other.invalid";
+  target.Configure(config);
+  Check(!target.Acked().Contains(1) && target.Acked().Fingerprint() == UrlFingerprint("http://other.invalid"),
+        "a new url drops the record");
+  Check(target.TakeAckedDirty(), "and the loss is saved");
+  store.Reset();
+  StoreBattle(1);
+  Check(SendBattles(target) == Ids{1}, "the new endpoint gets the journal");
+  Check(UrlFingerprint("http://a.invalid") != UrlFingerprint("http://b.invalid") && UrlFingerprint("x").size() == 16,
+        "fingerprints are 16 hex digits");
+}
+void AckedAdoption()
+{
+  AckedBattles stored;
+  stored.Restore(UrlFingerprint("http://example.invalid"), {1, 2});
+  AckedBattles other;
+  other.Restore(UrlFingerprint("http://elsewhere.invalid"), {1, 2});
+  auto target = Target();
+  target.AdoptAcked(other);
+  Check(!target.Acked().Contains(1), "a record for another endpoint is not adopted");
+  target.AdoptAcked(stored);
+  Check(!target.Acked().Contains(1), "adoption happens once");
+  auto fresh = Target();
+  fresh.AdoptAcked(stored);
+  Check(fresh.Acked().Contains(2) && !fresh.TakeAckedDirty(), "a stored record is adopted");
+  StoreBattle(1);
+  StoreBattle(2);
+  StoreBattle(3);
+  Check(SendBattles(fresh) == Ids{3}, "adopted journals are not sent");
+}
+void AckedBound()
+{
+  AckedBattles acked;
+  for (uint64_t id = 1; id <= AckedBattles::kMax + 5; ++id)
+    Check(acked.Add(id), "a new id is added");
+  Check(acked.Ids().size() == AckedBattles::kMax && !acked.Contains(5) && acked.Contains(6)
+            && acked.Ids().back() == AckedBattles::kMax + 5,
+        "the oldest ids are pruned first");
+  Check(!acked.Add(6) && acked.Ids().front() == 6, "an id already held keeps its place");
+  Check(AckedBattles::kMax >= 2 * kRecentBattles, "the bound covers a full header list twice");
+}
+void AckedFile()
+{
+  const auto dir = std::filesystem::temp_directory_path() / "stfc_acked_battles_test";
+  std::filesystem::create_directories(dir);
+  const auto file = dir / "acks.json";
+  std::filesystem::remove(file);
+  std::string problem;
+  bool        newer = false;
+  Check(LoadAcked(file, problem, newer).empty() && problem.empty(), "a missing file is empty without a problem");
+
+  AckedByTarget saved;
+  saved["site"].Restore("00000000000000ff", {7, 8, 18446744073709551615ull});
+  saved["other"].Restore("0123456789abcdef", {1});
+  Check(SaveAcked(file, saved, problem) && !std::filesystem::exists(dir / "acks.json.tmp"), "the file is saved");
+  const auto loaded = LoadAcked(file, problem, newer);
+  Check(problem.empty() && loaded.size() == 2 && loaded.at("site").Fingerprint() == "00000000000000ff"
+            && loaded.at("site").Ids() == std::deque<uint64_t>{7, 8, 18446744073709551615ull}
+            && loaded.at("other").Contains(1),
+        "the file round-trips");
+  Check(AckedToJson(saved).dump().find("http") == std::string::npos, "no url is written");
+
+  const auto write = [&](const std::string& text) { std::ofstream(file, std::ios::binary | std::ios::trunc) << text; };
+  for (const std::string text :
+       {"", "{", "not json", "[]", "[1]", "3", "null", R"({"targets":{}})", R"({"version":"1"})", R"({"version":null})",
+        R"({"version":[1]})", R"({"version":{"a":1}})", R"({"version":-1})", R"({"version":1.5})",
+        R"({"version":true})"}) {
+    write(text);
+    Check(LoadAcked(file, problem, newer).empty() && !problem.empty() && !newer, "a malformed file is empty");
+  }
+  write(R"({"version":2,"targets":{}})");
+  Check(LoadAcked(file, problem, newer).empty() && !problem.empty() && newer, "a newer file is empty and marked");
+  write(R"({"version":1,"targets":{"a":{"fingerprint":"f","ids":[1,-2,"x",3.5,4]},"b":3,"c":{"ids":[1]}}})");
+  const auto partial = LoadAcked(file, problem, newer);
+  Check(partial.size() == 1 && partial.at("a").Ids() == std::deque<uint64_t>{1, 4}, "malformed entries are skipped");
+  std::filesystem::remove_all(dir);
+}
+void AckedSaveSnapshot()
+{
+  std::map<std::string, std::shared_ptr<Delivery>> targets;
+  for (const char* name : {"kept", "removed", "late"}) {
+    targets[name] = std::make_shared<Delivery>();
+    targets[name]->Configure(Options());
+  }
+  StoreBattle(1);
+  SendBattles(*targets["kept"]);
+  AckedBattles before;
+  before.Restore(UrlFingerprint("http://example.invalid"), {40});
+  AckedByTarget stored{{"removed", before}, {"late", before}, {"gone", before}};
+  targets["kept"]->AdoptAcked({});
+  targets["removed"]->AdoptAcked(before);
+  targets.erase("removed");
+  bool       dirty    = false;
+  const auto snapshot = CollectAcked(targets, stored, dirty);
+  Check(dirty && snapshot.size() == 2 && snapshot.at("kept").Contains(1), "a target in the settings is saved");
+  Check(!snapshot.contains("removed") && !snapshot.contains("gone"),
+        "only the targets in the registry are saved (the erase itself is FollowSettings)");
+  Check(snapshot.at("late").Contains(40), "a target that has not adopted its record keeps what the file held");
+}
+void AckedReplayTrigger()
+{
+  // Each Check below asks whether the battle queue must decide again for the last header list.
+  Delivery target;
+  target.Configure(Options());
+  Check(target.TakeBattleReplay() && !target.TakeBattleReplay(), "a new target with battle logs on asks once");
+  auto config  = target.Config();
+  config.token = "another token";
+  target.Configure(config);
+  Check(!target.TakeBattleReplay(), "a new token does not ask");
+  config.battlelogs = false;
+  target.Configure(config);
+  Check(!target.TakeBattleReplay(), "switching battle logs off does not ask");
+  config.battlelogs = true;
+  target.Configure(config);
+  Check(target.TakeBattleReplay(), "switching battle logs on asks");
+  config.url = "http://other.invalid";
+  target.Configure(config);
+  Check(target.TakeBattleReplay(), "a new url with battle logs on asks");
+  config.url        = "http://third.invalid";
+  config.battlelogs = false;
+  target.Configure(config);
+  Check(!target.TakeBattleReplay(), "a new url with battle logs off does not ask");
+
+  Delivery quiet;
+  auto     off   = Options();
+  off.battlelogs = false;
+  quiet.Configure(off);
+  quiet.AdoptAcked({});
+  Check(!quiet.TakeBattleReplay(), "adopting a record without battle logs does not ask");
+  Delivery adopting;
+  adopting.Configure(Options());
+  adopting.TakeBattleReplay();
+  adopting.AdoptAcked({});
+  Check(adopting.TakeBattleReplay(), "adopting a record with battle logs on asks");
+}
+void HeaderListMerge()
+{
+  HeaderList list;
+  MergeHeaderList(list, 1, {});
+  Check(list.generation == 1 && list.ids.empty(), "an empty report to an empty list is nothing");
+  MergeHeaderList(list, 1, {9, 8, 7});
+  Check(list.ids == Ids{9, 8, 7}, "a report is kept newest first");
+  MergeHeaderList(list, 1, {});
+  Check(list.ids == Ids{9, 8, 7}, "an empty report changes nothing");
+  MergeHeaderList(list, 1, {9, 8});
+  Check(list.ids == Ids{9, 8, 7}, "a short report does not shrink the list");
+  MergeHeaderList(list, 1, {11, 10, 9, 10});
+  Check(list.ids == Ids{11, 10, 9, 8, 7}, "new ids come first and duplicates collapse");
+  const auto before = list.ids;
+  MergeHeaderList(list, 1, before);
+  Check(list.ids == before, "merging the list into itself changes nothing");
+  Ids many;
+  for (uint64_t id = 1000; id > 1000 - 2 * kRecentBattles; --id)
+    many.push_back(id);
+  MergeHeaderList(list, 1, many);
+  Check(list.ids.size() == kRecentBattles && list.ids.front() == 1000 && list.ids.back() == 1000 - kRecentBattles + 1,
+        "the list is cut to the newest kRecentBattles");
+  MergeHeaderList(list, 2, {5});
+  Check(list.generation == 2 && list.ids == Ids{5}, "a new generation starts over");
+  MergeHeaderList(list, 3, {});
+  Check(list.generation == 3 && list.ids.empty(), "even with an empty report");
+}
+void AckedFetchDecision()
+{
+  std::map<std::string, std::shared_ptr<Delivery>> targets;
+  const auto                                       add = [&](const char* name, bool battlelogs) {
+    auto config       = Options();
+    config.battlelogs = battlelogs;
+    targets[name]     = std::make_shared<Delivery>();
+    targets[name]->Configure(config);
+  };
+  Check(!EveryBattleTargetAcked(targets, 7), "without targets nothing is skipped");
+  add("a", true);
+  add("b", true);
+  add("off", false);
+  Check(!EveryBattleTargetAcked(targets, 7), "an id no target has is fetched");
+  StoreBattle(7);
+  SendBattles(*targets["a"]);
+  Check(!EveryBattleTargetAcked(targets, 7), "an id one target lacks is fetched");
+  SendBattles(*targets["b"]);
+  Check(EveryBattleTargetAcked(targets, 7),
+        "an id every battle target has is skipped; a target without battlelogs is ignored");
+  add("c", true);
+  Check(!EveryBattleTargetAcked(targets, 7), "a new target brings it back");
+  targets.erase("c");
+  targets.erase("a");
+  targets.erase("b");
+  Check(!EveryBattleTargetAcked(targets, 7), "no target syncing battle logs fetches as before");
+}
 void ProtobufJournals()
 {
   const auto body      = BattleReportBody(SyntheticJournal());
@@ -974,6 +1223,15 @@ int main()
   run("name caches", NameCaches);
   run("logging", SyncLogging);
   run("protobuf journals", ProtobufJournals);
+  run("acked battles", AckedAcrossSessions);
+  run("acked endpoint", AckedEndpointChange);
+  run("acked adoption", AckedAdoption);
+  run("acked bound", AckedBound);
+  run("acked file", AckedFile);
+  run("acked save snapshot", AckedSaveSnapshot);
+  run("acked replay trigger", AckedReplayTrigger);
+  run("acked fetch decision", AckedFetchDecision);
+  run("header list merge", HeaderListMerge);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;

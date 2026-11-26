@@ -1,7 +1,7 @@
 #pragma once
 
-// Where the mod's settings, runtime vars, log, and battle-log cache live, and the command-line flags that change
-// them. `-ccm <path>` selects a profile: every file is named after it instead of the defaults.
+// Where the mod's settings, runtime vars, log, and acknowledged-battle record live, and the command-line flags that
+// change them. `-ccm <path>` selects a profile: every file is named after it instead of the defaults.
 
 #include <filesystem>
 #include <string>
@@ -16,6 +16,8 @@ void Init();
 const std::string& Config();
 const std::string& Vars();
 const std::string& Log();
+// The battle journals each sync target has acknowledged; deleting it makes the next login replay them all.
+const std::string& BattleAcks();
 // The settings file name used without -ccm, for messages that point users at it.
 const std::string& DefaultConfig();
 

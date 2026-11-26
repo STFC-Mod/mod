@@ -933,8 +933,10 @@ show_station_cargo = true
 
 # Target changes apply on settings reload and receive the latest observed state.
 # Failed uploads retry; pending changes to an entity use its latest value.
-# Up to 300 recent battle journals are retained per session. Journals may replay
-# after restarting or logging in again; the old sent-ID file is no longer used.
+# Up to 300 recent battle journals are retained per session. Journals replay after
+# restarting or logging in again only to targets that have not acknowledged them;
+# the last 600 per target are remembered in community_patch_battle_acks.json (delete
+# it to replay everything). A target whose url changes starts over.
 
 # Subgroup: Data
 # --------------

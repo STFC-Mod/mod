@@ -64,6 +64,8 @@ namespace
   // {generation, id} of battles queued or being fetched, so each journal is fetched once. Entries leave when the
   // run loop finishes with a battle or the queue drops it. Delivery to targets is tracked by the record store.
   auto& pending = *new std::set<std::pair<uint64_t, uint64_t>>;
+  // Guarded by battle_mutex.
+  auto& last_headers = *new HeaderList;
 
   // The game client's UnityWebRequest identity, which the game server expects. Update with each client Unity bump.
   const std::string kUnityVersion = "6000.0.59f2-deadlock-fix-test";
@@ -377,14 +379,28 @@ void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation)
   if (session.generation != generation)
     return;
   std::scoped_lock lock(battle_mutex);
+  // Kept, merged with what other reports said, so a target that comes on later has the ids it lacks fetched.
+  MergeHeaderList(last_headers, generation, ids);
   // Older sessions' entries can never match again; the run loop drops their battles without fetching.
   std::erase_if(pending, [&](const auto& entry) { return entry.first != generation; });
   for (auto id : ids | std::views::reverse) {
-    if (HasBattle(id, generation) || !pending.emplace(generation, id).second)
+    if (HasBattle(id, generation) || BattleAckedEverywhere(id) || !pending.emplace(generation, id).second)
       continue;
     if (auto dropped = battles.Push({id, session}))
       pending.erase({dropped->session.generation, dropped->id});
   }
+}
+
+void RequeueLastBattles(const Input& input)
+{
+  std::vector<uint64_t> ids;
+  {
+    std::scoped_lock lock(battle_mutex);
+    if (last_headers.generation == input.generation)
+      ids = last_headers.ids;
+  }
+  if (!ids.empty())
+    QueueNewBattles(ids, input.generation);
 }
 
 void CachePlayerNames(const Input& input)

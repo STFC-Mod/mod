@@ -8,6 +8,7 @@
 #include "sync/sync.h"
 
 #include "features/features.h"
+#include "file.h"
 
 #include "game/app.h"
 #include "game/server.h"
@@ -207,6 +208,65 @@ namespace
     FollowSettings();
     UpdateFleetSync();
   }
+
+  // --- Acknowledged battle journals ---
+
+  // The file the acknowledged journals persist in. `io` serializes reading and writing it and is taken before the
+  // state mutex, never after; `removed` is guarded by the state mutex. Threads: the game thread (FollowSettings), each
+  // target's upload thread (adopting, flushing) and the processing thread (BattleAckedEverywhere, through the battle
+  // queue). Only upload threads do file I/O.
+  //
+  // Known limits, all of which only ever cost a replay: two game processes in one folder overwrite each other's
+  // record, the file is renamed into place without a flush to disk, and acknowledgements from the last second or two
+  // before the game exits are not written.
+  struct BattleAckFile {
+    std::mutex           io;
+    bool                 loaded    = false;
+    bool                 failing   = false;
+    bool                 retry     = false;
+    bool                 removed   = false;
+    bool                 read_only = false;
+    AckedByTarget        stored;
+    Clock::time_point    saved_at{};
+    std::chrono::seconds wait{1};
+  };
+  BattleAckFile& AckFile()
+  {
+    static auto& file = *new BattleAckFile; // Leaked, like the threads that use it.
+    return file;
+  }
+
+  // Reads the file once. Missing, unreadable or malformed means empty: every journal is replayed, as without the
+  // file. A file from a newer version is left alone for the whole session. Never throws. Holds `io`.
+  void LoadBattleAcks(BattleAckFile& file)
+  {
+    if (std::exchange(file.loaded, true))
+      return;
+    std::string problem;
+    bool        newer = false;
+    try {
+      file.stored = LoadAcked(File::Path(File::BattleAcks()), problem, newer);
+    } catch (...) {
+      file.stored = {};
+      problem     = "the file could not be read";
+    }
+    file.read_only = newer;
+    if (!problem.empty())
+      logging::Error("load", "battle acknowledgements", "{}; every battle journal will be sent again", problem);
+  }
+
+  // A save that failed is tried again after a wait that doubles up to a minute; the first failure is logged.
+  void NoteBattleAckFailure(BattleAckFile& file, const char* problem)
+  {
+    file.retry = true;
+    file.wait  = file.failing ? std::min(file.wait * 2, std::chrono::seconds(60)) : std::chrono::seconds(2);
+    if (!std::exchange(file.failing, true))
+      logging::Error("save", "battle acknowledgements", "{}; trying again", problem);
+  }
+
+  // Asks the processing thread to decide again, for the last battle header list, which journals to fetch.
+  void RequeueBattles()
+  { pending_jobs.Push({RequeueLastBattles, {.generation = SessionGeneration()}}); }
 } // namespace
 
 // --- Shared state ---
@@ -236,6 +296,71 @@ bool HasBattle(uint64_t id, uint64_t generation)
   return generation == state.records.Generation() && state.records.Contains(Stream::kBattles, id);
 }
 
+bool BattleAckedEverywhere(uint64_t id)
+{
+  auto&            state = State();
+  std::scoped_lock lock(state.mutex);
+  return EveryBattleTargetAcked(state.targets, id);
+}
+
+void AdoptBattleAcks(const std::string& name, Delivery& delivery)
+{
+  bool replay = false;
+  {
+    auto&            file = AckFile();
+    std::scoped_lock io(file.io);
+    LoadBattleAcks(file);
+    std::scoped_lock lock(State().mutex);
+    const auto       stored = file.stored.find(name);
+    delivery.AdoptAcked(stored != file.stored.end() ? stored->second : AckedBattles{});
+    replay = delivery.TakeBattleReplay();
+  }
+  // A target added while the game runs may lack journals that were skipped before it was there.
+  if (replay)
+    RequeueBattles();
+}
+
+// At most one write a second, however many journals were acknowledged in between: a login acknowledges hundreds.
+// Never throws: a failure is retried later.
+void FlushBattleAcks()
+{
+  auto&            file = AckFile();
+  std::unique_lock io(file.io, std::try_to_lock);
+  if (!io.owns_lock())
+    return;
+  const auto now = Clock::now();
+  if (now - file.saved_at < file.wait)
+    return;
+  try {
+    LoadBattleAcks(file);
+    if (file.read_only)
+      return;
+    AckedByTarget snapshot;
+    bool          dirty = file.retry;
+    {
+      auto&            state = State();
+      std::scoped_lock lock(state.mutex);
+      dirty |= std::exchange(file.removed, false);
+      snapshot = CollectAcked(state.targets, file.stored, dirty);
+    }
+    if (!dirty)
+      return;
+    std::string problem;
+    file.saved_at = now;
+    if (!SaveAcked(File::Path(File::BattleAcks(), true), snapshot, problem))
+      return NoteBattleAckFailure(file, problem.c_str());
+    // What the file holds now. A target removed from the settings is gone from it, so one added again later starts
+    // without a record and is replayed everything.
+    file.stored  = std::move(snapshot);
+    file.retry   = false;
+    file.failing = false;
+    file.wait    = std::chrono::seconds(1);
+  } catch (...) {
+    file.saved_at = now;
+    NoteBattleAckFailure(file, "the file could not be written");
+  }
+}
+
 // Starts, reconfigures and retires target threads to match [sync] after a settings reload. Runs every frame, so
 // it returns at once while the settings object is unchanged. Game thread only.
 void FollowSettings()
@@ -244,7 +369,8 @@ void FollowSettings()
   const auto                                 config = Config::Sync::Get();
   if (applied == config)
     return;
-  auto& state = State();
+  auto& state   = State();
+  bool  requeue = false;
   {
     std::scoped_lock lock(state.mutex);
     // Dropping the registry's reference ends the target's thread after its current request (see UploadTarget).
@@ -252,11 +378,14 @@ void FollowSettings()
       if (config->targets.contains(entry.first))
         return false;
       entry.second->Retire();
+      AckFile().removed = true;
       return true;
     });
     for (const auto& [name, options] : config->targets) {
       if (const auto found = state.targets.find(name); found != state.targets.end()) {
         found->second->Configure(options);
+        // A target that has not adopted its record yet asks for this itself, once it has.
+        requeue |= found->second->AckedAdopted() && found->second->TakeBattleReplay();
         continue;
       }
       auto target = std::make_shared<Delivery>();
@@ -266,6 +395,8 @@ void FollowSettings()
     }
   }
   applied = config;
+  if (requeue)
+    RequeueBattles();
   state.ready.notify_all();
 }
 
