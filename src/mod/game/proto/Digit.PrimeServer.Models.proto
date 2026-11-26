@@ -2793,8 +2793,8 @@ message UserHistoryResponse {
 message UserProfile {
   string userId = 1;
   string name = 2;
-  int32 level = 3;
-  int32 levelLastAwarded = 4;
+  fixed32 level = 3;
+  fixed32 levelLastAwarded = 4;
   uint64 xp = 5;
   int64 allianceId = 6;
   int32 ftueStage = 7;
