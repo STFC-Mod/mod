@@ -29,8 +29,8 @@ enum BundleBorderShapeType {
 message Bundle {
   int64 bundleId = 1;
   string bundleTypeString = 2;
-  uint32 priority = 3;
-  uint32 sortOrder = 4;
+  fixed32 priority = 3;
+  fixed32 sortOrder = 4;
   bool isSpecial = 5;
   repeated Cost cost = 6;
   repeated Resource requirements = 7;
@@ -106,10 +106,10 @@ message Transform {
 message OfferDetails {
   string bonusLabel = 1;
   string bonusValue = 2;
-  int32 validCount = 3;
+  sint32 validCount = 3;
   google.protobuf.Timestamp validFromTimestamp = 4;
   google.protobuf.Timestamp validUntilTimestamp = 5;
-  int32 sameRemainingCount = 6;
+  sint32 sameRemainingCount = 6;
   bool sameRemainingCountVisible = 7;
   bool cooldownConfigured = 8;
 }
@@ -177,8 +177,8 @@ message Orders {
 }
 
 message OrderItem {
-  uint32 bundleId = 1;
-  uint32 bundleVersion = 2;
+  fixed32 bundleId = 1;
+  fixed32 bundleVersion = 2;
   BundleContent content = 3;
 }
 
@@ -249,7 +249,7 @@ message TournamentBundlesResponse {
 
 message Cost {
   repeated Resource cost_ = 1;
-  uint32 quantity = 2;
+  fixed32 quantity = 2;
 }
 
 message Resource {
@@ -258,7 +258,7 @@ message Resource {
   string id = 3;
   string type = 4;
   int32 unavailableDisplayMode = 5;
-  uint64 amountUlong = 6;
+  fixed64 amountUlong = 6;
 }
 
 message StoreGroups {

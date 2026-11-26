@@ -815,9 +815,9 @@ void ProcessStoreOffers(const Input& input)
   Publish(Stream::kStoreOffers, std::move(records), input.generation);
 }
 
-// UserProfiles responses also list other players; only the local player's record is read. The server record carries
-// level 0, so the in-memory Level captured with the response is used: it lags one own-record response after a
-// level-up.
+// UserProfiles responses also list other players; only the local player's record is read. The level is the in-memory
+// Level captured with the response: it lags one own-record response after a level-up. (The record's own level is a
+// fixed32 field; it read 0 while it was declared as a varint.)
 void ProcessOwnProfile(const Input& input)
 {
   const auto response = Parse<pb::UserProfilesResponse>(input, "own profile");

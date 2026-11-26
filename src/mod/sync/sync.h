@@ -343,7 +343,8 @@ struct Input {
   std::string bytes;
   // Captured on the game thread for owner-qualified Haven map responses and the own profile.
   std::string user_id;
-  // The local player's level, captured with user_id for the own profile: its server record carries level 0.
+  // The local player's level, captured with user_id for the own profile, which reports it instead of the record's own
+  // level field.
   int32_t level = 0;
 };
 using Processor = void (*)(const Input&);

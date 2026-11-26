@@ -4,6 +4,7 @@
 #include "sync/journal.h"
 #include "sync/sync.h"
 
+#include <Digit.PrimePlatform.Content.pb.h>
 #include <Digit.PrimeServer.Models.pb.h>
 #include <stfc.sync.pb.h>
 
@@ -23,7 +24,8 @@ template <> struct fmt::formatter<CountedLogValue> : fmt::formatter<std::string_
 };
 
 using nlohmann::json;
-namespace game = Digit::PrimeServer::Models;
+namespace game    = Digit::PrimeServer::Models;
+namespace content = Digit::PrimePlatform::Content;
 namespace
 {
 using namespace data_sync;
@@ -843,6 +845,58 @@ game::JournalResponse SyntheticJournal()
   (*npc->mutable_deployedfleets())[61] = *npc_fleet;
   return journal;
 }
+// Hand-encoded wire bytes, so the declared protobuf types are checked against what the game sends and not against
+// the same schema twice.
+template <typename Message> Message ParseWire(const std::string& bytes)
+{
+  Message message;
+  Check(message.ParseFromString(bytes), "wire fixture parses");
+  return message;
+}
+std::string Field(char tag, const std::string& bytes)
+{ return std::string{tag, static_cast<char>(bytes.size())} + bytes; }
+void WireTypes()
+{
+  // OfferDetails: validCount (3) and sameRemainingCount (6) are zigzag varints: 1 is -1 and 10 is 5.
+  const auto details = ParseWire<content::OfferDetails>(std::string("\x18\x01\x30\x0a", 4));
+  Check(details.validcount() == -1 && details.sameremainingcount() == 5, "offer counts are zigzag encoded");
+  // Bundle: priority (3) and sortOrder (4) are fixed32.
+  const auto bundle = ParseWire<content::Bundle>(std::string("\x1d\x07\x00\x00\x00\x25\x2a\x00\x00\x00", 10));
+  Check(bundle.priority() == 7 && bundle.sortorder() == 42, "bundle priority and sort order are fixed32");
+  // Cost.quantity (2) is fixed32.
+  const auto cost = ParseWire<content::Cost>(std::string("\x15\x09\x00\x00\x00", 5));
+  Check(cost.quantity() == 9, "cost quantity is fixed32");
+  // Resource.amountUlong (6) is fixed64.
+  const auto resource = ParseWire<content::Resource>(std::string("\x31\x00\x94\x35\x77\x00\x00\x00\x00", 9));
+  Check(resource.amountulong() == 2000000000u, "resource amountUlong is fixed64");
+  const auto profile = ParseWire<game::UserProfile>(std::string("\x1d\x28\x00\x00\x00\x25\x27\x00\x00\x00", 10));
+  Check(profile.level() == 40 && profile.levellastawarded() == 39, "profile levels are fixed32");
+}
+void StoreOfferCounts()
+{
+  auto target = Target();
+  // Two faction bundles whose offer details come from wire bytes: 1 is -1 (unlimited), 10 is 5.
+  const auto bundle = [](int64_t id, const std::string& details) {
+    content::Bundle message;
+    message.set_bundleid(id);
+    message.set_category("factions");
+    auto* consumable = message.mutable_content()->mutable_static_()->add_items();
+    consumable->set_id("500");
+    consumable->set_type("consumable");
+    return Field('\x0a', message.SerializeAsString() + Field('\x72', details));
+  };
+  const std::string response =
+      bundle(20, std::string("\x18\x01\x30\x01", 4)) + bundle(10, std::string("\x18\x0a\x30\x0a", 4));
+  ProcessStoreOffers({store.Generation(), response});
+  const auto records = Send(target);
+  Check(records.size() == 1 && records[0]["type"] == "store_offer" && records[0]["offers"].size() == 2,
+        "one store offer record");
+  const auto& offers = records[0]["offers"];
+  Check(offers[0]["bid"] == 10 && offers[0]["valid_count"] == 5 && offers[0]["same_remaining_count"] == 5,
+        "store offer counts are the decoded values");
+  Check(offers[1]["bid"] == 20 && offers[1]["valid_count"] == -1 && offers[1]["same_remaining_count"] == -1,
+        "an unlimited store offer is -1");
+}
 void ProtobufJournals()
 {
   const auto body      = BattleReportBody(SyntheticJournal());
@@ -974,6 +1028,8 @@ int main()
   run("name caches", NameCaches);
   run("logging", SyncLogging);
   run("protobuf journals", ProtobufJournals);
+  run("wire types", WireTypes);
+  run("store offer counts", StoreOfferCounts);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;
