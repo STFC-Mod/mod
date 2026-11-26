@@ -843,6 +843,71 @@ game::JournalResponse SyntheticJournal()
   (*npc->mutable_deployedfleets())[61] = *npc_fleet;
   return journal;
 }
+// Every pending upload, keyed by event type.
+std::map<std::string, json> Drain(Delivery& target)
+{
+  std::map<std::string, json> uploads;
+  while (auto upload = target.Next(store, now)) {
+    for (auto& record : upload->Records())
+      uploads[upload->Type()].push_back(std::move(record));
+    target.Complete(std::move(*upload), true, store.Generation(), now);
+  }
+  return uploads;
+}
+std::string AllianceBytes(int64_t id, int32_t league, int32_t level)
+{
+  game::AllianceProfile profile;
+  profile.set_id(id);
+  profile.set_name("name");
+  profile.set_tag("tag");
+  profile.set_slogan("slogan");
+  profile.set_league(league);
+  profile.set_level(level);
+  return profile.SerializeAsString();
+}
+void AllianceLeague()
+{
+  auto       target = Target();
+  const auto league = [](const std::string& bytes) { ProcessAllianceLeague({store.Generation(), bytes}); };
+  league(AllianceBytes(55, 4, 45));
+  Check(!Drain(target).contains("alliance_league"), "nothing is sent before the own alliance is known");
+
+  game::UserProfilesResponse profiles;
+  auto*                      own = profiles.add_userprofiles();
+  own->set_userid("me");
+  own->set_allianceid(55);
+  ProcessOwnProfile({store.Generation(), profiles.SerializeAsString(), "me", 10});
+  Drain(target);
+
+  league(AllianceBytes(66, 3, 9));
+  Check(!Drain(target).contains("alliance_league"), "another alliance sends nothing");
+  league(AllianceBytes(55, 4, 45));
+  const auto first = Drain(target);
+  Check(first.contains("alliance_league") && first.at("alliance_league").size() == 1
+            && first.at("alliance_league")[0] == json::parse(R"({"type":"alliance_league","league":4,"level":45})"),
+        "only the league and level are sent");
+  league(AllianceBytes(55, 4, 45));
+  Check(!Drain(target).contains("alliance_league"), "unchanged values are sent once");
+  league(AllianceBytes(55, 5, 45));
+  const auto second = Drain(target);
+  Check(second.contains("alliance_league") && second.at("alliance_league")[0].at("league") == 5,
+        "a changed league is sent again");
+  league(AllianceBytes(66, 1, 1));
+  Check(!Drain(target).contains("alliance_league"), "another alliance does not overwrite the own one");
+
+  // A new session forgets the alliance the previous one learned.
+  store.Reset();
+  league(AllianceBytes(55, 4, 45));
+  Check(!Drain(target).contains("alliance_league"), "the own alliance of an earlier session is ignored");
+
+  // An own profile that lists no alliance matches no alliance.
+  game::UserProfilesResponse alone;
+  alone.add_userprofiles()->set_userid("me");
+  ProcessOwnProfile({store.Generation(), alone.SerializeAsString(), "me", 10});
+  league(AllianceBytes(0, 4, 45));
+  league(AllianceBytes(55, 4, 45));
+  Check(!Drain(target).contains("alliance_league"), "an own profile without an alliance sends nothing");
+}
 void ProtobufJournals()
 {
   const auto body      = BattleReportBody(SyntheticJournal());
@@ -974,6 +1039,7 @@ int main()
   run("name caches", NameCaches);
   run("logging", SyncLogging);
   run("protobuf journals", ProtobufJournals);
+  run("alliance league", AllianceLeague);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;

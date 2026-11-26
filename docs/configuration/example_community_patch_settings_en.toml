@@ -939,6 +939,9 @@ show_station_cargo = true
 # Subgroup: Data
 # --------------
 
+# Sync the player's own alliance league and level (two numbers; no alliance id, name or members).
+alliance = false
+
 # Do you want to sync away team assignment data?
 away_assignments = true
 
