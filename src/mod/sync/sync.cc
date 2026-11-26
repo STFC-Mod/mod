@@ -86,10 +86,13 @@ namespace
   }
 
   // Platform responses (store offers among them) pass through the same registry code as game server responses. Only
-  // store offers are read from them, and only while a target wants them: unlike the categories above, a target that
-  // turns them on waits for the next store refresh.
+  // store offers are read from them, and only while a target wants the stream that reads them: unlike the categories
+  // above, a target that turns them on waits for the next store refresh. Each processor runs only for its own
+  // option, and a target receives only the streams it enables.
   void HandlePlatformResponse(PlatformServiceResponse* response)
   {
+    const auto  config  = Config::Sync::Get();
+    const auto& options = config->options;
     for (auto* entity_group : il2cpp::Items(response->EntityGroups())) {
       auto* group = entity_group && entity_group->Type() == PlatformEntityGroup::Kind::StoreOffers
                         ? entity_group->Group()
@@ -97,8 +100,12 @@ namespace
       if (!group)
         continue;
       const auto bytes = group->Span();
-      pending_jobs.Push(
-          {ProcessStoreOffers, {.generation = SessionGeneration(), .bytes = {bytes.begin(), bytes.end()}}});
+      if (options.store_offers)
+        pending_jobs.Push(
+            {ProcessStoreOffers, {.generation = SessionGeneration(), .bytes = {bytes.begin(), bytes.end()}}});
+      if (options.store_bundles)
+        pending_jobs.Push(
+            {ProcessStoreBundles, {.generation = SessionGeneration(), .bytes = {bytes.begin(), bytes.end()}}});
     }
   }
 
@@ -124,7 +131,8 @@ namespace
     if (service_response && service_response->Is<ServiceResponse>()) {
       for (auto* group : il2cpp::Items(service_response->EntityGroups()))
         HandleEntityGroup(group);
-    } else if (service_response && Config::Sync::Get()->options.store_offers) {
+    } else if (service_response
+               && (Config::Sync::Get()->options.store_offers || Config::Sync::Get()->options.store_bundles)) {
       if (auto* platform = service_response->As<PlatformServiceResponse>())
         HandlePlatformResponse(platform);
     }

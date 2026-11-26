@@ -43,6 +43,7 @@ struct SyncConfig {
   bool        resources        = false;
   bool        ships            = false;
   bool        slots            = false;
+  bool        store_bundles    = false;
   bool        store_offers     = false;
   bool        tech             = false;
   bool        traits           = false;
@@ -67,6 +68,7 @@ constexpr auto SyncOptions = std::to_array<SyncConfig::Option>({
     {"resources", &SyncConfig::resources},
     {"ships", &SyncConfig::ships},
     {"slots", &SyncConfig::slots},
+    {"store_bundles", &SyncConfig::store_bundles},
     {"store_offers", &SyncConfig::store_offers},
     {"tech", &SyncConfig::tech},
     {"traits", &SyncConfig::traits},

@@ -701,6 +701,54 @@ namespace
           return &item;
     return nullptr;
   }
+
+  // The categories the store bundle stream carries, as the game names them.
+  constexpr std::array<std::string_view, 3> kBundleCategories{"refining_materials", "refining_ship_parts",
+                                                              "alliance_games"};
+
+  json BundleItems(const content::ContentItemList& list)
+  {
+    auto items = json::array();
+    for (const auto& item : list.items())
+      items.push_back({{"id", OfferId(item.id())}, {"kind", item.type()}, {"qty", item.quantity()}});
+    return items;
+  }
+
+  // Epoch seconds, or null when the game sends no time or 0.
+  json BundleTime(bool has, int64_t seconds)
+  { return has && seconds > 0 ? json(seconds) : json(nullptr); }
+
+  json StoreBundle(const content::Bundle& bundle)
+  {
+    auto cost = json::array();
+    for (const auto& entry : bundle.cost()) {
+      auto resources = json::array();
+      for (const auto& resource : entry.cost_())
+        resources.push_back({{"rid", OfferId(resource.id())}, {"amount", OfferAmount(resource)}});
+      cost.push_back({{"qty", entry.quantity()}, {"res", std::move(resources)}});
+    }
+    auto requirements = json::array();
+    for (const auto& resource : bundle.requirements())
+      requirements.push_back(
+          {{"type", resource.type()}, {"id", OfferId(resource.id())}, {"amount", OfferAmount(resource)}});
+    auto dynamic = json::array();
+    for (const auto& list : bundle.content().dynamic())
+      dynamic.push_back(BundleItems(list));
+    const auto& details = bundle.offerdetails();
+    const auto  from    = BundleTime(details.has_validfromtimestamp(), details.validfromtimestamp().seconds());
+    const auto  until   = BundleTime(details.has_validuntiltimestamp(), details.validuntiltimestamp().seconds());
+    return {{"bid", bundle.bundleid()},
+            {"sort", bundle.sortorder()},
+            {"cost", std::move(cost)},
+            {"req", std::move(requirements)},
+            {"dynamic", std::move(dynamic)},
+            {"static", BundleItems(bundle.content().static_())},
+            {"uses_left", details.validcount()},
+            {"same_left", details.sameremainingcount()},
+            {"valid_from", from},
+            {"valid_until", until},
+            {"cooldown", details.cooldownconfigured()}};
+  }
 } // namespace
 
 // A realtime slot update: the same record as the protobuf EntitySlot, from the realtime channel's JSON. The cases
@@ -813,6 +861,31 @@ void ProcessStoreOffers(const Input& input)
   RecordSet records;
   records[std::string(kCategory)] = {{"category", kCategory}, {"offers", std::move(offers)}};
   Publish(Stream::kStoreOffers, std::move(records), input.generation);
+}
+
+// Store bundles: one record per category in kBundleCategories, the whole snapshot of its bundles in bundle id order.
+// A response without a category says nothing about it, so its last record stays.
+void ProcessStoreBundles(const Input& input)
+{
+  const auto parsed = Parse<content::Bundles>(input, "store bundles");
+  if (!parsed)
+    return;
+
+  std::map<std::string_view, std::vector<const content::Bundle*>> found;
+  for (const auto& bundle : parsed->bundles_())
+    if (std::ranges::find(kBundleCategories, bundle.category()) != kBundleCategories.end())
+      found[bundle.category()].push_back(&bundle);
+
+  RecordSet records;
+  for (auto& [category, bundles] : found) {
+    std::ranges::stable_sort(bundles, {}, [](const content::Bundle* bundle) { return bundle->bundleid(); });
+    auto snapshot = json::array();
+    for (const auto* bundle : bundles)
+      snapshot.push_back(StoreBundle(*bundle));
+    records[std::string(category)] = {{"category", category}, {"bundles", std::move(snapshot)}};
+  }
+  if (!records.empty())
+    Publish(Stream::kStoreBundles, std::move(records), input.generation);
 }
 
 // UserProfiles responses also list other players; only the local player's record is read. The level is the in-memory

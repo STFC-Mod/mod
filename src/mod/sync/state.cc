@@ -53,6 +53,7 @@ namespace
       Spec{Stream::kAllianceResources, &SyncConfig::resources, "alliance_resource", FullSync::kInitial},
       Spec{Stream::kShips, &SyncConfig::ships, "ship", FullSync::kInitial},
       Spec{Stream::kSlots, &SyncConfig::slots, "slot"},
+      Spec{Stream::kStoreBundles, &SyncConfig::store_bundles, "store_bundle"},
       Spec{Stream::kStoreOffers, &SyncConfig::store_offers, "store_offer"},
       Spec{Stream::kTech, &SyncConfig::tech, "ft"},
       Spec{Stream::kTraits, &SyncConfig::traits, "trait"},

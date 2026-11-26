@@ -218,6 +218,7 @@ enum class Stream {
   kAllianceResources,
   kShips,
   kSlots,
+  kStoreBundles,
   kStoreOffers,
   kTech,
   kTraits,
@@ -363,6 +364,7 @@ template <typename Message> std::optional<Message> Parse(const Input& input, std
 Processor ProcessorFor(EntityGroup::Kind kind);
 void      ProcessRealtimeSlot(const Input& input);
 void      ProcessStoreOffers(const Input& input);
+void      ProcessStoreBundles(const Input& input);
 // The local player's own record from a UserProfiles response; needs user_id and level.
 void ProcessOwnProfile(const Input& input);
 
