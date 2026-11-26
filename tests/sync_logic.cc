@@ -4,10 +4,12 @@
 #include "sync/journal.h"
 #include "sync/sync.h"
 
+#include <Digit.PrimePlatform.Content.pb.h>
 #include <Digit.PrimeServer.Models.pb.h>
 #include <stfc.sync.pb.h>
 
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -23,7 +25,8 @@ template <> struct fmt::formatter<CountedLogValue> : fmt::formatter<std::string_
 };
 
 using nlohmann::json;
-namespace game = Digit::PrimeServer::Models;
+namespace game    = Digit::PrimeServer::Models;
+namespace content = Digit::PrimePlatform::Content;
 namespace
 {
 using namespace data_sync;
@@ -843,6 +846,185 @@ game::JournalResponse SyntheticJournal()
   (*npc->mutable_deployedfleets())[61] = *npc_fleet;
   return journal;
 }
+// Hand-encoded wire bytes, so the declared protobuf types are checked against what the game sends and not against
+// the same schema twice.
+template <typename Message> Message ParseWire(const std::string& bytes)
+{
+  Message message;
+  Check(message.ParseFromString(bytes), "wire fixture parses");
+  return message;
+}
+std::string Field(char tag, const std::string& bytes)
+{ return std::string{tag, static_cast<char>(bytes.size())} + bytes; }
+void WireTypes()
+{
+  // OfferDetails: validCount (3) and sameRemainingCount (6) are zigzag varints: 1 is -1 and 10 is 5.
+  const auto details = ParseWire<content::OfferDetails>(std::string("\x18\x01\x30\x0a", 4));
+  Check(details.validcount() == -1 && details.sameremainingcount() == 5, "offer counts are zigzag encoded");
+  // Bundle: priority (3) and sortOrder (4) are fixed32.
+  const auto bundle = ParseWire<content::Bundle>(std::string("\x1d\x07\x00\x00\x00\x25\x2a\x00\x00\x00", 10));
+  Check(bundle.priority() == 7 && bundle.sortorder() == 42, "bundle priority and sort order are fixed32");
+  // Cost.quantity (2) is fixed32.
+  const auto cost = ParseWire<content::Cost>(std::string("\x15\x09\x00\x00\x00", 5));
+  Check(cost.quantity() == 9, "cost quantity is fixed32");
+  // Resource.amountUlong (6) is fixed64.
+  const auto resource = ParseWire<content::Resource>(std::string("\x31\x00\x94\x35\x77\x00\x00\x00\x00", 9));
+  Check(resource.amountulong() == 2000000000u, "resource amountUlong is fixed64");
+  const auto profile = ParseWire<game::UserProfile>(std::string("\x1d\x28\x00\x00\x00\x25\x27\x00\x00\x00", 10));
+  Check(profile.level() == 40 && profile.levellastawarded() == 39, "profile levels are fixed32");
+}
+void StoreOfferCounts()
+{
+  auto target = Target();
+  // Two faction bundles whose offer details come from wire bytes: 1 is -1 (unlimited), 10 is 5.
+  const auto bundle = [](int64_t id, const std::string& details) {
+    content::Bundle message;
+    message.set_bundleid(id);
+    message.set_category("factions");
+    auto* consumable = message.mutable_content()->mutable_static_()->add_items();
+    consumable->set_id("500");
+    consumable->set_type("consumable");
+    return Field('\x0a', message.SerializeAsString() + Field('\x72', details));
+  };
+  const std::string response =
+      bundle(20, std::string("\x18\x01\x30\x01", 4)) + bundle(10, std::string("\x18\x0a\x30\x0a", 4));
+  ProcessStoreOffers({store.Generation(), response});
+  const auto records = Send(target);
+  Check(records.size() == 1 && records[0]["type"] == "store_offer" && records[0]["offers"].size() == 2,
+        "one store offer record");
+  const auto& offers = records[0]["offers"];
+  Check(offers[0]["bid"] == 10 && offers[0]["valid_count"] == 5 && offers[0]["same_remaining_count"] == 5,
+        "store offer counts are the decoded values");
+  Check(offers[1]["bid"] == 20 && offers[1]["valid_count"] == -1 && offers[1]["same_remaining_count"] == -1,
+        "an unlimited store offer is -1");
+}
+// Every pending upload, keyed by event type.
+std::map<std::string, json> Drain(Delivery& target)
+{
+  std::map<std::string, json> uploads;
+  while (auto upload = target.Next(store, now)) {
+    uploads[upload->Type()] = upload->Records();
+    target.Complete(std::move(*upload), true, store.Generation(), now);
+  }
+  return uploads;
+}
+void AddItem(content::ContentItemList* list, const char* id, const char* kind, int64_t quantity)
+{
+  auto* item = list->add_items();
+  item->set_id(id);
+  item->set_type(kind);
+  item->set_quantity(quantity);
+}
+content::Bundle* AddBundle(content::Bundles& response, int64_t id, const char* category)
+{
+  auto* bundle = response.add_bundles_();
+  bundle->set_bundleid(id);
+  bundle->set_category(category);
+  return bundle;
+}
+content::Bundles StoreResponse()
+{
+  content::Bundles response;
+  // Out of bundle id order on purpose.
+  auto* refine = AddBundle(response, 30, "refining_materials");
+  refine->set_sortorder(7);
+  for (uint32_t quantity = 1; quantity <= 3; ++quantity) {
+    auto* cost = refine->add_cost();
+    cost->set_quantity(quantity);
+    auto* resource = cost->add_cost_();
+    resource->set_id("4000000000");
+    resource->set_amount(quantity * 1000);
+  }
+  for (const char* id : {"21", "22"}) {
+    auto* list = refine->mutable_content()->add_dynamic();
+    AddItem(list, id, "resource", 3);
+    AddItem(list, "23", "resource", 9);
+  }
+  refine->mutable_offerdetails()->set_validcount(-1);
+  refine->mutable_offerdetails()->set_sameremainingcount(-1);
+  AddBundle(response, 10, "refining_materials");
+  auto* parts = AddBundle(response, 5, "refining_ship_parts");
+  parts->mutable_offerdetails()->set_validcount(5);
+  parts->mutable_offerdetails()->mutable_validfromtimestamp()->set_seconds(1700000000);
+  parts->mutable_offerdetails()->mutable_validuntiltimestamp()->set_seconds(0);
+  parts->mutable_offerdetails()->set_cooldownconfigured(true);
+  auto* games       = AddBundle(response, 8, "alliance_games");
+  auto* requirement = games->add_requirements();
+  requirement->set_type("alliance_league");
+  requirement->set_id("3");
+  AddItem(games->mutable_content()->mutable_static_(), "blueprint-1", "blueprint", 2);
+  AddBundle(response, 9, "event_store");
+  auto* faction = AddBundle(response, 40, "factions");
+  AddItem(faction->mutable_content()->mutable_static_(), "500", "consumable", 1);
+  faction->mutable_offerdetails()->set_validcount(2);
+  return response;
+}
+void StoreBundles()
+{
+  auto target   = Target();
+  auto response = StoreResponse();
+  ProcessStoreBundles({store.Generation(), response.SerializeAsString()});
+  ProcessStoreOffers({store.Generation(), response.SerializeAsString()});
+  const auto uploads = Drain(target);
+  Check(uploads.size() == 2 && uploads.contains("store_bundle") && uploads.contains("store_offer"),
+        "store bundles and offers are separate events");
+  const auto& events = uploads.at("store_bundle");
+  Check(events.size() == 3, "one event per listed category; others are ignored");
+  json by_category;
+  for (const auto& event : events)
+    by_category[event.at("category").get<std::string>()] = event;
+  const auto& materials = by_category.at("refining_materials").at("bundles");
+  Check(materials.size() == 2 && materials[0].at("bid") == 10 && materials[1].at("bid") == 30,
+        "bundles are sorted by id");
+  const json expected = json::parse(R"({"bid":30,"sort":7,
+    "cost":[{"qty":1,"res":[{"rid":4000000000,"amount":1000}]},{"qty":2,"res":[{"rid":4000000000,"amount":2000}]},
+            {"qty":3,"res":[{"rid":4000000000,"amount":3000}]}],
+    "req":[],"dynamic":[[{"id":21,"kind":"resource","qty":3},{"id":23,"kind":"resource","qty":9}],
+                         [{"id":22,"kind":"resource","qty":3},{"id":23,"kind":"resource","qty":9}]],
+    "static":[],"uses_left":-1,"same_left":-1,"valid_from":null,"valid_until":null,"cooldown":false})");
+  Check(materials[1] == expected, "a refining bundle keeps cost and dynamic order with -1 counts and null times");
+  Check(materials[0].at("cost").empty() && materials[0].at("dynamic").empty() && materials[0].at("uses_left") == 0,
+        "empty arrays are present");
+  const auto& parts = by_category.at("refining_ship_parts").at("bundles");
+  Check(parts.size() == 1 && parts[0].at("uses_left") == 5 && parts[0].at("valid_from") == 1700000000
+            && parts[0].at("valid_until").is_null() && parts[0].at("cooldown") == true,
+        "seconds stay seconds and a zero time is null");
+  const auto& games = by_category.at("alliance_games").at("bundles");
+  Check(games.size() == 1 && games[0].at("req") == json::parse(R"([{"type":"alliance_league","id":3,"amount":0}])")
+            && games[0].at("static") == json::parse(R"([{"id":"blueprint-1","kind":"blueprint","qty":2}])"),
+        "requirements and static contents");
+  const auto& offers = uploads.at("store_offer");
+  Check(offers.size() == 1
+            && offers[0] == json::parse(R"({"type":"store_offer","category":"factions","offers":[{"bid":40,"cid":500,
+        "cost":[],"req":[],"valid_count":2,"same_remaining_count":0}]})"),
+        "store offers are unchanged");
+
+  ProcessStoreBundles({store.Generation(), response.SerializeAsString()});
+  Check(Drain(target).empty(), "an unchanged snapshot sends nothing");
+
+  // A response with only one category changes only that category and deletes no other.
+  content::Bundles partial;
+  AddItem(AddBundle(partial, 8, "alliance_games")->mutable_content()->mutable_static_(), "blueprint-1", "blueprint", 3);
+  ProcessStoreBundles({store.Generation(), partial.SerializeAsString()});
+  const auto changed = Drain(target);
+  Check(changed.size() == 1 && changed.at("store_bundle").size() == 1
+            && changed.at("store_bundle")[0].at("category") == "alliance_games",
+        "only the changed category is sent");
+  Check(store.Contains(Stream::kStoreBundles, "refining_materials")
+            && store.Contains(Stream::kStoreBundles, "refining_ship_parts"),
+        "a response without a category keeps its last record");
+  ProcessStoreBundles({store.Generation(), content::Bundles{}.SerializeAsString()});
+  Check(Drain(target).empty() && store.Contains(Stream::kStoreBundles, "alliance_games"),
+        "an empty response removes nothing");
+
+  // A target that does not enable the stream receives nothing from it.
+  auto only_offers          = SyncTargetConfig{Options()};
+  only_offers.store_bundles = false;
+  Delivery other;
+  other.Configure(only_offers);
+  const auto got = Drain(other);
+  Check(got.size() == 1 && got.contains("store_offer"), "store_bundles is honoured per target");
+}
 void ProtobufJournals()
 {
   const auto body      = BattleReportBody(SyntheticJournal());
@@ -974,6 +1156,9 @@ int main()
   run("name caches", NameCaches);
   run("logging", SyncLogging);
   run("protobuf journals", ProtobufJournals);
+  run("wire types", WireTypes);
+  run("store offer counts", StoreOfferCounts);
+  run("store bundles", StoreBundles);
   if (!failures)
     std::cout << "Sync wire and delivery tests passed\n";
   return failures ? 1 : 0;

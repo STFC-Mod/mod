@@ -218,6 +218,7 @@ enum class Stream {
   kAllianceResources,
   kShips,
   kSlots,
+  kStoreBundles,
   kStoreOffers,
   kTech,
   kTraits,
@@ -343,7 +344,8 @@ struct Input {
   std::string bytes;
   // Captured on the game thread for owner-qualified Haven map responses and the own profile.
   std::string user_id;
-  // The local player's level, captured with user_id for the own profile: its server record carries level 0.
+  // The local player's level, captured with user_id for the own profile, which reports it instead of the record's own
+  // level field.
   int32_t level = 0;
 };
 using Processor = void (*)(const Input&);
@@ -362,6 +364,7 @@ template <typename Message> std::optional<Message> Parse(const Input& input, std
 Processor ProcessorFor(EntityGroup::Kind kind);
 void      ProcessRealtimeSlot(const Input& input);
 void      ProcessStoreOffers(const Input& input);
+void      ProcessStoreBundles(const Input& input);
 // The local player's own record from a UserProfiles response; needs user_id and level.
 void ProcessOwnProfile(const Input& input);
 

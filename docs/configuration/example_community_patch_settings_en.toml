@@ -985,6 +985,9 @@ ships = true
 # Do you want to sync slots data?
 slots = true
 
+# Sync store bundles for the refining and alliance tournament store categories.
+store_bundles = false
+
 # Sync faction store offer data. Requires mod 1.1.10 or newer.
 store_offers = false
 
