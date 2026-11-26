@@ -30,6 +30,7 @@ namespace
     size_t             journal   = 0;
   };
   constexpr std::array kStreams{
+      Spec{Stream::kAlliance, &SyncConfig::alliance, "alliance_league"},
       Spec{Stream::kAway, &SyncConfig::away_assignments, "away_assignment", FullSync::kInitial,
            "collected_away_assignment", "aid"},
       Spec{Stream::kBattles, &SyncConfig::battlelogs, "battlelog", FullSync::kNever, nullptr, nullptr, kRecentBattles},

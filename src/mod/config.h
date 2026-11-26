@@ -28,6 +28,7 @@ struct SyncConfig {
 
   std::string proxy;
   bool        verify_ssl       = true;
+  bool        alliance         = false;
   bool        away_assignments = false;
   bool        battlelogs       = false;
   bool        buffs            = false;
@@ -52,6 +53,7 @@ struct SyncConfig {
 
 // Every category, as [sync] and [sync.targets.<name>] spell it.
 constexpr auto SyncOptions = std::to_array<SyncConfig::Option>({
+    {"alliance", &SyncConfig::alliance},
     {"away_assignments", &SyncConfig::away_assignments},
     {"battlelogs", &SyncConfig::battlelogs},
     {"buffs", &SyncConfig::buffs},

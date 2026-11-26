@@ -653,6 +653,7 @@ namespace
       {EntityGroup::Kind::BattleResultHeaders, ProcessBattleHeaders, true},
       {EntityGroup::Kind::UserProfiles, CachePlayerNames, true},
       {EntityGroup::Kind::AllianceProfiles, CacheAllianceNames, true},
+      {EntityGroup::Kind::AllianceDetails, ProcessAllianceLeague},
       {EntityGroup::Kind::GlobalActiveBuffs, ProcessBuffs},
       {EntityGroup::Kind::AllianceGetGameProperties, ProcessAllianceGameProperties},
       {EntityGroup::Kind::StarbaseModules, ProcessStarbaseModules},
@@ -701,6 +702,13 @@ namespace
           return &item;
     return nullptr;
   }
+
+  // The alliance the own profile record listed in this session, kept for ProcessAllianceLeague. Both processors run
+  // on the processing thread, in response order.
+  struct OwnAlliance {
+    uint64_t generation = 0;
+    int64_t  id         = 0;
+  } own_alliance;
 } // namespace
 
 // A realtime slot update: the same record as the protobuf EntitySlot, from the realtime channel's JSON. The cases
@@ -815,6 +823,22 @@ void ProcessStoreOffers(const Input& input)
   Publish(Stream::kStoreOffers, std::move(records), input.generation);
 }
 
+// AllianceDetails is an AllianceProfile. Only the league and level are kept: no id, name, tag, slogan or members.
+// The group may describe an alliance the player is looking at, so it counts only when it is the alliance the own
+// profile record lists; before that record has been read, nothing is sent. Nothing resets the record, so after
+// leaving an alliance the last league and level stay for the session.
+void ProcessAllianceLeague(const Input& input)
+{
+  const auto parsed = Parse<pb::AllianceProfile>(input, "alliance details");
+  if (!parsed)
+    return;
+  if (own_alliance.generation != input.generation || own_alliance.id == 0 || parsed->id() != own_alliance.id)
+    return;
+  RecordSet records;
+  records["alliance_league"] = {{"league", parsed->league()}, {"level", parsed->level()}};
+  Publish(Stream::kAlliance, std::move(records), input.generation);
+}
+
 // UserProfiles responses also list other players; only the local player's record is read. The server record carries
 // level 0, so the in-memory Level captured with the response is used: it lags one own-record response after a
 // level-up.
@@ -828,6 +852,7 @@ void ProcessOwnProfile(const Input& input)
       profiles, [&input](const pb::UserProfile& profile) { return profile.userid() == input.user_id; });
   if (own == profiles.end())
     return;
+  own_alliance = {input.generation, own->allianceid()};
   RecordSet records;
   records[input.user_id] = {{"uid", input.user_id},
                             {"level", input.level},

@@ -103,6 +103,7 @@ Each target has its own options and access token.
 | Battles | Up to 300 recent battle journals per session |
 | Fleets | Live fleet state: each state change with cargo, mining and timers, and the server's view of deployed fleets. Every change is sent, not just the latest; up to 300 per session. Off unless a target sets `fleets`. |
 | Store | Faction store offers: favor level prices, requirements and remaining purchases. Off unless a target sets `store_offers`. |
+| Alliance | Sync the player's own alliance league and level (two numbers; no alliance id, name or members). Off unless a target sets `alliance`. |
 | Profile | Your own level, XP, Power and Haven unlock. Other players' records are never sent. Off unless a target sets `profile`. |
 
 Failed uploads retry with the latest observed values.

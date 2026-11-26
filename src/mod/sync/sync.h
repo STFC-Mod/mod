@@ -195,6 +195,7 @@ private:
 // One stream per wire record type. Player and alliance resources, and active and completed missions, are separate
 // streams because the wire protocol keeps them apart.
 enum class Stream {
+  kAlliance,
   kAway,
   kBattles,
   kBuffs,
@@ -362,6 +363,8 @@ template <typename Message> std::optional<Message> Parse(const Input& input, std
 Processor ProcessorFor(EntityGroup::Kind kind);
 void      ProcessRealtimeSlot(const Input& input);
 void      ProcessStoreOffers(const Input& input);
+// The own alliance's league and level from an AllianceDetails response; needs the own profile to have been read.
+void ProcessAllianceLeague(const Input& input);
 // The local player's own record from a UserProfiles response; needs user_id and level.
 void ProcessOwnProfile(const Input& input);
 
