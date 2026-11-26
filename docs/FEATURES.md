@@ -107,7 +107,7 @@ Each target has its own options and access token.
 
 Failed uploads retry with the latest observed values.
 Target changes apply on reload and trigger a fresh snapshot.
-Recent battle journals can replay after a restart or login.
+Battle journals replay after a restart or login only to targets that have not acknowledged them; each target's last 600 acknowledged journals are kept in `community_patch_battle_acks.json`, and deleting it replays everything at the next login. A target whose token changes but whose URL stays the same keeps its record.
 Proxy, certificate verification, name-cache, and diagnostic options are in the settings example.
 
 ## Compatibility switches

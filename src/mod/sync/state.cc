@@ -4,6 +4,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <iterator>
+#include <ranges>
 #include <utility>
 
 namespace data_sync
@@ -165,9 +168,204 @@ void Delivery::Configure(const SyncTargetConfig& config)
 {
   if (config == config_)
     return;
-  config_ = config;
+  const bool had_battles = config_.battlelogs;
+  config_                = config;
   ++revision_;
   cursors_ = {};
+  // A different endpoint has not seen what the old one acknowledged. A new token alone keeps the record.
+  bool endpoint_changed = false;
+  if (auto fingerprint = UrlFingerprint(config.url); fingerprint != acked_.Fingerprint()) {
+    acked_dirty_ |= !acked_.Ids().empty();
+    acked_.Reset(std::move(fingerprint));
+    endpoint_changed = true;
+  }
+  // The journals fetched or skipped so far were decided without this target's wants.
+  battle_replay_ |= config.battlelogs && (!had_battles || endpoint_changed);
+}
+
+void Delivery::AdoptAcked(const AckedBattles& stored)
+{
+  if (acked_adopted_)
+    return;
+  acked_adopted_ = true;
+  if (stored.Fingerprint() == acked_.Fingerprint())
+    acked_.Restore(stored.Fingerprint(), {stored.Ids().begin(), stored.Ids().end()});
+  battle_replay_ |= config_.battlelogs;
+}
+
+bool Delivery::TakeBattleReplay()
+{ return std::exchange(battle_replay_, false); }
+
+bool Delivery::TakeAckedDirty()
+{ return std::exchange(acked_dirty_, false); }
+
+bool AckedBattles::Add(uint64_t id)
+{
+  if (!set_.insert(id).second)
+    return false;
+  ids_.push_back(id);
+  while (ids_.size() > kMax) {
+    set_.erase(ids_.front());
+    ids_.pop_front();
+  }
+  return true;
+}
+
+void AckedBattles::Reset(std::string fingerprint)
+{
+  fingerprint_ = std::move(fingerprint);
+  ids_.clear();
+  set_.clear();
+}
+
+void AckedBattles::Restore(std::string fingerprint, const std::vector<uint64_t>& ids)
+{
+  Reset(std::move(fingerprint));
+  for (const auto id : ids)
+    Add(id);
+}
+
+std::string UrlFingerprint(std::string_view url)
+{
+  uint64_t hash = 14695981039346656037ull;
+  for (const unsigned char c : url) {
+    hash ^= c;
+    hash *= 1099511628211ull;
+  }
+  return fmt::format("{:016x}", hash);
+}
+
+json AckedToJson(const AckedByTarget& acked)
+{
+  auto targets = json::object();
+  for (const auto& [name, battles] : acked)
+    targets[name] = {{"fingerprint", battles.Fingerprint()}, {"ids", battles.Ids()}};
+  return {{"version", 1}, {"targets", std::move(targets)}};
+}
+
+// The file's format version, if it has one: an unsigned number. A wrong-typed version is not one (json::value would
+// throw on it).
+static std::optional<uint64_t> AckedFileVersion(const json& document)
+{
+  if (!document.is_object())
+    return std::nullopt;
+  const auto version = document.find("version");
+  if (version == document.end() || !version->is_number_unsigned())
+    return std::nullopt;
+  return version->get<uint64_t>();
+}
+
+AckedByTarget AckedFromJson(const json& document)
+{
+  AckedByTarget result;
+  if (AckedFileVersion(document) != 1 || !document.contains("targets") || !document.at("targets").is_object())
+    return result;
+  for (const auto& [name, entry] : document.at("targets").items()) {
+    if (!entry.is_object() || !entry.contains("fingerprint") || !entry.at("fingerprint").is_string()
+        || !entry.contains("ids") || !entry.at("ids").is_array())
+      continue;
+    std::vector<uint64_t> ids;
+    for (const auto& id : entry.at("ids"))
+      if (id.is_number_unsigned())
+        ids.push_back(id.get<uint64_t>());
+    result[name].Restore(entry.at("fingerprint").get<std::string>(), ids);
+  }
+  return result;
+}
+
+AckedByTarget LoadAcked(const std::filesystem::path& file, std::string& problem, bool& newer)
+{
+  problem.clear();
+  newer = false;
+  std::error_code error;
+  if (!std::filesystem::exists(file, error))
+    return {};
+  std::ifstream in(file, std::ios::binary);
+  if (!in) {
+    problem = "the file cannot be read";
+    return {};
+  }
+  const std::string text{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+  const auto        document = json::parse(text, nullptr, false);
+  const auto        version  = document.is_discarded() ? std::nullopt : AckedFileVersion(document);
+  if (version && *version > 1) {
+    problem = "the file was written by a newer version and is left as it is";
+    newer   = true;
+    return {};
+  }
+  if (version != 1) {
+    problem = "the file is not in the expected format";
+    return {};
+  }
+  return AckedFromJson(document);
+}
+
+bool SaveAcked(const std::filesystem::path& file, const AckedByTarget& acked, std::string& problem)
+{
+  problem.clear();
+  auto temporary = file;
+  temporary += ".tmp";
+  {
+    std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+    out << AckedToJson(acked).dump(-1, ' ', false, json::error_handler_t::replace);
+    out.flush();
+    if (!out) {
+      problem = "the temporary file cannot be written";
+      return false;
+    }
+  }
+  std::error_code error;
+  std::filesystem::rename(temporary, file, error);
+  if (error) {
+    problem = "the file cannot be replaced";
+    std::filesystem::remove(temporary, error);
+    return false;
+  }
+  return true;
+}
+
+AckedByTarget CollectAcked(const std::map<std::string, std::shared_ptr<Delivery>>& targets, const AckedByTarget& stored,
+                           bool& dirty)
+{
+  AckedByTarget result;
+  for (const auto& [name, target] : targets) {
+    dirty |= target->TakeAckedDirty();
+    const auto before = stored.find(name);
+    if (!target->AckedAdopted() && before != stored.end())
+      result.emplace(name, before->second);
+    else if (!target->Acked().Ids().empty())
+      result.emplace(name, target->Acked());
+  }
+  return result;
+}
+
+void MergeHeaderList(HeaderList& list, uint64_t generation, const std::vector<uint64_t>& ids)
+{
+  if (list.generation != generation)
+    list = {generation, {}};
+  if (ids.empty())
+    return;
+  std::vector<uint64_t>        merged;
+  std::unordered_set<uint64_t> seen;
+  const std::vector<uint64_t>  known = list.ids;
+  for (const auto* source : {&ids, &known})
+    for (const auto id : *source)
+      if (merged.size() < kRecentBattles && seen.insert(id).second)
+        merged.push_back(id);
+  list.ids = std::move(merged);
+}
+
+bool EveryBattleTargetAcked(const std::map<std::string, std::shared_ptr<Delivery>>& targets, uint64_t id)
+{
+  bool any = false;
+  for (const auto& target : targets | std::views::values) {
+    if (!target->Config().battlelogs)
+      continue;
+    any = true;
+    if (!target->Acked().Contains(id))
+      return false;
+  }
+  return any;
 }
 
 void Delivery::Retire()
@@ -198,6 +396,11 @@ std::optional<Upload> Delivery::Next(const RecordStore& store, Clock::time_point
     // journals leave the cursor too, or it would never match again.
     if (journal)
       std::erase_if(cursor.accepted, [&](const auto& entry) { return !current.contains(entry.first); });
+    // A battle journal acknowledged in an earlier session counts as delivered when it reappears in the store.
+    if (spec.stream == Stream::kBattles)
+      for (const auto& [key, record] : current)
+        if (key.is_number_unsigned() && acked_.Contains(key.get<uint64_t>()))
+          cursor.accepted.emplace(key, record);
     if (!uncertain && (journal ? current == cursor.accepted : collection->version == cursor.version))
       continue;
     Upload upload{
@@ -271,10 +474,14 @@ void Delivery::Complete(Upload upload, bool success, uint64_t generation, Clock:
     return;
   }
   // A journal upload carries only the journal it sent; every other upload carries the whole stream.
-  if (kStreams[static_cast<size_t>(upload.stream)].journal)
-    for (auto& [key, record] : upload.snapshot)
+  if (kStreams[static_cast<size_t>(upload.stream)].journal) {
+    for (auto& [key, record] : upload.snapshot) {
+      if (upload.stream == Stream::kBattles && key.is_number_unsigned()) {
+        acked_dirty_ |= acked_.Add(key.get<uint64_t>());
+      }
       cursor.accepted.insert_or_assign(key, std::move(record));
-  else
+    }
+  } else
     cursor.accepted = std::move(upload.snapshot);
   cursor.full |= upload.first_sync;
   cursor.version = upload.version;

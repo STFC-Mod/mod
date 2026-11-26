@@ -17,6 +17,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -24,6 +25,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -237,6 +239,58 @@ inline constexpr size_t kRecentBattles = 300;
 // Fleet changes are a journal too, bounded like battles.
 inline constexpr size_t kRecentFleetChanges = 300;
 
+// The battle journals one target has acknowledged, kept across sessions so a login does not send it, or fetch from
+// the game server, what it already holds. Most recent last. The fingerprint identifies the endpoint they were
+// delivered to: a target whose URL changed starts over. The bound is twice the journal's own: an id still in the
+// game's header list (the fetch queue and journal store hold kRecentBattles) must not be pruned while the list is
+// full, or it would be fetched and sent again at every login.
+class AckedBattles
+{
+public:
+  static constexpr size_t kMax = 2 * kRecentBattles;
+
+  const std::string& Fingerprint() const
+  { return fingerprint_; }
+  const std::deque<uint64_t>& Ids() const
+  { return ids_; }
+  bool Contains(uint64_t id) const
+  { return set_.contains(id); }
+  // Appends a new id and prunes the oldest beyond kMax; false for one already held, which keeps its place.
+  bool Add(uint64_t id);
+  // Forgets every id and names the endpoint the next ones belong to.
+  void Reset(std::string fingerprint);
+  // Keeps the most recent kMax of `ids`, oldest first.
+  void Restore(std::string fingerprint, const std::vector<uint64_t>& ids);
+
+private:
+  std::string                  fingerprint_;
+  std::deque<uint64_t>         ids_;
+  std::unordered_set<uint64_t> set_;
+};
+using AckedByTarget = std::map<std::string, AckedBattles>;
+
+// A stable name for a target's URL (FNV-1a, 64 bits as 16 hex digits), so that the URL itself is not stored.
+std::string UrlFingerprint(std::string_view url);
+// The file format: {"version":1,"targets":{"<name>":{"fingerprint":"...","ids":[...]}}}.
+json          AckedToJson(const AckedByTarget& acked);
+AckedByTarget AckedFromJson(const json& document);
+// A missing file is empty without a problem. An unreadable or malformed one is empty, with `problem` set; so is one
+// from a newer version, which also sets `newer` so that the caller does not overwrite it.
+AckedByTarget LoadAcked(const std::filesystem::path& file, std::string& problem, bool& newer);
+// Writes through a temporary file and a rename, so a crash leaves the old file or the new one. False with `problem`.
+bool SaveAcked(const std::filesystem::path& file, const AckedByTarget& acked, std::string& problem);
+
+// The battle ids a session has been told about, newest first, kept so that a target that comes on later can have the
+// ones it lacks fetched. Several message sources report the list and none is known to be complete, so reports are
+// merged, never replaced.
+struct HeaderList {
+  uint64_t              generation = 0;
+  std::vector<uint64_t> ids;
+};
+// Merges a report into the list: its ids come first in their order, followed by the known ones it did not repeat,
+// without duplicates and cut to kRecentBattles. An empty report changes nothing; a new generation starts over.
+void MergeHeaderList(HeaderList& list, uint64_t generation, const std::vector<uint64_t>& ids);
+
 // Full lists establish the initial-sync marker; Replace also prunes entities absent from the list.
 enum class Update { kMerge, kFull, kReplace };
 
@@ -293,6 +347,18 @@ public:
   { return config_; }
   uint64_t Revision() const
   { return revision_; }
+  // The battle journals this target acknowledged, across sessions. Configure drops them when the URL changes.
+  const AckedBattles& Acked() const
+  { return acked_; }
+  // Takes what a file held for this target, once, unless the endpoint differs. Later calls do nothing.
+  void AdoptAcked(const AckedBattles& stored);
+  bool AckedAdopted() const
+  { return acked_adopted_; }
+  // True once after the acknowledged ids changed, for the saver.
+  bool TakeAckedDirty();
+  // True once after something changed what this target lacks: its battle logs came on, its endpoint changed, or its
+  // record was adopted. The battle queue then decides again for the last header list.
+  bool TakeBattleReplay();
 
 private:
   struct Cursor {
@@ -304,11 +370,21 @@ private:
   };
   // revision_ changes with the configuration, so an upload built for an older one cannot acknowledge anything.
   // Streams are visited round-robin from next_, so one stream that always has news cannot starve the rest.
-  SyncTargetConfig                                        config_;
-  uint64_t                                                revision_ = 0, generation_ = 0;
-  size_t                                                  next_ = 0;
+  SyncTargetConfig config_;
+  uint64_t         revision_ = 0, generation_ = 0;
+  size_t           next_ = 0;
+  // Not part of the cursors: they start over with every session, these do not.
+  AckedBattles acked_;
+  bool         acked_adopted_ = false, acked_dirty_ = false, battle_replay_ = false;
   std::array<Cursor, static_cast<size_t>(Stream::kCount)> cursors_;
 };
+
+// What to save: each target in the settings with the journals it holds, or with what the file held for it before it
+// adopted them. A target that left the settings is not carried over. `dirty` is set when a target's record changed.
+AckedByTarget CollectAcked(const std::map<std::string, std::shared_ptr<Delivery>>& targets, const AckedByTarget& stored,
+                           bool& dirty);
+// Whether at least one target syncs battle logs and every such target has acknowledged journal `id`.
+bool EveryBattleTargetAcked(const std::map<std::string, std::shared_ptr<Delivery>>& targets, uint64_t id);
 
 // --- Session and shared state ---
 
@@ -366,8 +442,14 @@ void      ProcessStoreOffers(const Input& input);
 void ProcessOwnProfile(const Input& input);
 
 // sync.cc. Publish drops records from an older session.
-void     Publish(Stream stream, RecordSet records, uint64_t generation, Update mode = Update::kMerge);
-bool     HasBattle(uint64_t id, uint64_t generation);
+void Publish(Stream stream, RecordSet records, uint64_t generation, Update mode = Update::kMerge);
+bool HasBattle(uint64_t id, uint64_t generation);
+// Battle journals acknowledged across sessions. True when at least one target syncs battle logs and every such
+// target has acknowledged `id`. Any thread.
+bool BattleAckedEverywhere(uint64_t id);
+// A target's upload thread takes its record from the file before its first upload, and saves any changes later.
+void     AdoptBattleAcks(const std::string& name, Delivery& delivery);
+void     FlushBattleAcks();
 void     FollowSettings();
 uint64_t SessionGeneration();
 // Also copies the request headers, unlike SessionGeneration.
@@ -376,10 +458,13 @@ GameSession Session();
 // upload.cc: one thread per target, until the target leaves the settings.
 void UploadTarget(std::weak_ptr<Delivery> target, std::string name);
 
-// battlelogs.cc. Journals are cached per session, so every target can receive them without a global sent-ID filter.
+// battlelogs.cc. Journals are cached per session; each target also remembers across sessions which ones it acknowledged
+// (AckedBattles), so a journal replays only to targets that lack it and is fetched only while one does.
 // RunBattleLogs is the battle-log thread and never returns.
 void RunBattleLogs();
 void QueueNewBattles(const std::vector<uint64_t>& ids, uint64_t generation);
+// Decides again for the last header list of this session, after a target came on or lost its record. Processing thread.
+void RequeueLastBattles(const Input& input);
 void CachePlayerNames(const Input& input);
 void CacheAllianceNames(const Input& input);
 

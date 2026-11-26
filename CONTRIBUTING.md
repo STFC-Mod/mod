@@ -241,7 +241,7 @@ After 1,024 unacknowledged new entities, delivery waits for an acknowledgement b
 Their latest values remain available. Version counters skip unchanged streams, and snapshots share record payloads.
 
 Ordinary categories retain observed state even while disabled, so a new target can receive a baseline.
-Battle fetching is opt-in. Each target acknowledges the session's 300 recent journals independently; journals can replay after a restart or login.
+Battle fetching is opt-in. Each target acknowledges the session's 300 recent journals independently, and the mod remembers each target's last 600 acknowledged journals across sessions in `community_patch_battle_acks.json` (named after the `-ccm` profile when one is used). A journal replays after a restart or login only to targets that have not acknowledged it, and the game server is asked for one only while some target with `battlelogs` lacks it. A target whose URL changes starts over; one whose token changes but whose URL stays the same keeps its record. Deleting the file replays everything at the next login. A file written by a newer mod version is left untouched and ignored, so an older mod replays at each login until the file is removed.
 Client fleet changes are a journal too: every state change is its own entry, delivered in order and never merged with a later one. A fleet snapshot entry is sent as a first sync.
 The raw response queue holds 256 entries and drops the oldest on overflow.
 Sync tests use controlled delivery results. They do not contact community services.

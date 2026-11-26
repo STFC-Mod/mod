@@ -44,7 +44,11 @@ void UploadTarget(std::weak_ptr<Delivery> target, std::string name)
   auto&                         state = State();
   std::unique_ptr<cpr::Session> http;
   uint64_t                      configured = 0;
+  // Before the first upload: what this target already holds, from the file.
+  if (const auto delivery = target.lock())
+    AdoptBattleAcks(name, *delivery);
   for (;;) {
+    FlushBattleAcks();
     std::unique_lock lock(state.mutex);
     const auto       delivery = target.lock();
     if (!delivery)

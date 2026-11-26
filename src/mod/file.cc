@@ -21,15 +21,16 @@ std::filesystem::path MacLibraryDirectory(); // file_macos.mm
 
 namespace
 {
-constexpr std::string_view kDefaultConfig = "community_patch_settings.toml";
-constexpr std::string_view kDefaultVars   = "community_patch_runtime.vars";
-constexpr std::string_view kDefaultLog    = "community_patch.log";
+constexpr std::string_view kDefaultConfig     = "community_patch_settings.toml";
+constexpr std::string_view kDefaultVars       = "community_patch_runtime.vars";
+constexpr std::string_view kDefaultLog        = "community_patch.log";
+constexpr std::string_view kDefaultBattleAcks = "community_patch_battle_acks.json";
 
 // Names used by older releases; "path" is their typo.
 constexpr std::string_view kLegacyVars   = "community_path_runtime.vars";
 constexpr std::string_view kLegacyParsed = "community_patch_settings_parsed.toml";
 
-std::string           config_name, vars_name, log_name, profile;
+std::string           config_name, vars_name, log_name, battle_acks_name, profile;
 const std::string     default_config{kDefaultConfig};
 std::filesystem::path profile_path;
 #ifdef _MODDBG
@@ -130,9 +131,10 @@ void Init()
   }
 
   if (profile_path.empty()) {
-    config_name = kDefaultConfig;
-    vars_name   = kDefaultVars;
-    log_name    = kDefaultLog;
+    config_name      = kDefaultConfig;
+    vars_name        = kDefaultVars;
+    log_name         = kDefaultLog;
+    battle_acks_name = kDefaultBattleAcks;
     return;
   }
 
@@ -140,9 +142,10 @@ void Init()
   auto with_extension = [](const char* extension) {
     return ToUtf8(std::filesystem::path(profile_path).replace_extension(extension));
   };
-  config_name = with_extension(".toml");
-  vars_name   = with_extension(".vars");
-  log_name    = with_extension(".log");
+  config_name      = with_extension(".toml");
+  vars_name        = with_extension(".vars");
+  log_name         = with_extension(".log");
+  battle_acks_name = with_extension(".battle_acks.json");
 }
 
 const std::string& Config()
@@ -150,6 +153,9 @@ const std::string& Config()
 
 const std::string& Vars()
 { return vars_name; }
+
+const std::string& BattleAcks()
+{ return battle_acks_name; }
 
 const std::string& Log()
 { return log_name; }
