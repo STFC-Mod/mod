@@ -10,6 +10,13 @@ ActionView handles rewards/strength after selection. Returning to the original
 node is the unresolved step. This is an experimental contribution, not a claim
 of a completed feature.
 
+## Build validation
+
+The separate saved-node restoration experiment has compiled as a Windows x64
+release DLL and passed its identity/binding regressions. Its installer also passed
+embedded-payload and install/rollback checks in [the isolated test workflow](https://github.com/MorbidKittyLabs/Run17-builds/actions/runs/46022115033).
+These are build/fixture results, not a successful in-game inspection cycle.
+
 ## show_info_pending: origin and revision scope
 
 The PR is based on `main` at `8b7013e4643e85b4fe08e849d5f211d594b88c8e`.
