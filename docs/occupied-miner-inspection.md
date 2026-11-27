@@ -61,6 +61,17 @@ managed method signature and handles managed invocation failures. Existing
 TryGetFleetType() is already present in the PR base. No duplicate
 show_info_pending declaration is needed for that base.
 
+## Historical inspection evidence
+
+In the recovered inspection-only diagnostic sequence 112-125, the mining scan
+buttons' battle context becomes null as the mining viewer hides, and the same
+battle context/fleet subsequently binds to PreScanTargetWidget. The target card
+starts showing about 500 ms after the ActionView request. The original node POI
+identity was not logged. These observations do not establish any valid hidden
+widget restoration path and must not be treated as evidence that a battle context
+is the inherited navigation context. A bounded wait for the matching live target
+is more reliable than assuming the new card is available immediately.
+
 ## Findings relevant to restoring the node
 
 The recovered October 24 GameAssembly.dll/global-metadata.dat pair was inspected
