@@ -79,6 +79,41 @@ static int  show_officer_swap_pending          = 0;
 static int  show_ship_swap_pending             = 0;
 static bool officer_presets_assignment_opened = false;
 
+// Experimental occupied mining-node inspection. Selecting the occupying fleet
+// opens STFC's native ship card; the existing ActionView handler then manages
+// cargo/rewards and strength. Returning to the mining node is not yet reliable.
+static bool OpenOccupiedMinerShipCard()
+{
+  auto* mine = ObjectFinder<MiningObjectViewerWidget>::Get();
+  auto* visibility = mine ? mine->_visibilityController : nullptr;
+  if (!visibility || (visibility->_state != VisibilityState::Visible
+                      && visibility->_state != VisibilityState::Show)
+      || mine->_occupiedState != OccupiedState::OtherPlayerOccupied) {
+    return false;
+  }
+
+  auto* buttons = mine->_scanEngageButtonsWidget;
+  auto* context = buttons ? buttons->Context : nullptr;
+  auto* occupant = context ? context->TargetFleetDeployedData : nullptr;
+  DeployedFleetType fleet_type{};
+  if (!occupant || !occupant->TryGetFleetType(fleet_type)
+      || fleet_type != DeployedFleetType::Player) {
+    return false;
+  }
+
+  auto* sections = NavigationSectionManager::Instance();
+  auto* navigation = sections ? sections->SNavigationManager : nullptr;
+  const auto id = occupant->GetId64();
+  if (!navigation || id <= 0 || !navigation->CanSelectPoi(id)
+      || !navigation->SelectPoi(id)) {
+    return false;
+  }
+
+  // Give the native target view time to bind before showing its rewards.
+  show_info_pending = 5;
+  return true;
+}
+
 using GetShowKeybindingsFn     = bool(void*);
 using SetShowKeybindingsFn     = void(void*, bool);
 using CanUseShortcutsFn        = bool();
@@ -1209,7 +1244,9 @@ void ScreenManager_Update_Hook(auto original, ScreenManager* _this)
 
     DailyFactionBulkClaimUpdate();
 
-    if (MapKey::IsDown(GameFunction::ActionView)) {
+    const bool action_view_pressed = MapKey::IsDown(GameFunction::ActionView);
+    const bool occupied_miner_handled = action_view_pressed && OpenOccupiedMinerShipCard();
+    if (action_view_pressed && !occupied_miner_handled) {
       auto all_pre_scan_widgets = ObjectFinder<PreScanTargetWidget>::GetAll();
 
       for (auto& pre_scan_widget : all_pre_scan_widgets) {

@@ -2,6 +2,7 @@
 
 #include <il2cpp/il2cpp_helper.h>
 #include "HullSpec.h"
+#include "navigation_binding.h"
 
 enum class DeployedFleetType {
   Nonexistent,
@@ -28,6 +29,13 @@ private:
   }
 
 public:
+  // Managed Int64 stays 64-bit on Windows (where C++ long is 32-bit).
+  int64_t GetId64()
+  {
+    int64_t id = 0;
+    return navigation_binding::Value(reinterpret_cast<Il2CppObject*>(this), "get_ID", "System.Int64", id) ? id : 0;
+  }
+
   long __get_ID()
   {
     static auto field = get_class_helper().GetProperty("ID");
